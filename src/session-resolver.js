@@ -1,7 +1,6 @@
 'use strict';
 
 const fsp = require('fs/promises');
-const fs = require('fs');
 const { basename, join } = require('path');
 
 module.exports = function createSessionResolver({
@@ -213,6 +212,10 @@ module.exports = function createSessionResolver({
     const home = safe.HOME;
     const maxWait = 30; // 30 attempts × 2s = 60s
 
+    // #338 [A13]: convert sync FS calls to fsp/promises so the resolver's
+    // 30 × 2s polling loop doesn't block the event loop. Two CLIs (Gemini +
+    // Codex) waiting concurrently on busy ~/.codex/sessions trees were
+    // measurably stalling Node's loop during readdirSync recursions.
     try {
       // Snapshot existing session files before the CLI creates a new one
       let existingFiles = new Set();
@@ -220,12 +223,12 @@ module.exports = function createSessionResolver({
       if (cliType === 'gemini') {
         const geminiBase = join(home, '.gemini', 'tmp');
         try {
-          const dirs = fs.readdirSync(geminiBase, { withFileTypes: true });
+          const dirs = await fsp.readdir(geminiBase, { withFileTypes: true });
           for (const d of dirs) {
             if (!d.isDirectory()) continue;
             const chatsDir = join(geminiBase, d.name, 'chats');
             try {
-              const files = fs.readdirSync(chatsDir);
+              const files = await fsp.readdir(chatsDir);
               files.forEach(f => existingFiles.add(join(chatsDir, f)));
             } catch { /* no chats dir */ }
           }
@@ -234,17 +237,18 @@ module.exports = function createSessionResolver({
 
       if (cliType === 'codex') {
         const sessBase = join(home, '.codex', 'sessions');
-        try {
-          const walk = (dir) => {
-            const entries = fs.readdirSync(dir, { withFileTypes: true });
-            for (const e of entries) {
-              const full = join(dir, e.name);
-              if (e.isDirectory()) walk(full);
-              else existingFiles.add(full);
-            }
-          };
-          if (fs.existsSync(sessBase)) walk(sessBase);
-        } catch { /* no codex sessions */ }
+        const walkSnapshot = async (dir) => {
+          let entries;
+          try {
+            entries = await fsp.readdir(dir, { withFileTypes: true });
+          } catch { return; }
+          for (const e of entries) {
+            const full = join(dir, e.name);
+            if (e.isDirectory()) await walkSnapshot(full);
+            else existingFiles.add(full);
+          }
+        };
+        await walkSnapshot(sessBase);
       }
 
       for (let i = 0; i < maxWait; i++) {
@@ -253,7 +257,7 @@ module.exports = function createSessionResolver({
         if (cliType === 'gemini') {
           const geminiBase = join(home, '.gemini', 'tmp');
           try {
-            const dirs = fs.readdirSync(geminiBase, { withFileTypes: true });
+            const dirs = await fsp.readdir(geminiBase, { withFileTypes: true });
             for (const d of dirs) {
               if (!d.isDirectory()) continue;
               const chatsDir = join(geminiBase, d.name, 'chats');
@@ -284,37 +288,36 @@ module.exports = function createSessionResolver({
 
         if (cliType === 'codex') {
           const sessBase = join(home, '.codex', 'sessions');
-          try {
-            if (fs.existsSync(sessBase)) {
-              const walk = (dir) => {
-                const entries = fs.readdirSync(dir, { withFileTypes: true });
-                for (const e of entries) {
-                  const full = join(dir, e.name);
-                  if (e.isDirectory()) {
-                    const found = walk(full);
-                    if (found) return found;
-                  } else if (e.name.endsWith('.jsonl') && !existingFiles.has(full)) {
-                    // New rollout file — extract UUID from filename for resume
-                    // Codex files: /sessions/YYYY/MM/DD/rollout-{timestamp}-{uuid}.jsonl
-                    const name = basename(e.name, '.jsonl');
-                    const uuidMatch = name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
-                    return uuidMatch ? uuidMatch[1] : name;
-                  }
-                }
-                return null;
-              };
-              const codexId = walk(sessBase);
-              if (codexId) {
-                logger.info('Codex CLI session ID discovered', {
-                  module: 'session-resolver',
-                  workbenchId: workbenchSessionId.substring(0, 12),
-                  cliSessionId: codexId.substring(0, 12),
-                });
-                db.setCliSessionId(workbenchSessionId, codexId);
-                return;
+          const walkScan = async (dir) => {
+            let entries;
+            try {
+              entries = await fsp.readdir(dir, { withFileTypes: true });
+            } catch { return null; }
+            for (const e of entries) {
+              const full = join(dir, e.name);
+              if (e.isDirectory()) {
+                const found = await walkScan(full);
+                if (found) return found;
+              } else if (e.name.endsWith('.jsonl') && !existingFiles.has(full)) {
+                // New rollout file — extract UUID from filename for resume
+                // Codex files: /sessions/YYYY/MM/DD/rollout-{timestamp}-{uuid}.jsonl
+                const name = basename(e.name, '.jsonl');
+                const uuidMatch = name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+                return uuidMatch ? uuidMatch[1] : name;
               }
             }
-          } catch { /* scan error */ }
+            return null;
+          };
+          const codexId = await walkScan(sessBase);
+          if (codexId) {
+            logger.info('Codex CLI session ID discovered', {
+              module: 'session-resolver',
+              workbenchId: workbenchSessionId.substring(0, 12),
+              cliSessionId: codexId.substring(0, 12),
+            });
+            db.setCliSessionId(workbenchSessionId, codexId);
+            return;
+          }
         }
       }
 

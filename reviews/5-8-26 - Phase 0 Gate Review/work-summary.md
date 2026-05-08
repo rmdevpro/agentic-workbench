@@ -20,13 +20,13 @@ Foundational hygiene work that unblocks subsequent phases:
 - Fix the ESLint test-globals scope so browser specs lint cleanly; add Node-builtin globals (AbortSignal); add module override for ES-module entry point
 - Stabilise the mock test fixture so the suite is truthful
 
-Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 9 Q-series additions surfaced during Phase 0 verification + gate review (Q1–Q9).
+Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 10 Q-series additions surfaced during Phase 0 verification + 2-round gate review (Q1–Q10).
 
 ---
 
 ## Issues + commits + branches
 
-**17 issues, 13 PRs, 13 PR-merge commits, all stacked clean onto `phase-0-verify`** (2 issues are untracked-file rms with no PR; 2 issues — Q8 #412 and Q9 #413 — are in-place commits with retroactive issues filed for audit-trail traceability).
+**18 issues, 13 PRs, 13 PR-merge commits, all stacked clean onto `phase-0-verify`** (2 issues are untracked-file rms with no PR; 3 issues — Q8 #412, Q9 #413, Q10 #414 — are in-place commits with retroactive / fold-back issues filed for audit-trail traceability).
 
 | # | PR | Branch | Commit | Change |
 |---|---|---|---|---|
@@ -47,6 +47,7 @@ Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 9 Q-s
 | 409 [Q7] | #410 | `cleanup/Q7-staleref-sweep` | `37eab54` | Sweep stale jQuery + prime-test-session refs in tests/plans/runbook (Phase 0 gate-review fold-back; Claude B-F2 + Codex Major+Moderate consensus). 5 files: `tests/live/startup.test.js` SRV-02 → asserts xterm + codemirror serve, jquery 404; `tests/browser/file-browser.spec.js` → uses `GET /api/browse?path=/`; plan + runbook entries REMOVED-marked with phase-0 cleanup pointers |
 | 412 [Q8] | — | — | `a15a58d` | In-place commit on phase-0-verify (no PR — single-file inline comment). Add note for future test authors next to the program-method block in `tests/mock/routes.test.js` pointing at `makeApp(overrides)` mechanism with concrete example. From Claude gate review §A.1 single-CLI caveat. Issue filed retroactively as audit-trail anchor. |
 | 413 [Q9] | — | — | `9841c5b` | In-place commit on phase-0-verify (no PR — repo-side audit doc, not in build context). Replace 4 instances of "Manual smoke: hands-on by user" in `REMEDIATION_EXECUTION_SUMMARY.md` with "End-to-end smoke (agent-driven)" framing. User-flagged misframing during gate cycle. Memory `feedback_user_does_not_test.md` saved. Issue filed retroactively as audit-trail anchor. |
+| 414 [Q10] | — | — | `42e9faf` | In-place commit on phase-0-verify (no PR — single-line architecture-statement fix in README.md:148). Replace "the jqueryfiletree connector" with description of vanilla `createFileTree` + `/api/browse` + `/api/file` architecture. From Codex Round 2 review (Moderate). Same fold-back pattern as Q7. |
 
 `phase-0-verify` is composed of: 12 original Phase 0 merge commits + Q7 #409 fold-back merge + Q8 #412 + Q9 #413 in-place commits + Work-Summary + review-docs maintenance commits. No conflicts on any merge. Run `git log main..phase-0-verify --oneline` for the full live commit chain.
 
@@ -157,7 +158,7 @@ typeof createFileTree      → "function"
 
 ### Per-issue checklist status
 
-All 17 issue bodies (#318, #319, #320, #321, #322, #323, #324, #325, #395, #397, #398, #399, #400, #401, #409, #412, #413) have their workflow checklists ticked with concrete inline evidence per item. Items not applicable to a given issue are explicitly marked `[N/A]: <reason>`. (Q8 #412 + Q9 #413 are retroactive issues anchored to in-place commits; their workflow checklists are minimal because the work was already complete when the issue was filed.)
+All 18 issue bodies (#318, #319, #320, #321, #322, #323, #324, #325, #395, #397, #398, #399, #400, #401, #409, #412, #413, #414) have their workflow checklists ticked with concrete inline evidence per item. Items not applicable to a given issue are explicitly marked `[N/A]: <reason>`. (Q8 #412, Q9 #413, Q10 #414 are retroactive / fold-back issues anchored to in-place commits; their workflow checklists are minimal because the work was already complete when the issue was filed.)
 
 #322 (C1) note: the original acceptance criterion `tests/fixtures/ansi-auth-url.txt is present in the container` was split into two — "the .dockerignore override is in effect" (✓, ticked) and "the fixture is captured" (UNTICKED, blocked on F7 #363 per C7 #323's plan §3.3 reconciliation). #322's standalone work is fully verified; the fixture itself is F7 scope.
 
@@ -179,6 +180,7 @@ Per memory `feedback_no_punted_followups.md`, every "deferred" / "follow-up" / "
 - Stale jQuery + prime-test-session refs (gate-review consensus fold-back) → Q7 #409 ✓
 - Mock test fixture future-author note (gate-review §A.1) → Q8 #412 ✓
 - Smoke framing in REMEDIATION_EXECUTION_SUMMARY.md (user-flagged in gate cycle) → Q9 #413 ✓
+- README.md filesystem-access architecture statement (Codex Round 2 review) → Q10 #414 ✓
 
 **Cannot rationally be done in Phase 0 (filed + deferred to Phase 1):**
 
@@ -202,13 +204,21 @@ Per memory `feedback_no_punted_followups.md`, every "deferred" / "follow-up" / "
 
 3-CLI gate review ran at `phase-0-verify` @ `afd5215`. Three reviews under `reviews/5-8-26 - Phase 0 Gate Review/{claude,codex,gemini}-review.md`. Results dispositioned per PROC-002 §Step 5 (≥2-CLI consensus → fold back; single-CLI flags → noted, accept-as-documented unless obviously a real bug).
 
-### Recommendations
+### Round 1 recommendations (initial review pass)
 
 | CLI | Recommendation |
 |---|---|
 | Claude (Sonnet 4.6) | PASS WITH FOLLOW-UP (B-F2 stale jQuery refs flagged as gate-affecting) |
 | Codex | DO NOT SIGN OFF YET (Major: live + browser tests will FAIL; Moderate: plan refs) |
 | Gemini | APPROVED |
+
+### Round 2 recommendations (post-fold-back verification pass — all 3 CLIs re-read after fixes landed)
+
+| CLI | Recommendation | Notes |
+|---|---|---|
+| Claude (Sonnet 4.6) §F | PASS — recommend merge | Walked every fold-back commit; verified each. Cross-review consensus map included. Sub-threshold surviving refs noted but explicitly "below the threshold for a Phase 0 fold-back" |
+| Codex | Sign off after one more line — `README.md:148` still references "the jqueryfiletree connector" as part of the active filesystem-access architecture statement | Q10 #414 filed + folded in commit `42e9faf` |
+| Gemini addendum | APPROVED | Confirmed all consensus + single-CLI findings cleanly resolved. Final sign-off remains approved. |
 
 ### Consensus findings (≥2-CLI → folded back into verify branch)
 
@@ -218,6 +228,7 @@ Per memory `feedback_no_punted_followups.md`, every "deferred" / "follow-up" / "
 | Stale `prime-test-session.js` refs in test plans (UTIL-01/02, WAT-13, §3.3, §3.7) | Codex (Moderate) | Same Q7 PR — REMOVED-marked all references with #320 pointer | ✓ Folded |
 | Diff-stat in Work Summary inaccurate (`33 files / +106 / −7102`) | Claude + Codex (Minor) | Original stale numbers removed; the doc no longer pins a self-referential diff stat. Live numbers via `git diff --shortstat main..phase-0-verify`. | ✓ Folded |
 | Work Summary HEAD reference outdated | Codex (Minor) | Updated to current HEAD (see header at top of this document for the live value + commit chain). | ✓ Folded |
+| `README.md:148` still references removed `jqueryfiletree connector` (Round 2) | Codex R2 (Moderate) | Q10 #414 / commit `42e9faf`: replaced "the jqueryfiletree connector" with description of vanilla `createFileTree` + `GET /api/browse` + `GET /api/file` architecture. `grep -nE "jquery" README.md` now returns 0 hits. | ✓ Folded |
 
 ### Single-CLI observations (accepted with documented disposition)
 
@@ -254,7 +265,7 @@ Per gate checklist (#389):
 4. **Regression — mock** — already at 257 pass / 5 fail; the 5 are O3 #377 scope.
 5. **Regression — live** — `npm run test:live` against M5 (gate runs this).
 6. **Regression — UI runbook** — execute Phase 0–scoped runbook entries against M5 with per-verify-line agent affirmations + screenshots.
-7. **CLI parity** — N/A for any of the 17 issues (none touch CLI plumbing); reviewer should confirm.
+7. **CLI parity** — N/A for any of the 18 issues (none touch CLI plumbing); reviewer should confirm.
 8. **Cleanup verification** — repo state.
 9. **Runbook entry** — gate run logged.
 10. **Sign-off** — present + ask permission.
@@ -279,4 +290,4 @@ Independent, no leading. Each CLI reaches its own conclusion before any cross-co
 
 - Test review and code review run as separate 3-CLI passes (six total review sessions).
 - Findings dispositioned per PROC-002 §"Step 5 Peer review": ≥2-CLI consensus = fold back into the relevant per-issue branch + re-run affected verify steps; single-CLI flags noted, folded only if obviously a real bug.
-- After all reviews land + dispositions complete + regression suite green: present full evidence package to user; ask permission to merge the 13 PRs and close the 17 work issues + the gate issue.
+- After all reviews land + dispositions complete + regression suite green: present full evidence package to user; ask permission to merge the 13 PRs and close the 18 work issues + the gate issue.

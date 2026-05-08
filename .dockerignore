@@ -8,6 +8,3 @@ LICENSE
 *.txt
 # Keep config/ prompts (*.md files inside config are needed)
 README.md
-CLAUDE_PENANCE.txt
-compaction-*.md
-smart-compaction-*.md

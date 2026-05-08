@@ -246,7 +246,7 @@ UI runbook scope: skip (no UI behavior changed). If anything in #318-325 touched
 
 UI runbook scope: **Gate B** per PROC-004 (or its successor). Reasoning: Phase 1 touches handler logic, route paths, and UI modal patterns — Gate B's session/file/task/settings coverage is the appropriate scope.
 
-**Manual smoke:** 10-minute hands-on by user on M5 — log in, open Claude/Gemini/Codex sessions, create a task, drag-reorder, edit a file, settings tab.
+**End-to-end smoke (agent-driven):** the agent runs a 10-minute Playwright + Bash session against deployed M5 — log in (auto-handled when no gate), open Claude / Gemini / Codex sessions, create a task, drag-reorder, edit a file via the right panel, exercise the settings tab. Per-step affirmations + screenshots backing each verify line per STD-003 §12.4–§12.6. The user does not run smoke tests; the agent does.
 
 **Rollback rule:** any failure in browser-test-fixed-bugs section rolls back the offending action's PR. Mock/live failures gate Phase 2 entirely until cleared.
 
@@ -269,7 +269,7 @@ UI runbook scope: **Gate B** per PROC-004 (or its successor). Reasoning: Phase 1
 
 UI runbook scope: **Gate A** (full regression) per PROC-004. Phase 2's structural changes warrant the broadest scope.
 
-**Manual smoke:** 30-minute hands-on by user — full feature exercise across all three CLIs.
+**End-to-end smoke (agent-driven):** the agent runs a 30-minute Playwright + Bash exercise against deployed M5 — full feature pass across all three CLIs (multi-turn chats with sensible replies, MCP tool invocations from each CLI per `tests/workbench-test-plan-ui.md` §3.4b classes 2 + 3). Per-step affirmations + screenshots. The user does not run smoke tests; the agent does.
 
 **Rollback rule:** Gate A regressions roll back the offending decomposition child PR. The decomposition parents (F0, G0, H0, J1, M1, E3) cannot be marked done until all in-Phase-2 children land cleanly.
 
@@ -291,7 +291,7 @@ UI runbook scope: **Gate A** (full regression) per PROC-004. Phase 2's structura
 
 UI runbook scope: **Gate A** (full regression).
 
-**Manual smoke:** 30-minute hands-on by user.
+**End-to-end smoke (agent-driven):** the agent runs a 30-minute Playwright + Bash exercise against deployed M5. Per-step affirmations + screenshots. The user does not run smoke tests; the agent does.
 
 **Rollback rule:** any regression rolls back the specific child PR. Phase 3 cannot be marked complete until all decomposition trees (F0, G0, H0, I0) are fully populated and tested.
 
@@ -313,7 +313,7 @@ UI runbook scope: **Gate A** (full regression).
 
 UI runbook scope: **Gate A** (full regression).
 
-**Manual smoke:** 30-minute hands-on by user. Specifically time-the-sidebar load on a populated workspace.
+**End-to-end smoke (agent-driven):** the agent runs a 30-minute Playwright + Bash exercise against deployed M5, including timing measurements of the sidebar load on a populated workspace (≥5 projects × ≥10 sessions). Per-step affirmations + screenshots. The user does not run smoke tests; the agent does.
 
 **Rollback rule:** /api/state p95 ≥1s rolls back to E1+E2 — possibly trigger §3.2 deferral re-evaluation (push architecture). Lint errors blocking valid code rolls back the rule that's surfacing the false positive (or splits N1b into smaller tiers).
 

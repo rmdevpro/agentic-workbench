@@ -168,6 +168,14 @@ function makeApp(overrides = {}) {
     // session list (1590). Without them the routes return 500 and several
     // session/project tests fail spuriously. Empty + null defaults keep the
     // mock isolated from program-specific assertions.
+    //
+    // NOTE for future test authors: if you write a test that asserts on
+    // program state (e.g., "session list groups by program X", "project P
+    // appears under program Q"), pass program-aware overrides via the
+    // existing `makeApp(overrides)` mechanism — supplying e.g.
+    //   getAllPrograms: () => [{id: 1, name: 'engineering'}],
+    //   setProjectProgram: spy(),
+    // Don't rely on the empty defaults; they are deliberately program-blind.
     getAllPrograms: () => [],
     getProgram: () => null,
     getProgramByName: () => null,

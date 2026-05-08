@@ -3319,18 +3319,22 @@ build/**</textarea>
           alert('Project has no enclosing git repo. Issue picker requires a repo-backed project.');
           return;
         }
-        // Derive owner/name from project path. The project's path is the
-        // workspace folder; parse out the github owner/repo from the
-        // local repo's remote. Cheap heuristic: if the path matches the
-        // repo's URL ending, use it; else just take the last two path segments.
-        // Simpler: ask the server to look up the remote URL via /api/git-remote?project=<id>.
-        // For now, encode owner/name from the project path's last two segments
-        // when the path is /data/workspace/repos/<repo>.
-        const segs = (proj.path || '').split('/').filter(Boolean);
-        const lastTwo = segs.slice(-2);
-        if (lastTwo.length < 2) { alert('Cannot derive repo path from project path'); return; }
-        repo = `rmdevpro/${lastTwo[lastTwo.length - 1]}`;
-        // For the agentic-workbench self-reference, this gives 'rmdevpro/agentic-workbench'.
+        // #329 [A4]: ask the server to derive {host, owner, name} from
+        // `git remote get-url origin`. Replaces the previous hardcoded
+        // `rmdevpro/<last-segment>` heuristic which only worked for repos
+        // owned by rmdevpro and stored at /data/workspace/repos/<name>.
+        // Returns 3-part repo string `host/owner/name` consumable by
+        // /api/issues directly.
+        const remRes = await fetch(`/api/projects/${encodeURIComponent(proj.name)}/git-remote`);
+        if (!remRes.ok) {
+          const err = await remRes.json().catch(() => ({}));
+          alert(err.error === 'no_git_remote'
+            ? 'Project has no git remote configured (no `origin` set). Set one with `git remote add origin <url>` and retry.'
+            : `Could not derive repo from project: ${err.error || `HTTP ${remRes.status}`}`);
+          return;
+        }
+        const remData = await remRes.json();
+        repo = remData.repo;  // host/owner/name
       } catch (err) { alert('Picker setup error: ' + err.message); return; }
       _issuePickerCtx = { repo };
       _issuePickerCache = [];

@@ -94,6 +94,12 @@ module.exports = [
     },
   },
   {
+    files: ['scripts/codemirror-entry.js'],
+    languageOptions: {
+      sourceType: 'module',
+    },
+  },
+  {
     ignores: ['node_modules/**', 'public/**', 'coverage/**'],
   },
 ];

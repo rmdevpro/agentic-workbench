@@ -48,7 +48,7 @@ Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 9 Q-s
 | 412 [Q8] | — | — | `a15a58d` | In-place commit on phase-0-verify (no PR — single-file inline comment). Add note for future test authors next to the program-method block in `tests/mock/routes.test.js` pointing at `makeApp(overrides)` mechanism with concrete example. From Claude gate review §A.1 single-CLI caveat. Issue filed retroactively as audit-trail anchor. |
 | 413 [Q9] | — | — | `9841c5b` | In-place commit on phase-0-verify (no PR — repo-side audit doc, not in build context). Replace 4 instances of "Manual smoke: hands-on by user" in `REMEDIATION_EXECUTION_SUMMARY.md` with "End-to-end smoke (agent-driven)" framing. User-flagged misframing during gate cycle. Memory `feedback_user_does_not_test.md` saved. Issue filed retroactively as audit-trail anchor. |
 
-`phase-0-verify` HEAD = `6052132` (12 original Phase 0 merge commits + Q7 #409 fold-back merge + Q8 #412 + Q9 #413 in-place commits + 3 Work-Summary doc commits + 1 review-docs commit). No conflicts on any merge.
+`phase-0-verify` is composed of: 12 original Phase 0 merge commits + Q7 #409 fold-back merge + Q8 #412 + Q9 #413 in-place commits + Work-Summary + review-docs maintenance commits. No conflicts on any merge. Run `git log main..phase-0-verify --oneline` for the full live commit chain.
 
 ---
 

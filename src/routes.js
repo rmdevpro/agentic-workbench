@@ -19,10 +19,8 @@ const crypto = require('crypto');
 const express = require('express');
 const { registerMcpRoutes } = require('./mcp-tools');
 const { registerWebhookRoutes } = require('./webhooks');
-// File-tree directory listing endpoint. Replaced the upstream jqueryFileTree
-// node connector (was 2014-era sync I/O, no folder-first sort, no in-place
-// refresh on the front-end) with a JSON endpoint feeding a vanilla-JS tree
-// component in public/index.html.
+// File-tree directory listing endpoint. Returns folder-first sorted JSON
+// for the vanilla-JS tree component in public/index.html.
 
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const PROJECT_NAME_MAX_LEN = 255;

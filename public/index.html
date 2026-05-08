@@ -8,7 +8,7 @@
   <link rel="stylesheet" href="/lib/xterm/css/xterm.css">
   <link rel="stylesheet" href="/lib/toastui-editor/toastui-editor.css">
   <style>
-    /* FileTree component (vanilla JS, replaces 2014-era jqueryFileTree).
+    /* FileTree component.
        Renders a tree of mounts → directories → files. Each row is a flex
        container so the entire row (icon, name, padding) is clickable; the
        hover/selected states use theme variables for dark/light parity. */
@@ -37,7 +37,6 @@
     .ft-row.ft-loading .ft-arrow { opacity: 0.5; }
     .ft-error { padding: 4px 6px; color: var(--danger); font-size: 11px; }
   </style>
-  <script src="/lib/jquery/jquery.min.js"></script>
   <style>
     :root {
       --bg-primary: #0d1117;
@@ -242,7 +241,6 @@
        #186: white-space:nowrap so long filenames don't wrap and can scroll. */
     #panel-content { flex: 1; min-height: 0; padding: 12px 16px; display: flex; flex-direction: column; }
     .panel-section { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-    #panel-content UL.jqueryFileTree LI > A { white-space: nowrap; }
 
     .panel-section h3 {
       font-size: 11px; text-transform: uppercase; color: var(--text-muted);
@@ -3894,7 +3892,7 @@ build/**</textarea>
     }
 
     // ── FileTree component ──────────────────────────────────────────────────
-    // Vanilla-JS file tree, replaces 2014-era jqueryFileTree.
+    // Vanilla-JS file tree.
     // Used by both #file-browser-tree (right panel) and #jqft-tree (project picker).
     //
     // opts:
@@ -4414,10 +4412,9 @@ build/**</textarea>
 
     // Tab switches don't reload the right-side panel. The Files tree and
     // Tasks tree are project-independent (both fetch global mounts), so a
-    // different active tab doesn't change what's shown — and rebuilding the
-    // file tree on every tab switch was racing jqueryFileTree's lazy AJAX
-    // and collapsing on close. Panel data still loads on app start and on
-    // explicit Files↔Tasks switches via switchPanel().
+    // different active tab doesn't change what's shown. Panel data still
+    // loads on app start and on explicit Files↔Tasks switches via
+    // switchPanel().
 
     // ── Auth Modal ────────────────────────────────────
 

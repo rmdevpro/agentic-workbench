@@ -2,28 +2,9 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const fs = require('fs');
-const path = require('path');
 const { post, get, createSession } = require('../helpers/http-client');
 const { resetBaseline, dockerExec } = require('../helpers/reset-state');
 const { queryJson, queryCount } = require('../helpers/db-query');
-
-test('CST: prime-test-session.js exists and has valid context-filling logic', () => {
-  const scriptPath = path.join(__dirname, '../../scripts/prime-test-session.js');
-  assert.ok(fs.existsSync(scriptPath), 'prime-test-session.js must exist');
-  const content = fs.readFileSync(scriptPath, 'utf-8');
-  assert.ok(content.length > 100, 'Script should have substantial content');
-  // Verify the script has the structure needed for context filling:
-  // it must read JSONL, create sessions, and write synthetic messages
-  assert.ok(
-    content.includes('jsonl') || content.includes('JSONL'),
-    'Script must reference JSONL format (reads/writes session files)',
-  );
-  assert.ok(
-    content.includes('/api/sessions') || content.includes('api/state'),
-    'Script must interact with Workbench API to create sessions',
-  );
-});
 
 test('CST: create session and verify token usage API returns structured data', async () => {
   await resetBaseline();

@@ -150,7 +150,7 @@ typeof createFileTree      → "function"
 |---|---|---|
 | `assemble.js` (working tree) | absent (Q3) | absent ✓ |
 | `tests/executor-briefing-2026-05-03-baseline.md` (working tree) | absent (Q5) | absent ✓ |
-| `git ls-files reviews/` | 7 files (Q6) | 7 files ✓ |
+| `git ls-files reviews/` | ≥ 7 files (Q6 added 7; 3-CLI review docs added later via `97edeaa`) | 10 files ✓ |
 | `ls reviews/` folder spacing | normalized (one space) | both folders use single-space pattern ✓ |
 | `eslint.config.js` Q2 override block | present | present (`files: ['scripts/codemirror-entry.js']` with `sourceType: 'module'`) ✓ |
 | `eslint.config.js` Q1 AbortSignal global | present | present (line 27 — main globals block) ✓ |

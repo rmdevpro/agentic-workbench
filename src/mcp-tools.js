@@ -822,8 +822,45 @@ handlers.gh_account_remove = async (args) => {
 //   host:    default 'github.com'
 // Token is injected via GH_TOKEN env (for `gh`) or via extraheader (for `git`).
 // Token never appears in args or output. Stderr/stdout are captured.
+// #331 [A6]: 200 KB cap per stream. Chunked at the data-handler so a runaway
+// subprocess can't grow our buffers unbounded — every gh_cmd response holds
+// at most 400 KB of subprocess output regardless of what the child emits.
+const GH_STDOUT_CAP = 200_000;
+const GH_STDERR_CAP = 200_000;
+
+function _collectGhOutput(child, opts = {}) {
+  const stdoutCap = opts.stdoutCap || GH_STDOUT_CAP;
+  const stderrCap = opts.stderrCap || GH_STDERR_CAP;
+  return new Promise((resolve, reject) => {
+    let stdout = '', stderr = '';
+    child.stdout.on('data', b => {
+      if (stdout.length >= stdoutCap) return;
+      const remaining = stdoutCap - stdout.length;
+      const chunk = b.toString();
+      stdout += chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+    });
+    child.stderr.on('data', b => {
+      if (stderr.length >= stderrCap) return;
+      const remaining = stderrCap - stderr.length;
+      const chunk = b.toString();
+      stderr += chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+    });
+    child.on('error', err => reject(err));
+    child.on('close', code => resolve({ code, stdout, stderr }));
+  });
+}
+
 handlers.gh_cmd = async (args) => {
   require_(args, 'command');
+  // #331 [A6]: command must be a homogeneous string array. Strings ("gh log -n 5")
+  // would invite shell parsing or argv-corruption; non-string elements would be
+  // coerced silently.
+  if (!Array.isArray(args.command)) {
+    throw new ToolError('command must be an array of strings', 400);
+  }
+  if (!args.command.every(a => typeof a === 'string')) {
+    throw new ToolError('every command element must be a string', 400);
+  }
   const cmd = args.command;
   const useGit = !!args.use_git; // when true: use 'git' instead of 'gh'
   const host = args.host || 'github.com';
@@ -842,36 +879,35 @@ handlers.gh_cmd = async (args) => {
   if (!account) {
     throw new ToolError(`no_account_for_path: ${path}`, 404);
   }
-  return new Promise((resolve, reject) => {
-    let bin, finalArgs, env;
-    if (useGit) {
-      bin = 'git';
-      finalArgs = [..._gitAuth.gitAuthArgs(account.token), ...cmd];
-      env = process.env;
-    } else {
-      bin = 'gh';
-      finalArgs = cmd;
-      env = { ...process.env, GH_TOKEN: account.token, GH_HOST: host };
-    }
-    const child = _childProcess.spawn(bin, finalArgs, {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '', stderr = '';
-    child.stdout.on('data', b => stdout += b.toString());
-    child.stderr.on('data', b => stderr += b.toString());
-    child.on('error', err => reject(new ToolError(`spawn failed: ${err.message}`, 500)));
-    child.on('close', code => {
-      // Distinguish auth errors from other failures.
-      if (code === 0) {
-        resolve({ ok: true, code, stdout: stdout.slice(0, 200000), stderr: stderr.slice(0, 8000), path });
-      } else if (/401|403|token_expired|Bad credentials/i.test(stderr)) {
-        reject(new ToolError(`auth_rejected for path ${path}: ${stderr.trim().slice(0, 500)}`, 401));
-      } else {
-        reject(new ToolError(`gh_cmd exit ${code}: ${stderr.trim().slice(0, 500)}`, code === 1 ? 400 : 500));
-      }
-    });
+  let bin, finalArgs, env;
+  if (useGit) {
+    bin = 'git';
+    finalArgs = [..._gitAuth.gitAuthArgs(account.token), ...cmd];
+    env = process.env;
+  } else {
+    bin = 'gh';
+    finalArgs = cmd;
+    env = { ...process.env, GH_TOKEN: account.token, GH_HOST: host };
+  }
+  const child = _childProcess.spawn(bin, finalArgs, {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let collected;
+  try {
+    collected = await _collectGhOutput(child);
+  } catch (err) {
+    throw new ToolError(`spawn failed: ${err.message}`, 500);
+  }
+  const { code, stdout, stderr } = collected;
+  // Distinguish auth errors from other failures.
+  if (code === 0) {
+    return { ok: true, code, stdout, stderr: stderr.slice(0, 8000), path };
+  }
+  if (/401|403|token_expired|Bad credentials/i.test(stderr)) {
+    throw new ToolError(`auth_rejected for path ${path}: ${stderr.trim().slice(0, 500)}`, 401);
+  }
+  throw new ToolError(`gh_cmd exit ${code}: ${stderr.trim().slice(0, 500)}`, code === 1 ? 400 : 500);
 };
 
 // ── log_* ────────────────────────────────────────────────────────────────────
@@ -945,4 +981,4 @@ function registerMcpRoutes(app) {
   });
 }
 
-module.exports = { registerMcpRoutes, handlers, dispatch, TOOL_NAMES, ToolError };
+module.exports = { registerMcpRoutes, handlers, dispatch, TOOL_NAMES, ToolError, _collectGhOutput };

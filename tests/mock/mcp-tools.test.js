@@ -12,8 +12,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
-const { registerMcpRoutes, handlers, TOOL_NAMES } = require('../../src/mcp-tools.js');
+const { registerMcpRoutes, handlers, TOOL_NAMES, _collectGhOutput } = require('../../src/mcp-tools.js');
 const { withServer, req } = require('../helpers/with-server');
+const { EventEmitter } = require('node:events');
 
 const KNOWN_DOMAINS = ['file', 'session', 'project', 'task', 'log', 'gh'];
 
@@ -115,4 +116,60 @@ test('MCP session_wait rejects seconds <= 0', async () => {
     const r = await call(port, { tool: 'session_wait', args: { seconds: 0 } });
     assert.equal(r.status, 400);
   });
+});
+
+// #331 [A6]: gh_cmd argv-shape validation + chunked output cap.
+test('MCP gh_cmd rejects string command', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'gh_cmd',
+      args: { command: 'ls -la', repo: 'rmdevpro/agentic-workbench' },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /command must be an array/i);
+  });
+});
+
+test('MCP gh_cmd rejects non-string command element', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'gh_cmd',
+      args: { command: ['log', {}], repo: 'rmdevpro/agentic-workbench' },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /every command element must be a string/i);
+  });
+});
+
+// Verify the streaming cap directly. Build a fake child-process EventEmitter
+// that emits 500 KB of stdout, then assert the collector buffer is exactly
+// 200_000 chars — the cap matters because gh's `pr list --json` against a
+// busy repo regularly emits hundreds of KB and we must not let it grow
+// unbounded.
+test('_collectGhOutput caps stdout at 200 KB', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const promise = _collectGhOutput(child);
+  // Emit 500 KB in three chunks.
+  child.stdout.emit('data', Buffer.from('a'.repeat(150_000)));
+  child.stdout.emit('data', Buffer.from('b'.repeat(150_000)));
+  child.stdout.emit('data', Buffer.from('c'.repeat(200_000)));
+  child.emit('close', 0);
+  const { stdout } = await promise;
+  assert.equal(stdout.length, 200_000);
+  // The first 200 KB of input were 150 KB 'a' + 50 KB 'b'.
+  assert.ok(stdout.startsWith('a'.repeat(10)));
+  assert.ok(stdout.endsWith('b'.repeat(10)));
+});
+
+test('_collectGhOutput caps stderr at 200 KB', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const promise = _collectGhOutput(child);
+  child.stderr.emit('data', Buffer.from('e'.repeat(300_000)));
+  child.emit('close', 1);
+  const { stderr } = await promise;
+  assert.equal(stderr.length, 200_000);
 });

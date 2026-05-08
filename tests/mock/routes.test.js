@@ -163,6 +163,19 @@ function makeApp(overrides = {}) {
         .filter((s) => (s.name || '').toLowerCase().includes(needle))
         .map((s) => ({ ...s, project_name: projectById.get(s.project_id)?.name }));
     },
+    // Program methods (#325 O1) — routes.js calls these from /api/state
+    // (line 1216), /api/programs* (1029, 1037, 1045, 1064, 1070, 1080), and
+    // session list (1590). Without them the routes return 500 and several
+    // session/project tests fail spuriously. Empty + null defaults keep the
+    // mock isolated from program-specific assertions.
+    getAllPrograms: () => [],
+    getProgram: () => null,
+    getProgramByName: () => null,
+    addProgram: (name, description = '') => ({ id: 1, name, description }),
+    updateProgram: (id, fields) => ({ id, ...fields }),
+    deleteProgram: () => {},
+    countProjectsInProgram: () => 0,
+    setProjectProgram: () => {},
     DATA_DIR: '/tmp/bp-data',
   };
   const existsFn = overrides.tmuxExists ?? (async () => false);
@@ -1249,8 +1262,11 @@ test('SES-21: POST /api/sessions rejects overlong name', async () => {
 
 test('SES-22: POST /api/sessions returns 410 when project path missing', async () => {
   await withFullServer(async ({ port }) => {
+    // Must include `name` so the request reaches the project-existence check
+    // (the `name required` 400 short-circuits earlier in the handler).
     const r = await req(port, 'POST', '/api/sessions', {
       project: 'nonexistent-project-xyz',
+      name: 'create me',
     });
     assert.equal(r.status, 410);
   });

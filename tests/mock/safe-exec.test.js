@@ -183,7 +183,7 @@ test('SAF-11: curlFetchAsync returns error string on failure', async (t) => {
   }
 });
 
-test('SAF-12: tmuxCreateBash calls tmuxExecSync for new-session, mouse, history-limit', (t) => {
+test('SAF-12: tmuxCreateBash calls tmuxExecSync for new-session, mouse, history-limit, allow-passthrough, terminal-features', (t) => {
   const calls = [];
   t.mock.method(childProcess, 'execFileSync', (_c, args, _o) => {
     calls.push(args.slice());
@@ -192,7 +192,10 @@ test('SAF-12: tmuxCreateBash calls tmuxExecSync for new-session, mouse, history-
   const { safe, restore } = freshSafe();
   try {
     safe.tmuxCreateBash('my/session', '/some/cwd');
-    assert.equal(calls.length, 3);
+    // 5 calls: new-session, set-option mouse, set-option history-limit,
+    // set-option allow-passthrough, set-option -as terminal-features
+    // (last two added in #240 for OSC 8 hyperlink passthrough).
+    assert.equal(calls.length, 5);
     assert.equal(calls[0][0], 'new-session');
     assert.ok(calls[0].includes('my_session'));
     assert.ok(calls[0][calls[0].length - 1].includes('exec bash'));
@@ -200,6 +203,10 @@ test('SAF-12: tmuxCreateBash calls tmuxExecSync for new-session, mouse, history-
     assert.ok(calls[1].includes('mouse'));
     assert.equal(calls[2][0], 'set-option');
     assert.ok(calls[2].includes('history-limit'));
+    assert.equal(calls[3][0], 'set-option');
+    assert.ok(calls[3].includes('allow-passthrough'));
+    assert.equal(calls[4][0], 'set-option');
+    assert.ok(calls[4].includes('terminal-features'));
   } finally {
     restore();
   }

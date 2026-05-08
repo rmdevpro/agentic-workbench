@@ -2183,7 +2183,7 @@ function registerCoreRoutes(
           tail = '(could not read session file: ' + err.message + ')';
         }
         const tailPath = join('/tmp', `workbench-resume-${sessionId}-${Date.now()}.txt`);
-        require('fs').writeFileSync(tailPath, tail, 'utf-8');
+        await writeFile(tailPath, tail, 'utf-8');
         const byteCount = Buffer.byteLength(tail, 'utf-8');
         return res.json({
           prompt: config.getPrompt('session-resume', {

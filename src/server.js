@@ -139,12 +139,24 @@ function parseCookie(req, name) {
   return match ? match[1] : null;
 }
 
+// #337 [A12]: cache gate page content at module load. Previously every
+// auth-gated request re-read public/gate.html from disk and ran a .replace()
+// over it, which paid two syscalls + an N-byte scan per failed-auth request.
+// On a tight loop or a misbehaving probe, that adds up. The pure loader
+// + fallback live in src/gate-page.js so they're unit-testable without
+// booting the full server.
+const { loadGatePageHtml } = require('./gate-page');
+const GATE_PAGE_HTML = loadGatePageHtml({
+  readFileSync: fs.readFileSync,
+  gatePath: join(__dirname, '..', 'public', 'gate.html'),
+  mode: authMode,
+  // No logger yet at boot. Use stderr so the operator still sees it in
+  // `docker logs` if the file is missing or corrupt.
+  onError: (err) => process.stderr.write(`[server.js] gate.html read failed at boot, falling back: ${err.message}\n`),
+});
+
 function serveGatePage(res) {
-  const html = fs.readFileSync(join(__dirname, '..', 'public', 'gate.html'), 'utf-8');
-  res.type('html').send(html.replace(
-    '// __GATE_MODE_INJECT__',
-    `const __GATE_MODE__ = '${authMode}';`
-  ));
+  res.type('html').send(GATE_PAGE_HTML);
 }
 
 // Login endpoint for password mode

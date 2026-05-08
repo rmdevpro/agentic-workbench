@@ -19,6 +19,7 @@ const crypto = require('crypto');
 const express = require('express');
 const { registerMcpRoutes } = require('./mcp-tools');
 const { registerWebhookRoutes } = require('./webhooks');
+const { KB_PATH, KB_UPSTREAM_URL, KB_UPSTREAM_OWNER_REPO, CODEX_ROLLOUT_UUID_RE } = require('./constants');
 // File-tree directory listing endpoint. Returns folder-first sorted JSON
 // for the vanilla-JS tree component in public/index.html.
 
@@ -63,7 +64,7 @@ function _parseSince(input) {
 //
 // The role file content is INLINED into the prompt rather than asking the CLI
 // to read it from disk. Gemini's workspace sandbox refuses reads outside the
-// project's cwd (the role lives in /data/knowledge-base/roles/, well outside
+// project's cwd (the role lives in KB_PATH/roles/, well outside
 // /data/workspace/<project>), and Codex has the same scoping. Inlining works
 // for all three CLIs uniformly.
 async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger) {
@@ -146,7 +147,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     const after = discoverCodexSessions ? discoverCodexSessions() : [];
     const created = after.find(s => !beforeCodex.has(s.filePath));
     const rolloutId = created?.filePath
-      ? (() => { const m = basenameFs(created.filePath, '.jsonl').match(/([0-9a-f-]{36})$/i); return m ? m[1] : null; })()
+      ? (() => { const m = basenameFs(created.filePath, '.jsonl').match(CODEX_ROLLOUT_UUID_RE); return m ? m[1] : null; })()
       : null;
     const resumeArgs = rolloutId ? ['resume', rolloutId] : [];
     require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'codex', resumeArgs, { workbenchSessionId: tmpId });
@@ -437,12 +438,12 @@ function registerCoreRoutes(
           // Codex files: /sessions/YYYY/MM/DD/rollout-{timestamp}-{uuid}.jsonl
           // Extract the UUID from the filename for resume
           const name = basename(d.filePath, '.jsonl');
-          const uuidMatch = name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+          const uuidMatch = name.match(CODEX_ROLLOUT_UUID_RE);
           return uuidMatch ? uuidMatch[1] : name;
         },
         (sess, match) => {
           const name = basename(match.filePath, '.jsonl');
-          const uuidMatch = name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+          const uuidMatch = name.match(CODEX_ROLLOUT_UUID_RE);
           const rolloutId = uuidMatch ? uuidMatch[1] : name;
           if (rolloutId && rolloutId !== 'sessions') {
             try { db.setCliSessionId(sess.id, rolloutId); } catch { /* race ok */ }
@@ -497,8 +498,7 @@ function registerCoreRoutes(
     // Always include the workspace
     const workspace = safe.WORKSPACE;
     mounts.push({ path: workspace });
-    // Knowledge Base at /data/knowledge-base (auto-cloned on startup if absent)
-    const KB_PATH = '/data/knowledge-base';
+    // Knowledge Base at KB_PATH (auto-cloned on startup if absent)
     try {
       await stat(KB_PATH);
       mounts.push({ path: KB_PATH, label: 'Knowledge Base' });
@@ -520,7 +520,6 @@ function registerCoreRoutes(
   // ── POST /api/kb/init ─────────────────────────────────────────────────────
 
   app.post('/api/kb/init', async (req, res) => {
-    const KB_PATH = '/data/knowledge-base';
     // Check if already initialized
     try {
       await stat(join(KB_PATH, '.git'));
@@ -531,7 +530,7 @@ function registerCoreRoutes(
       await stat(KB_PATH);
       return res.status(409).json({ error: 'Path exists but is not a git repository' });
     } catch (_err) { /* path does not exist, safe to clone */ }
-    const kbRepoUrl = db.getSetting('kb_repo_url', '"https://github.com/rmdevpro/workbench-kb"');
+    const kbRepoUrl = db.getSetting('kb_repo_url', `"${KB_UPSTREAM_URL}"`);
     try {
       await execFileAsync('git', ['clone', kbRepoUrl, KB_PATH]);
       res.json({ ok: true });
@@ -541,9 +540,8 @@ function registerCoreRoutes(
   });
 
   // ── KB helpers ───────────────────────────────────────────────────────────────
-
-  const KB_PATH = '/data/knowledge-base';
-  const KB_UPSTREAM = 'https://github.com/rmdevpro/workbench-kb';
+  // KB_PATH and KB_UPSTREAM_URL imported from ./constants at the top.
+  const KB_UPSTREAM = KB_UPSTREAM_URL;
 
   // #317: KB account is just a row in git_accounts with isKB=true. Lookup by
   // path prefix (e.g., 'github.com/jmdrumsgarrison-ux'). The token stays in
@@ -613,7 +611,7 @@ function registerCoreRoutes(
     const username = kbAccountUsername(account);
     if (!host || !username) return res.status(500).json({ error: `KB account has invalid path: ${account.path}` });
     try {
-      const forkRes = await fetch(`https://api.${host}/repos/rmdevpro/workbench-kb/forks`, {
+      const forkRes = await fetch(`https://api.${host}/repos/${KB_UPSTREAM_OWNER_REPO}/forks`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${account.token}`,
@@ -1387,7 +1385,7 @@ function registerCoreRoutes(
   // ── GET /api/kb/roles ─────────────────────────────────────────────────────
 
   app.get('/api/kb/roles', async (req, res) => {
-    const rolesDir = '/data/knowledge-base/roles';
+    const rolesDir = join(KB_PATH, 'roles');
     try {
       const files = await readdir(rolesDir);
       const roles = files
@@ -1485,7 +1483,7 @@ function registerCoreRoutes(
 
       // Role seeding — two-phase launch when a role is selected
       if (role) {
-        const rolePath = `/data/knowledge-base/roles/${role}.md`;
+        const rolePath = join(KB_PATH, 'roles', `${role}.md`);
         try {
           await stat(rolePath);
           await _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger);
@@ -1942,7 +1940,7 @@ function registerCoreRoutes(
       vector_collection_codex: { enabled: true, dims: 384 },
       vector_ignore_patterns: 'node_modules/**\n.git/**\n*.lock\n*.min.js\ndist/**\nbuild/**',
       vector_additional_paths: [],
-      kb_repo_url: 'https://github.com/rmdevpro/workbench-kb',
+      kb_repo_url: KB_UPSTREAM_URL,
       kb_repo_name: 'blueprint_workbench_kb',
       kb_sync_interval_minutes: 5,
     };

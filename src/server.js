@@ -383,10 +383,10 @@ if (require.main === module) {
         const { execFile } = require('child_process');
         const { promisify } = require('util');
         const execFileAsync = promisify(execFile);
-        const KB_PATH = '/data/knowledge-base';
+        const { KB_PATH, KB_UPSTREAM_URL } = require('./constants');
         const { stat: fsStat } = require('fs/promises');
         fsStat(KB_PATH).catch(async () => {
-          const rawUrl = db.getSetting('kb_repo_url', '"https://github.com/rmdevpro/workbench-kb"');
+          const rawUrl = db.getSetting('kb_repo_url', `"${KB_UPSTREAM_URL}"`);
           let kbRepoUrl;
           try { kbRepoUrl = JSON.parse(rawUrl); } catch { kbRepoUrl = rawUrl; }
           logger.info('Cloning Knowledge Base', { module: 'server', url: kbRepoUrl });
@@ -396,7 +396,7 @@ if (require.main === module) {
             // `Sync from upstream` works whether or not the user has forked.
             // After fork, /api/kb/fork rewrites `origin` and leaves `upstream`
             // unchanged.
-            await execFileAsync('git', ['-C', KB_PATH, 'remote', 'add', 'upstream', 'https://github.com/rmdevpro/workbench-kb']).catch(() => {});
+            await execFileAsync('git', ['-C', KB_PATH, 'remote', 'add', 'upstream', KB_UPSTREAM_URL]).catch(() => {});
             logger.info('Knowledge Base cloned', { module: 'server' });
           } catch (err) {
             logger.error('Knowledge Base clone failed', { module: 'server', err: err.message });

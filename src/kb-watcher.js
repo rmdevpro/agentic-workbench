@@ -21,9 +21,7 @@ const simpleGit = require('simple-git');
 const { join } = require('path');
 const { stat } = require('fs/promises');
 const gitAuth = require('./git-auth');
-
-const KB_PATH = '/data/knowledge-base';
-const KB_UPSTREAM_URL = 'https://github.com/rmdevpro/workbench-kb';
+const { KB_PATH, KB_UPSTREAM_URL } = require('./constants');
 
 module.exports = function createKbWatcher({ db, logger, config }) {
   // #317: KB ops authenticate via http.extraheader — token never embedded in
@@ -252,7 +250,7 @@ module.exports = function createKbWatcher({ db, logger, config }) {
   async function start() {
     if (watcher) return; // idempotent
     if (!await _kbExists()) {
-      logger.info('kb-watcher: not starting — /data/knowledge-base is not a git repo yet');
+      logger.info(`kb-watcher: not starting — ${KB_PATH} is not a git repo yet`);
       return;
     }
     await _ensureGitIdentity();

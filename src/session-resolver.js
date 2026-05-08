@@ -2,6 +2,7 @@
 
 const fsp = require('fs/promises');
 const { basename, join } = require('path');
+const { CODEX_ROLLOUT_UUID_RE } = require('./constants');
 
 module.exports = function createSessionResolver({
   db,
@@ -302,7 +303,7 @@ module.exports = function createSessionResolver({
                 // New rollout file — extract UUID from filename for resume
                 // Codex files: /sessions/YYYY/MM/DD/rollout-{timestamp}-{uuid}.jsonl
                 const name = basename(e.name, '.jsonl');
-                const uuidMatch = name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+                const uuidMatch = name.match(CODEX_ROLLOUT_UUID_RE);
                 return uuidMatch ? uuidMatch[1] : name;
               }
             }

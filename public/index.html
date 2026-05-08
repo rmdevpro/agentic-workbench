@@ -558,11 +558,16 @@
       color: var(--text-muted); font-size: 12px; pointer-events: none;
     }
 
+    /* #343 [A18]: keep all terminal panes in layout (same bounding box) so
+       xterm.js measures dimensions without waiting for a display:none→block
+       transition. Inactive panes are visibility:hidden, NOT display:none —
+       this eliminates the 300ms refit-fallback timeout that previously hid
+       a layout-thrash bug from the user. */
     .terminal-pane {
       position: absolute; top: 0; left: 0; right: 0; bottom: 28px;
-      display: none;
+      visibility: hidden; z-index: 0;
     }
-    .terminal-pane.active { display: block; }
+    .terminal-pane.active { visibility: visible; z-index: 1; }
 
     /* ── Status Bar ─────────────────────────────────── */
     .status-bar {
@@ -2183,20 +2188,18 @@ build/**</textarea>
       if (tab.type === 'file') {
         if (tab.editor && tab.editor.focus) tab.editor.focus();
       } else if (tab.fitAddon) {
-        // Force an unconditional xterm redraw AFTER the browser has committed
-        // the display:none→block transition (next animation frame). fit() only
-        // refreshes if dimensions changed, but on a tab switch the pane's size
-        // hasn't changed — it was just hidden. Without an explicit refresh the
-        // xterm canvas stays frozen on whatever was last drawn before the pane
-        // went display:none, surfacing as "tab switched but terminal still
-        // shows the old session's content" (issue #161).
+        // #343 [A18]: panes now stay in layout via visibility-hidden (not
+        // display:none), so xterm.js has correct dimensions immediately. The
+        // requestAnimationFrame refresh remains to flip the canvas content
+        // (term content didn't change but the pane was hidden, so the bitmap
+        // backing is stale and needs redrawing — see #161). The 300ms
+        // setTimeout double-fit hack is no longer needed and is removed.
         requestAnimationFrame(() => {
           const t = tabs.get(tabId);
           if (!t || !t.term || !t.term.rows) return;
           try { t.term.refresh(0, t.term.rows - 1); } catch { /* ignore */ }
           if (t.fitAddon) t.fitAddon.fit();
         });
-        setTimeout(() => { const t = tabs.get(tabId); if (t?.fitAddon) t.fitAddon.fit(); }, 300);
         tab.term.focus();
       }
 

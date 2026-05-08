@@ -998,10 +998,107 @@ function registerCoreRoutes(
     }
   });
 
-  app.post('/api/projects/:name/remove', (req, res) => {
+  // #336 [A11]: project removal cascades through every artifact the project
+  // touched — tmux processes, Claude session JSONLs on disk, and the per-CLI
+  // trust/projects entries in ~/.claude.json, ~/.gemini/trustedFolders.json,
+  // and ~/.codex/config.toml. Each cleanup is best-effort: a failure on any
+  // single step is logged and skipped so DB state stays consistent (the row
+  // still gets removed). Cascade rows in mcp_project_enabled drop via the
+  // FK ON DELETE CASCADE on db.deleteProject.
+  async function cascadeCleanupProject(project) {
+    const HOME = safe.HOME;
+    // 1. Kill any running tmux sessions for this project.
+    try {
+      const sessions = db.getSessionsForProject(project.id) || [];
+      for (const s of sessions) {
+        try {
+          await safe.tmuxKill(tmuxName(s.id));
+        } catch (err) {
+          logger.warn('tmuxKill failed during project cascade', {
+            module: 'routes', op: 'cascadeCleanupProject',
+            project: project.name, session: s.id, err: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn('Failed to enumerate sessions for cascade', {
+        module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+      });
+    }
+    // 2. Delete Claude JSONL session dir.
+    try {
+      const sessDir = safe.findSessionsDir(project.path);
+      const { rm } = require('fs/promises');
+      await rm(sessDir, { recursive: true, force: true });
+    } catch (err) {
+      logger.warn('Failed to delete Claude sessions dir', {
+        module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+      });
+    }
+    // 3. Remove project from ~/.claude.json projects[].
+    try {
+      const configFile = join(CLAUDE_HOME, '.claude.json');
+      const cfg = JSON.parse(await readFile(configFile, 'utf-8'));
+      if (cfg.projects && cfg.projects[project.path]) {
+        delete cfg.projects[project.path];
+        await writeFile(configFile, JSON.stringify(cfg, null, 2));
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        logger.warn('Failed to clean .claude.json projects entry', {
+          module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+        });
+      }
+    }
+    // 4. Remove project from ~/.gemini/trustedFolders.json.
+    try {
+      const trustFile = join(HOME, '.gemini', 'trustedFolders.json');
+      const cfg = JSON.parse(await readFile(trustFile, 'utf-8'));
+      if (cfg[project.path] !== undefined) {
+        delete cfg[project.path];
+        await writeFile(trustFile, JSON.stringify(cfg, null, 2));
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        logger.warn('Failed to clean Gemini trustedFolders entry', {
+          module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+        });
+      }
+    }
+    // 5. Remove [projects."<path>"] block from ~/.codex/config.toml.
+    try {
+      const codexConfigFile = join(HOME, '.codex', 'config.toml');
+      const content = await readFile(codexConfigFile, 'utf-8');
+      const escapeTomlBasicString = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const blockMarker = `[projects."${escapeTomlBasicString(project.path)}"]`;
+      if (content.includes(blockMarker)) {
+        // Strip the block + its body (everything until the next [...] header
+        // or end-of-file). TOML key blocks are flat, so this is greedy across
+        // the immediate trust_level / etc. lines belonging to this header.
+        const lines = content.split('\n');
+        const out = [];
+        let skipping = false;
+        for (const line of lines) {
+          if (line.trim() === blockMarker) { skipping = true; continue; }
+          if (skipping && /^\s*\[/.test(line)) { skipping = false; }
+          if (!skipping) out.push(line);
+        }
+        await writeFile(codexConfigFile, out.join('\n'));
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        logger.warn('Failed to clean Codex config.toml block', {
+          module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+        });
+      }
+    }
+  }
+
+  app.post('/api/projects/:name/remove', async (req, res) => {
     try {
       const project = db.getProject(req.params.name);
       if (!project) return res.status(404).json({ error: 'project not found' });
+      await cascadeCleanupProject(project);
       db.deleteProject(project.id);
       res.json({ removed: req.params.name });
     } catch (err) {

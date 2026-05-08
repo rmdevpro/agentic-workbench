@@ -3,7 +3,7 @@
 **Date:** 2026-05-08
 **Phase:** Phase 0 — Stabilize the model (cleanup hygiene, build hygiene, dev tooling, mock test stabilisation)
 **Gate issue:** #389
-**Verify branch:** `phase-0-verify` (run `git rev-parse --short phase-0-verify` for current HEAD; `git log main..phase-0-verify --oneline` for the full commit chain). Branch contents: 12 original Phase 0 PR-merge commits (B1-B4, C1, C7, N4, O1) + 1 fold-back PR-merge commit (Q7 #409 from gate-review consensus) + Q8 #412 + Q9 #413 in-place commits + Work-Summary maintenance commits. Q8 + Q9 are in-place commits with retroactive issues filed; doc-maintenance commits don't change the runtime image. The last commit that changed source code shipped to the container is `97edeaa`.
+**Verify branch:** `phase-0-verify` (run `git rev-parse --short phase-0-verify` for current HEAD; `git log main..phase-0-verify --oneline` for the full commit chain). Branch contents: 12 original Phase 0 PR-merge commits (B1-B4, C1, C7, N4, O1) + 1 fold-back PR-merge commit (Q7 #409 from gate-review Round 1 consensus) + Q8 #412 + Q9 #413 + Q10 #414 in-place commits + Work-Summary maintenance commits. Q8/Q9/Q10 are in-place commits with retroactive / fold-back issues filed; doc-maintenance commits don't change the runtime image. The last commit that changed source code shipped to the container is `97edeaa`.
 **Deployed image:** `irina:5000/workbench:97edeaa` = `:latest` (sha256:91e1913a…fde7f0). Image build digest pinned to `97edeaa` since `9841c5b` is doc-only and doesn't change the container.
 **Deploy target:** M5/dev via RUN-001
 **Diff vs main:** run `git diff --shortstat main..phase-0-verify` for current numbers. The largest deletions: −6667 line block from the dead `public/spike/issues.json` deletion. The largest insertions: ~+4886 line block from the `reviews/` audit-trail commit per Q6 #401 + the 3-CLI review docs committed per `97edeaa` + Work Summary disposition updates.
@@ -49,7 +49,7 @@ Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 10 Q-
 | 413 [Q9] | — | — | `9841c5b` | In-place commit on phase-0-verify (no PR — repo-side audit doc, not in build context). Replace 4 instances of "Manual smoke: hands-on by user" in `REMEDIATION_EXECUTION_SUMMARY.md` with "End-to-end smoke (agent-driven)" framing. User-flagged misframing during gate cycle. Memory `feedback_user_does_not_test.md` saved. Issue filed retroactively as audit-trail anchor. |
 | 414 [Q10] | — | — | `42e9faf` | In-place commit on phase-0-verify (no PR — single-line architecture-statement fix in README.md:148). Replace "the jqueryfiletree connector" with description of vanilla `createFileTree` + `/api/browse` + `/api/file` architecture. From Codex Round 2 review (Moderate). Same fold-back pattern as Q7. |
 
-`phase-0-verify` is composed of: 12 original Phase 0 merge commits + Q7 #409 fold-back merge + Q8 #412 + Q9 #413 in-place commits + Work-Summary + review-docs maintenance commits. No conflicts on any merge. Run `git log main..phase-0-verify --oneline` for the full live commit chain.
+`phase-0-verify` is composed of: 12 original Phase 0 merge commits + Q7 #409 fold-back merge + Q8 #412 + Q9 #413 + Q10 #414 in-place commits + Work-Summary + review-docs maintenance commits. No conflicts on any merge. Run `git log main..phase-0-verify --oneline` for the full live commit chain.
 
 ---
 

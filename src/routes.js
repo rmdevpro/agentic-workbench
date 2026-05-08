@@ -1160,12 +1160,18 @@ function registerCoreRoutes(
     }
   });
 
+  // #333 [A8]: stop burning Claude tokens to verify login state. Reads
+  // ~/.claude/.credentials.json instead of running `claude --print`, which
+  // consumed an inference call (and a billable token) on every check.
+  // Returns 200 when the cached creds are valid, 401 otherwise — same body
+  // shape as before so existing UI code keeps working.
   app.post('/api/auth/login', async (req, res) => {
     try {
-      await safe.claudeExecAsync(['--print', 'test'], { timeout: 10000 });
-      res.json({ valid: true });
+      const status = await checkAuthStatus();
+      if (status.valid) return res.json(status);
+      return res.status(401).json(status);
     } catch (err) {
-      res.json({ valid: false, reason: err.message });
+      return res.status(401).json({ valid: false, reason: err.message });
     }
   });
 

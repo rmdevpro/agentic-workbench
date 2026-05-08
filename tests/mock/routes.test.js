@@ -1590,3 +1590,50 @@ test('PRG-RN-02: PUT /api/programs/:id rename to colliding name returns 409', as
   });
 });
 
+// #333 [A8]: POST /api/auth/login must NOT invoke claudeExecAsync — that
+// burned a billable inference call per request. The new flow reads
+// ~/.claude/.credentials.json and returns 200 (valid) or 401 (invalid).
+test('AUTH-LOGIN-01: POST /api/auth/login does not invoke claudeExecAsync', async () => {
+  let claudeCalls = 0;
+  await withFullServer(async ({ port }) => {
+    // Three sequential login attempts; all must skip the subprocess entirely.
+    for (let i = 0; i < 3; i += 1) {
+      await req(port, 'POST', '/api/auth/login', {});
+    }
+    assert.equal(claudeCalls, 0, 'claudeExecAsync must never be called by /api/auth/login');
+  }, {
+    claudeExecAsync: async () => {
+      claudeCalls += 1;
+      return 'should not run';
+    },
+  });
+});
+
+test('AUTH-LOGIN-02: POST /api/auth/login returns 401 when no credentials file', async () => {
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'POST', '/api/auth/login', {});
+    assert.equal(r.status, 401);
+    const body = await r.json();
+    assert.equal(body.valid, false);
+    assert.match(body.reason, /credentials/i);
+  });
+});
+
+test('AUTH-LOGIN-03: POST /api/auth/login returns 200 when credentials are valid', async () => {
+  const fs = require('node:fs');
+  const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-auth-'));
+  fs.writeFileSync(`${claudeHome}/.credentials.json`, JSON.stringify({
+    claudeAiOauth: {
+      accessToken: 'tok',
+      refreshToken: 'ref',
+      expiresAt: Date.now() + 3600_000,
+    },
+  }));
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'POST', '/api/auth/login', {});
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.valid, true);
+  }, { claudeHome });
+});
+

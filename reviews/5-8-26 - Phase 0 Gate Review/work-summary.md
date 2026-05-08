@@ -54,8 +54,8 @@ Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 9 Q-s
 
 ## Verify artifact
 
-- **Branch:** `phase-0-verify` @ `6052132` (HEAD) — pushed to origin
-- **Image:** `irina:5000/workbench:97edeaa`, retagged `:latest` — last deploy point. Subsequent commits (`5423dec`, `a15a58d`, `6052132`) are doc-only / inline-comment changes that don't change the runtime image.
+- **Branch:** `phase-0-verify` — pushed to origin (run `git rev-parse --short phase-0-verify` for current HEAD)
+- **Image:** `irina:5000/workbench:97edeaa`, retagged `:latest` — last deploy point. Subsequent commits on `phase-0-verify` are doc-only / inline-comment changes that don't change the runtime image (`97edeaa` is the last commit that changed source code shipped to the container).
   - SHA256: `sha256:91e1913a34cbb808ac13422c97e865820ea63ff0b548f2a39a950cc8fefde7f0`
   - Image build layer: `9586d4a41db0`
   - Earlier deploy points (preserved in registry for rollback): `010ebf0` (sha256:5aaf94d0…) initial 12-PR stack; `99c9a13` (sha256:391d2a0d…) post-Q1 AbortSignal
@@ -216,7 +216,7 @@ Per memory `feedback_no_punted_followups.md`, every "deferred" / "follow-up" / "
 |---|---|---|---|
 | Stale jQuery + jqueryfiletree refs in active tests + plans + runbook | Claude (B-F2) + Codex (Major + Moderate) | Q7 #409 / PR #410 / commit `37eab54`: rewrote SRV-02 to assert codemirror + xterm + jquery 404; rewrote file-browser.spec to use `GET /api/browse?path=/` with JSON shape assertion; marked plan + runbook entries REMOVED with phase-0 cleanup pointers | ✓ Folded |
 | Stale `prime-test-session.js` refs in test plans (UTIL-01/02, WAT-13, §3.3, §3.7) | Codex (Moderate) | Same Q7 PR — REMOVED-marked all references with #320 pointer | ✓ Folded |
-| Diff-stat in Work Summary inaccurate (`33 files / +106 / −7102`) | Claude + Codex (Minor) | Updated to current `41 files / +5452 / −7141`. Recomputed each Work Summary revision via `git diff --stat main..phase-0-verify`. | ✓ Folded |
+| Diff-stat in Work Summary inaccurate (`33 files / +106 / −7102`) | Claude + Codex (Minor) | Original stale numbers removed; the doc no longer pins a self-referential diff stat. Live numbers via `git diff --shortstat main..phase-0-verify`. | ✓ Folded |
 | Work Summary HEAD reference outdated | Codex (Minor) | Updated to current HEAD (see header at top of this document for the live value + commit chain). | ✓ Folded |
 
 ### Single-CLI observations (accepted with documented disposition)

@@ -6,6 +6,7 @@ const safe = require('./safe-exec');
 const db = require('./db');
 const config = require('./config');
 const logger = require('./logger');
+const { CODEX_ROLLOUT_UUID_RE } = require('./constants');
 
 const CLAUDE_HOME = safe.CLAUDE_HOME;
 const WORKSPACE = safe.WORKSPACE;
@@ -362,7 +363,7 @@ function _readCodexTranscript(sessionId, maxTranscriptChars, maxMessageChars) {
   if (cliSessId) {
     target = codexSessions.find(c => {
       const rolloutName = basename(c.filePath, '.jsonl');
-      const rolloutUuid = rolloutName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+      const rolloutUuid = rolloutName.match(CODEX_ROLLOUT_UUID_RE);
       const rolloutId = rolloutUuid ? rolloutUuid[1] : rolloutName;
       return rolloutId === cliSessId;
     });
@@ -558,7 +559,7 @@ function _getCodexTokenUsage(sessionId) {
   if (cliSessId) {
     target = codexSessions.find(c => {
       const rolloutName = basename(c.filePath, '.jsonl');
-      const rolloutUuid = rolloutName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+      const rolloutUuid = rolloutName.match(CODEX_ROLLOUT_UUID_RE);
       const rolloutId = rolloutUuid ? rolloutUuid[1] : rolloutName;
       return rolloutId === cliSessId;
     });
@@ -960,7 +961,7 @@ async function getSessionInfo(sessionId, opts = {}) {
       const sessions = discoverCodexSessions();
       const target = sessions.find(c => {
         const rolloutName = basename(c.filePath, '.jsonl');
-        const m = rolloutName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+        const m = rolloutName.match(CODEX_ROLLOUT_UUID_RE);
         return (m ? m[1] : rolloutName) === dbRow.cli_session_id;
       });
       if (target) {

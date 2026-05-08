@@ -3,6 +3,7 @@
 const fsp = require('fs/promises');
 const fs = require('fs');
 const { join, basename } = require('path');
+const { CODEX_ROLLOUT_UUID_RE } = require('./constants');
 
 module.exports = function createWatchers({
   db,
@@ -85,7 +86,7 @@ module.exports = function createWatchers({
         } else if (cliType === 'codex') {
           const found = sessionUtils.discoverCodexSessions().find(s => {
             const rolloutName = basename(s.filePath, '.jsonl');
-            const m = rolloutName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+            const m = rolloutName.match(CODEX_ROLLOUT_UUID_RE);
             return (m ? m[1] : rolloutName) === fresh.cli_session_id;
           });
           filePath = found?.filePath || null;

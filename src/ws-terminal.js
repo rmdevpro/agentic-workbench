@@ -54,7 +54,8 @@ module.exports = function createWsTerminal({
         if (!inFlight) {
           inFlight = (async () => {
             try {
-              const idPrefix = tmuxSession.slice(3, 15);
+              // #346 [C4]: helper instead of magic-number slice.
+              const idPrefix = safe.tmuxNamePrefix(tmuxSession);
               const sessRow = db.getSessionByPrefix(idPrefix);
               if (!sessRow || !sessRow.project_path) return false;
               // 3-CLI review concern: validate the prefix lookup actually points

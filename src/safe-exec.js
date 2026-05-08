@@ -38,6 +38,17 @@ function tmuxNameFor(sessionId) {
   return sanitizeTmuxName(`wb_${sessionId.substring(0, 12)}_${hash}`);
 }
 
+// #346 [C4]: extract the 12-char id-derived prefix from a tmux session name.
+// tmuxNameFor returns `wb_<sessionId.substring(0,12)>_<md5-4>`, so the
+// reverse-lookup window is the slice [3, 15). Callers (notably ws-terminal's
+// auto-respawn) pass this to db.getSessionByPrefix() to recover the
+// originating session id from a tmux pane name. Avoids a magic-number
+// `.slice(3, 15)` at the call site and gives the operation a discoverable
+// name in stack traces.
+function tmuxNamePrefix(tmuxName) {
+  return String(tmuxName).slice(3, 15);
+}
+
 function shellEscape(arg) {
   return "'" + arg.replace(/'/g, "'\\''") + "'";
 }
@@ -431,6 +442,7 @@ module.exports = {
   resolveProjectPath,
   sanitizeTmuxName,
   tmuxNameFor,
+  tmuxNamePrefix,
   shellEscape,
   sanitizeErrorForClient,
   claudeExecAsync,

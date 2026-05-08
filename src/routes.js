@@ -744,6 +744,33 @@ function registerCoreRoutes(
     res.json({ repo, owner, name, count: items.length, items });
   });
 
+  // ── GET /api/projects/:name/git-remote ────────────────────────────────────
+  // #329 [A4]: derive {host, owner, name, repo} from `git remote get-url origin`
+  // for the named project. Used by the frontend issue picker so it stops
+  // hardcoding `rmdevpro/<repo>`. The returned `repo` is in the 3-part form
+  // `host/owner/name` consumable by /api/issues directly.
+  app.get('/api/projects/:name/git-remote', async (req, res) => {
+    try {
+      const projectName = req.params.name;
+      const project = db.getProjectByName(projectName);
+      if (!project) return res.status(404).json({ error: 'project not found' });
+      let remoteUrl;
+      try {
+        const { stdout } = await execFileAsync('git', ['-C', project.path, 'remote', 'get-url', 'origin'], { timeout: 5000 });
+        remoteUrl = stdout.trim();
+      } catch (err) {
+        return res.status(404).json({ error: 'no_git_remote', detail: err.message.slice(0, 200) });
+      }
+      const parts = gitAuth.repoPartsFromUrl(remoteUrl);
+      if (!parts) return res.status(422).json({ error: 'unparseable_remote_url', remote: remoteUrl });
+      const repo = `${parts.host}/${parts.owner}/${parts.name}`;
+      res.json({ host: parts.host, owner: parts.owner, name: parts.name, repo, remote: remoteUrl });
+    } catch (err) {
+      logger.error('git-remote endpoint error', { module: 'routes', err: err.message });
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // ── GET /api/git-accounts ─────────────────────────────────────────────────
   // #317: account management endpoints. Token never returned in responses.
   app.get('/api/git-accounts', (req, res) => {

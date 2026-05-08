@@ -59,17 +59,32 @@ function _genId() {
 //   ssh://git@github.com/rmdevpro/agentic-workbench → 'github.com/rmdevpro'
 function pathFromUrl(url) {
   if (!url) return null;
+  const parts = repoPartsFromUrl(url);
+  return parts ? `${parts.host}/${parts.owner}` : null;
+}
+
+// #329 [A4]: full {host, owner, name} parse from a git remote URL. Used by
+// /api/projects/:name/git-remote to give the frontend issue-picker the right
+// 3-part repo identifier (host/owner/name), no hardcoded org assumption.
+//
+// Examples:
+//   https://github.com/rmdevpro/agentic-workbench.git → {host:'github.com', owner:'rmdevpro', name:'agentic-workbench'}
+//   https://x:tok@enterprise.example.com/team/repo    → {host:'enterprise.example.com', owner:'team', name:'repo'}
+//   git@github.com:rmdevpro/agentic-workbench.git     → {host:'github.com', owner:'rmdevpro', name:'agentic-workbench'}
+//   ssh://git@github.com/rmdevpro/agentic-workbench   → {host:'github.com', owner:'rmdevpro', name:'agentic-workbench'}
+function repoPartsFromUrl(url) {
+  if (!url) return null;
   let u = String(url).trim();
   // SCP-style ssh: git@host:owner/repo
-  const scp = /^[^@]+@([^:]+):([^/]+)/.exec(u);
-  if (scp) return `${scp[1]}/${scp[2]}`;
+  const scp = /^[^@]+@([^:]+):([^/]+)\/(.+)$/.exec(u);
+  if (scp) return { host: scp[1], owner: scp[2], name: scp[3].replace(/\.git$/, '') };
   // Strip protocol + any embedded creds
   u = u.replace(/^[a-z]+:\/\//i, '');
   u = u.replace(/^[^@/]+:[^@/]+@/, '');  // user:pass@
   u = u.replace(/^[^@/]+@/, '');         // user@
-  const m = /^([^/]+)\/([^/]+)/.exec(u);
+  const m = /^([^/]+)\/([^/]+)\/(.+)$/.exec(u);
   if (!m) return null;
-  return `${m[1]}/${m[2].replace(/\.git$/, '')}`;
+  return { host: m[1], owner: m[2], name: m[3].replace(/\.git$/, '') };
 }
 
 // Find an account by exact path match. Returns null if no row exists.
@@ -196,6 +211,7 @@ module.exports = {
   kbAccount,
   defaultAccount,
   pathFromUrl,
+  repoPartsFromUrl,
   gitAuthArgs,
   withGit,
   addAccount,

@@ -257,4 +257,188 @@ The largest **structural** observation across the test + code review is B-F2 —
 
 5. **PROC-001 §3 strict vs. pragmatic reading on B-F3:** is the corrective action plan a sufficient 3-CLI input for the ENG-12 production-side fold-in?
 
-— end of Claude review
+— end of Round 1 Claude review
+
+---
+
+## §F — Round 2: Fold-back verification
+
+**Reviewer:** Claude Sonnet 4.6
+**Date:** 2026-05-08
+**Scope:** Verify the developer's response to the 3-CLI gate review findings (Claude's, Codex's, Gemini's). Read all three reviews, re-read the work summary at current state, walked the actual fold-back commits.
+
+**Verify branch state:** `phase-0-verify` HEAD = `77aa7e6` (doc-only). Last source-changing commit = `97edeaa` (per work summary). Deployed image still pinned to `:97edeaa`.
+
+### F.1 Cross-review consensus map
+
+What each Round 1 reviewer flagged and how the consensus collapsed:
+
+| Finding | Claude (R1) | Codex (R1) | Gemini (R1) | Consensus | Action |
+|---|---|---|---|---|---|
+| Stale jQuery refs in test plans + runbook + active tests | B-F2 (medium, "fold") | Major + Moderate ("blocker") | (silent) | **2-CLI consensus → fold** | Q7 #409 |
+| Diff-stat / HEAD ref accuracy in work summary | "Low / fold" | Minor ("fold") | (silent) | **2-CLI consensus → fold** | Doc commits |
+| Mock fixture program-method coverage | A.1 (single, future-author hint) | (silent) | (silent — explicit pass) | Single-CLI → accept | Q8 #412 |
+| `_readClaudeStatusLineState` test coverage | A.4 (single, Phase 1 deferral) | (silent) | (silent) | Single-CLI → defer | #411 |
+| Voice runbook tombstone | B-F1 (single, accept-historical) | (silent) | (silent) | Single-CLI → accept | Documented |
+| ENG-12 sync→async fold-in process question | B-F3 (single, process q) | (silent) | (silent) | Single-CLI → document | Documented |
+| Smoke framing ("manual smoke by user" misframing) | (silent) | (silent) | (silent) | User-flagged → fold | Q9 #413 |
+| Phase-1 deferred items (#402/#403/#404) | (silent) | (silent) | (silent) | Developer self-disclosed | Filed |
+
+The consensus collapse is healthy: every consensus item folded back; every single-CLI item either folded if obvious (A.1) or accepted with reasoning (B-F1/B-F3).
+
+### F.2 Verification of each fold-back
+
+#### F.2.1 Q7 #409 (commit `37eab54`) — Stale jQuery + prime-test-session sweep
+
+**Claim:** Folded the consensus B-F2 + Codex Major+Moderate findings. 5 files changed.
+
+**Verified directly against the diff:**
+
+- `tests/live/startup.test.js` SRV-02 (Codex Major #1):
+  - Was: `assert.equal((await fetch('/lib/jquery/jquery.min.js')).status, 200);` — would fail on next live run.
+  - Now: asserts `xterm` and `codemirror-bundle.js` serve 200, AND asserts `/lib/jquery/jquery.min.js` returns 404 as a regression check for #319.
+  - **Resolved.** The new shape is stronger than the old: it both verifies the active assets serve and locks in the deletion as a regression invariant.
+
+- `tests/browser/file-browser.spec.js` (Codex Major #2):
+  - Was: `fetch('/api/jqueryfiletree', { method: 'POST', body: 'dir=/' })` with HTML-content-length assertions.
+  - Now: `fetch('/api/browse?path=/')` with JSON shape assertions (`apiResponse.entryCount > 0`, `apiResponse.path === '/'`).
+  - **Resolved.** The replacement is a correct port to the current API. The earlier HTML-content-length check was also a weaker assertion than entry-count + echoed-path; the new test is meaningfully better.
+
+- `tests/workbench-test-plan-backend.md` (Codex Moderate, my B-F2):
+  - §3.3 prime-test-session row: REMOVED-marked with #320 pointer + replacement explanation.
+  - §3.7 prime-test-session self-test: entire section REMOVED-marked.
+  - UTIL-01/02 capability rows: REMOVED-marked.
+  - SRV-02 §4.1 inputs updated to current routes; §5 SRV-02 inputs updated; jquery 404 regression check documented.
+  - WAT-13 REMOVED-marked with explanation that context-stress.test.js now exercises the property indirectly.
+  - FS-04 reframed from `POST /api/jqueryFileTree` to `GET /api/browse?path=...` with explicit JSON shape.
+  - Helper-table prime-test-session entry REMOVED-marked.
+  - Claude MIN-02 + Gemini historical disposition entries updated with current state.
+  - **Resolved.** More extensive than I asked for in B-F2 — UTIL-01/02 + WAT-13 + §3.7 weren't on my list but were on Codex's; folding them all together was correct.
+
+- `tests/workbench-test-plan-ui.md` (my B-F2):
+  - L1754 `POST /api/jqueryfiletree` REMOVED-marked.
+  - L1755 reframed `GET /api/browse` as the active replacement (now linked to FIL-01, AP-02 instead of just AP-02).
+  - R-08 historical note updated.
+  - **Resolved.**
+
+- `tests/workbench-test-runbook.md` (my B-F2):
+  - L4235 `UL.jqueryFileTree` selector → replaced with `.ft-children`/`.ft-row` synthetic injection that matches the vanilla DOM the current `createFileTree` renders.
+  - **Resolved.** The synthetic-LI overflow recipe now produces DOM the verify code can actually find.
+
+#### F.2.2 Q8 #412 (commit `a15a58d`) — Mock fixture future-author note
+
+**Claim:** Adds an inline note next to the program-method block in `tests/mock/routes.test.js` per my A.1 finding.
+
+**Verified directly against the diff:**
+
+```js
+// NOTE for future test authors: if you write a test that asserts on
+// program state (e.g., "session list groups by program X", "project P
+// appears under program Q"), pass program-aware overrides via the
+// existing `makeApp(overrides)` mechanism — supplying e.g.
+//   getAllPrograms: () => [{id: 1, name: 'engineering'}],
+//   setProjectProgram: spy(),
+// Don't rely on the empty defaults; they are deliberately program-blind.
+```
+
+**Resolved.** The note is precisely the shape I recommended in §A.1: explains the deliberate program-blindness, provides a concrete example for future authors, and references the existing `makeApp(overrides)` mechanism rather than inventing a new pattern.
+
+#### F.2.3 Q9 #413 (commit `9841c5b`) — Smoke framing fix
+
+**Claim:** Corrects "Manual smoke: hands-on by user" framing in 4 phase-gate sections of `REMEDIATION_EXECUTION_SUMMARY.md`.
+
+**Verified directly against the diff:** All 4 instances replaced with "End-to-end smoke (agent-driven)" framing that puts the agent in the smoke loop with Playwright + Bash against M5, with per-step affirmations + screenshots backing each verify line. Each section now also includes the explicit assertion "The user does not run smoke tests; the agent does."
+
+**Note:** This wasn't a Round 1 reviewer finding — the user surfaced it during the review cycle. Healthy that it was handled with the same Q-series treatment (issue file + commit + disposition note) rather than as a silent edit.
+
+**Resolved.** Framing is now consistent with the trust model the user enforces (saved memory `feedback_user_does_not_test.md` per the work summary §"Punt audit").
+
+#### F.2.4 B-F1 disposition (voice runbook tombstone)
+
+**Claim:** Accepted as intentional. The line at `tests/workbench-test-runbook.md:3722` is the `REG-VOICE-01` regression test header, not a stale forward reference.
+
+**Verified:** I re-read the runbook context. The tombstone is the header of a regression test that explicitly verifies "voice was removed and its UI surface (mic button) is gone." Removing the tombstone would orphan the regression test. **Disposition correct — accept as intentional.**
+
+#### F.2.5 B-F3 disposition (ENG-12 sync→async fold-in process question)
+
+**Claim:** Accepted with documentation. The fix derives from CLAUDE_CODE_REVIEW.md §7.1 (a 3-CLI input by definition), so the strategy-layer 3-CLI consultation already happened.
+
+**Reasoning verified:** The corrective action plan explicitly cites all three reviews as inputs. PROC-001 §3 says "every bug requires a 3-CLI RCA before any fix." The defensible reading is that "3-CLI consultation" can land at the strategy layer (the corrective action plan) rather than per-fix when the fix is sourced from a multi-CLI input that already underwent independent analysis.
+
+**Disposition correct — accept with documentation.** The work summary explicitly captures this in the disposition table so future phases don't keep re-flagging the question. Worth noting that this interpretation is now precedent and should be added to PROC-001's §"When to skip 3-CLI diagnosis" section in a future doc-cleanup pass — the work summary doesn't ask for this but it would prevent rediscovery.
+
+#### F.2.6 A.4 disposition (statusLine overlay test coverage)
+
+**Claim:** Filed for Phase 1 as #411 (Q6 in Phase 1's series).
+
+**Verified:** `gh issue view 411` returns:
+- Title: `[Q6] mock test: SU-12 getSessionInfo statusLine overlay coverage`
+- State: OPEN
+- Body: detailed problem statement, references the exact code path (`session-utils.js:986-998`), references #286 contract change, references the gap left by #325's SU-09/10/11 max_tokens null-assert update.
+
+**Disposition correct — Phase 1 deferral with a concrete actionable issue.** Issue body is more thorough than my original §A.4 finding (which was a coverage observation) — author lifted my reasoning and added the file/line citation to operationalize it. Good shape for Phase 1 pickup.
+
+#### F.2.7 §E1 + §E2 (asks of other CLIs)
+
+**Claim:** Both confirmed by developer's own audit:
+- §E1 (mock fixture sufficiency): walked routes that consume program methods (state line 1205, 1214, 1588; programs line 1020, 1027) and confirmed empty/null defaults work.
+- §E2 (gitignore wildcard template-file safety): `find tests/ -name "*-template*"` returns zero hits.
+
+**Verified §E1 by spot-check:** routes.js:1207 `program_id: project.program_id ?? null` — graceful nullish-coalesce; the empty default does not crash. routes.js:1216 `db.getAllPrograms('active')` — returns empty array, the iteration is empty, no error. **Confirmed.**
+
+**Verified §E2:** running `find tests/ -name "*-template*"` from the repo root returns zero hits. The wildcard is safe.
+
+**Both responses are well-reasoned and traceable.** The developer didn't just say "yes" — they walked the code paths and showed their work.
+
+### F.3 Surviving references (sub-threshold)
+
+After Q7 #409 + Q8 #412 + Q9 #413, three jquery/prime-test-session references survive in the working tree. Each is acceptable-as-is:
+
+1. **`tests/workbench-test-plan-ui.md:594`** — "Note: Functions from server-side files (`mcp-server.js`, `server.js`, `scripts/prime-test-session.js`) are excluded from this inventory."
+   - This is historical context for the FN-55/FN-56 removal documented at L1855. The script doesn't exist anymore but the note explaining the historical exclusion category still has documentary value.
+   - **Could be tightened** to "(scripts/prime-test-session.js — deleted in #320, historical context)" but this is below the threshold for a Phase 0 fold-back. Trivial polish for whatever next test-plan revision touches §6.
+
+2. **`tests/workbench-test-plan-ui.md:1855`** — Phase 6b reviewer-disposition note describing how `main()` was identified as living in `prime-test-session.js`.
+   - Accurate at the time it was written; serves as the audit trail for the FN inventory correction. Historical record.
+   - **Acceptable as-is.**
+
+3. **`tests/helpers/browser-coverage.js:52, 56`** — coverage filter that excludes URLs containing `jquery` (alongside `xterm` and `addon`).
+   - Dead filter rule (jquery is gone). Harmless because there are no longer any jquery URLs to filter.
+   - **Could be removed** as part of a future test-helpers cleanup, but doesn't actively cause incorrect behavior. Below the threshold.
+
+None of these would have changed my Round 1 disposition. They're fair to defer.
+
+### F.4 Work Summary self-modifications
+
+The work summary itself underwent an anti-staleness refactor across 9 doc-only commits (`d5cef11`, `c43454f`, `8359780`, `3dd5d2d`, `081bbcf`, `48640ea`, `45467dc`, `5f0c560`, `77aa7e6`). The pattern is consistent:
+
+- HEAD SHA pins → replaced with "run `git rev-parse --short phase-0-verify`"
+- Diff-stat pins → replaced with "run `git diff --shortstat main..phase-0-verify`"
+- File-count pin → updated to ≥-style ("≥ 7 files; 10 today")
+- Self-referential commit-chain hash → replaced with `git log main..phase-0-verify --oneline` reference
+
+This is the right shape for a living gate doc that gets updated post-merge. My Round 1 nit on the diff-stat inaccuracy spawned a thoughtful general-case fix rather than a one-line patch; the work summary is now self-maintaining.
+
+### F.5 Items the developer disclosed that the reviewers missed
+
+The work summary discloses three Phase-1-deferred items that were surfaced during developer's own UI verification, NOT by any of the three reviewers:
+
+- **#402**: showErrorBanner `insertBefore NotFoundError` every 60s (real production bug).
+- **#403**: Password fields not in form (Chrome DOM warnings from Settings modal API key fields).
+- **#404**: `#jqft-tree` element ID rename (vestigial jQuery prefix that survives the deletion).
+
+The disclosure is worth calling out: the developer's UI verification at the deployed site found bugs that none of the three reviewers' static analyses surfaced. The reviews were diff-focused; the deployed-state checks caught runtime symptoms. This is healthy gate hygiene — neither static nor dynamic verification would catch all of these alone.
+
+**No criticism here** — the reviewers (myself included) reviewed what they were asked to review (the diff). Surfacing the dynamic-verification finds in the work summary's "Items the reviewers did NOT find" section is exactly the right move for audit-trail honesty per memory `feedback_no_punted_followups.md`.
+
+### F.6 Final Round-2 disposition
+
+**PASS.**
+
+All consensus findings are folded comprehensively. All single-CLI findings are dispositioned correctly (folded if applicable, accepted-with-documentation otherwise, or filed for Phase 1 with concrete issues). The two Codex-flagged active test failures (live SRV-02 and browser file-browser) are actively fixed in the test code, not just deferred. The work summary's self-staleness was addressed by a pattern fix rather than a one-shot patch.
+
+Phase 0 is ready to merge. The 13 PRs (12 cleanup + Q7) close 17 work issues + the gate issue (#389). The 3 Phase-1-deferred items (#402/#403/#404) plus the 1 Phase-1 coverage issue (#411) are filed.
+
+Recommend the user grants permission to merge.
+
+— end of Round 2 Claude review

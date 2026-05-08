@@ -42,3 +42,25 @@ The codebase diff accurately reflects the foundational hygiene scope laid out in
 **Sign-off:** Approved. 
 
 The work on `phase-0-verify` cleanly executes the intended hygiene and stabilization tasks. I grant permission to merge the 12 PRs and close the associated 14 work issues and the gate issue (#389).
+
+---
+
+## 3. Post-Review Remediation Evaluation (Addendum)
+
+After my initial sign-off, I re-evaluated the Phase 0 remediation effort following the inclusion of feedback from Claude and Codex. This addendum reviews the developer agent's actions in resolving the gate-blocking findings surfaced during cross-CLI review.
+
+### 3.1 Resolution of Consensus Findings
+**Finding:** Claude and Codex correctly identified that the jQuery and `jqueryfiletree` deletion was incomplete, as active tests and runbook documentation still asserted the old behavior (`tests/live/startup.test.js` expecting 200 OK for jQuery, and `tests/browser/file-browser.spec.js` POSTing to `/api/jqueryfiletree`).
+**Resolution:** The developer agent successfully executed a "fold-back" remediation (Commit `37eab54` / Q7 #409). 
+*   `SRV-02` was updated to assert a 404 for the jQuery asset.
+*   The browser spec was updated to use the correct `GET /api/browse?path=/` endpoint and assert on the new JSON shape.
+*   Test plans and runbook references were swept and marked as `REMOVED`.
+**Verdict:** **Pass.** The developer agent correctly resolved the gate-blocker identified by Codex and comprehensively swept the stale documentation.
+
+### 3.2 Resolution of Single-CLI Findings
+*   **Future-Author Hint (Claude A.1):** Claude noted that the `getAllPrograms` stub was minimum-viable but lacked a warning for future authors. The developer pushed an in-place commit (`a15a58d` / Q8 #412) adding an explicit inline note in `tests/mock/routes.test.js` pointing to the `makeApp(overrides)` mechanism. **Verdict: Pass.** This demonstrates excellent attention to detail.
+*   **StatusLine Overlay Test Gap (Claude A.4):** Claude identified missing test coverage for the `_readClaudeStatusLineState` path. The developer correctly recognized this required new fixture infrastructure outside Phase 0's scope and properly deferred and ticketed it for Phase 1 as Q6 #411. **Verdict: Pass.**
+*   **Process Consult Challenge (Claude B-F3):** Claude flagged an `execSync` fold-in as bypassing a 3-CLI consult. The developer accurately documented in the Work Summary that the fix was derived from the previously 3-CLI-consulted Corrective Action Plan, meaning the strategy-layer consultation had already occurred. **Verdict: Pass.** Clear and defensible process documentation.
+
+### Final Conclusion
+The developer agent handled the critical feedback professionally and decisively. The gate-blocking issues were fixed directly in the verify branch, while architectural observations and out-of-scope gaps were cleanly deferred and ticketed. The `phase-0-verify` branch is completely clean and stable. My final sign-off remains **APPROVED**.

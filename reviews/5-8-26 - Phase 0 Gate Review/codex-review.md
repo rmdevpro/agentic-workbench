@@ -39,3 +39,24 @@ Recommendation: update the header and verify artifact section to identify `afd52
 ### Gate Recommendation
 
 Do not sign off Phase 0 yet. The cleanup direction is correct, but the gate should not pass while live/browser tests and plans still assert deleted jQuery/FileTree behavior. Resolve those stale artifacts, then re-run the affected live/browser verification and update the work summary with the final reviewed commit.
+
+---
+
+## Codex Second Review
+
+### Findings
+
+#### Moderate: README still documents the removed jQuery FileTree model
+
+`README.md:148` still says filesystem access is through `/api/browse`, `/api/file`, and the `jqueryfiletree connector`. That connector is now removed. This is an active architecture/behavior statement, not a historical note, so it should be updated to reference the vanilla file tree and `/api/browse`.
+
+### Resolved From Prior Review
+
+- The previous live-test blocker is fixed: `tests/live/startup.test.js:29` now checks xterm + codemirror and asserts jQuery returns `404`.
+- The previous browser-test blocker is fixed: `tests/browser/file-browser.spec.js:56` now verifies `/api/browse?path=/` instead of `/api/jqueryfiletree`.
+- The stale test-plan/runbook jQuery references were either removed or marked historical/REMOVED with current `/api/browse` behavior documented.
+- The mock routes note requested by Claude was added at `tests/mock/routes.test.js:166`, and it gives future authors a clear override path.
+
+### Gate View
+
+I would sign off Phase 0 after the README line is corrected, or accept it as a small follow-up if the gate is limited strictly to test/code cleanup. The original blockers have been addressed. I did not rerun tests; this is a static review against the updated branch and work summary.

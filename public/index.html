@@ -1166,6 +1166,7 @@ build/**</textarea>
   <script src="/lib/xterm-web-links/lib/addon-web-links.js"></script>
   <script src="/lib/codemirror/codemirror-bundle.js"></script>
   <script src="/lib/toastui-editor/toastui-editor.js"></script>
+  <script src="/js/util.js"></script>
   <script src="/js/oauth-detector.js"></script>
   <script src="/js/modal.js"></script>
   <script>
@@ -3091,7 +3092,10 @@ build/**</textarea>
       inactive: '⏸', active: '⏵', blocked: '⏹', done: '✓', cancelled: '✗',
     };
 
-    function escAttr(s) { return String(s).replace(/"/g, '&quot;'); }
+    // #341 [A16]: escAttr now delegates to escapeAttr from /js/util.js — same
+    // signature, but escapes <, >, &, ', " not just ". The kept name is a
+    // call-site compatibility shim; new code should use escapeAttr directly.
+    const escAttr = (s) => escapeAttr(s);
 
     function _parseGithubIssue(qualified) {
       // "owner/repo#N" → { repo: "owner/repo", num: N, label: "#N", url: "..." }
@@ -5941,9 +5945,10 @@ build/**</textarea>
       if (banner) banner.remove();
     }
 
-    function escapeHtml(s) {
-      return String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
-    }
+    // #341 [A16]: escapeHtml moved to /js/util.js — kept here as a no-op
+    // export hook so any external touchpoint that did `window.escapeHtml`
+    // still works (the util script binds it to window already). Removing
+    // the duplicate definition prevents drift between the two copies.
 
     async function openErrorLogModal() {
       let modal = document.getElementById('error-log-modal');

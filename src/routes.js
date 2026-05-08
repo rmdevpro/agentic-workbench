@@ -687,15 +687,33 @@ function registerCoreRoutes(
   const _issuesCache = new Map(); // key: repo+state → { fetchedAt, items }
   const _ISSUES_TTL_MS = 60 * 1000;
   app.get('/api/issues', async (req, res) => {
-    const repo = String(req.query.repo || '');  // 'owner/name'
+    const repo = String(req.query.repo || '');  // 'owner/name' (defaults to github.com) or 'host/owner/name' (explicit host)
     const state = String(req.query.state || 'open').toLowerCase();
     const q = String(req.query.q || '').toLowerCase();
-    const m = /^([^/]+)\/([^/]+)$/.exec(repo);
-    if (!m) return res.status(400).json({ error: 'repo must be owner/name' });
-    const [, owner, name] = m;
-    const path = `github.com/${owner}`;
+
+    // #328 [A3]: accept extended 3-part form for GitHub Enterprise repos.
+    //   owner/name             → host = github.com (back-compat)
+    //   host/owner/name        → explicit host (e.g. enterprise.example.com/owner/repo)
+    const repoParts = repo.split('/').filter(Boolean);
+    let ghHost, owner, name;
+    if (repoParts.length === 2) {
+      ghHost = 'github.com';
+      [owner, name] = repoParts;
+    } else if (repoParts.length === 3) {
+      [ghHost, owner, name] = repoParts;
+    } else {
+      return res.status(400).json({ error: 'repo must be owner/name or host/owner/name' });
+    }
+    const path = `${ghHost}/${owner}`;
     const account = gitAuth.accountForPath(db, path);
     if (!account) return res.status(404).json({ error: `no_account_for_path: ${path}` });
+
+    // #328 [A3]: derive the GraphQL API URL from the host. github.com uses
+    // a separate api.* hostname; GitHub Enterprise serves GraphQL at the
+    // same host under /api/graphql.
+    const apiUrl = ghHost === 'github.com'
+      ? 'https://api.github.com/graphql'
+      : `https://${ghHost}/api/graphql`;
 
     const cacheKey = `${repo}\x00${state}`;
     const cached = _issuesCache.get(cacheKey);
@@ -704,13 +722,20 @@ function registerCoreRoutes(
       items = cached.items;
     } else {
       const stateFilter = state === 'all' ? '[OPEN, CLOSED]' : state === 'closed' ? '[CLOSED]' : '[OPEN]';
-      const query = `query { repository(owner: "${owner}", name: "${name}") {
-        issues(states: ${stateFilter}, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
-          nodes { number title state labels(first: 5) { nodes { name color } } updatedAt }
+      // #328 [A3]: GraphQL variables for owner/name. Previous code used
+      // string interpolation — a repo or owner with a `"` in its name
+      // broke the query (and would also be an injection vector if repo
+      // input weren't already path-validated upstream).
+      const query = `query($o: String!, $n: String!) {
+        repository(owner: $o, name: $n) {
+          issues(states: ${stateFilter}, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes { number title state labels(first: 5) { nodes { name color } } updatedAt }
+          }
         }
-      } }`;
+      }`;
+      const variables = { o: owner, n: name };
       try {
-        const ghRes = await fetch(`https://api.github.com/graphql`, {
+        const ghRes = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${account.token}`,
@@ -718,7 +743,7 @@ function registerCoreRoutes(
             'Content-Type': 'application/json',
             'User-Agent': 'workbench/issues-picker',
           },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify({ query, variables }),
         });
         if (ghRes.status === 401 || ghRes.status === 403) {
           return res.status(401).json({ error: 'auth_rejected', path, status: ghRes.status });

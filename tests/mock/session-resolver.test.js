@@ -507,3 +507,50 @@ test('RES-15: resolveSessionId handles readdir non-ENOENT error during polling',
   // Should have retried and resolved on second attempt
   assert.ok(env.db.getSession('resolved'), 'Should resolve after transient error');
 });
+
+// #338 [A13]: discoverCliSessionId now uses fsp/promises throughout. End-to-end
+// test against a real tmpdir to confirm the async paths still see new files.
+test('RES-16: discoverCliSessionId resolves Gemini session id from new chat file', async () => {
+  const fs = require('node:fs');
+  const os = require('node:os');
+  const path = require('node:path');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-resgem-'));
+  const chatsDir = path.join(home, '.gemini', 'tmp', 'cwdhash', 'chats');
+  fs.mkdirSync(chatsDir, { recursive: true });
+
+  const sessions = new Map();
+  const cliSessionIds = new Map();
+  const db = {
+    sessions,
+    setCliSessionId: (id, cliId) => cliSessionIds.set(id, cliId),
+    getSessionsForProject: () => [],
+    getSession: (id) => sessions.get(id),
+    upsertSession: () => {},
+    renameSession: () => {},
+    setSessionNotes: () => {},
+    setSessionState: () => {},
+    deleteSession: () => {},
+    getProjects: () => [],
+  };
+  let sleepCalls = 0;
+  const chatFile = path.join(chatsDir, 'session-abc.json');
+  const resolver = require('../../src/session-resolver.js')({
+    db,
+    safe: { HOME: home, findSessionsDir: () => '/unused' },
+    tmuxName: (id) => `wb_${id}`,
+    tmuxExists: async () => true,
+    // Drop the new chat file during the FIRST sleep so the poll loop sees
+    // it as a "new file" relative to the empty snapshot.
+    sleep: async () => {
+      sleepCalls += 1;
+      if (sleepCalls === 1) {
+        fs.writeFileSync(chatFile, JSON.stringify({ sessionId: 'gem-cli-id-abc123' }));
+      }
+    },
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    config: { get: (_k, fb) => fb },
+  });
+
+  await resolver.discoverCliSessionId('wb-sess-1', 'gemini');
+  assert.equal(cliSessionIds.get('wb-sess-1'), 'gem-cli-id-abc123');
+});

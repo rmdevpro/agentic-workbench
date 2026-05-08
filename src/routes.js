@@ -1282,8 +1282,10 @@ function registerCoreRoutes(
 
       // Claude sessions get a temp ID that resolves to a real UUID when the JSONL appears.
       // Non-Claude CLIs don't create JSONLs, so give them a permanent UUID up front.
+      // #334 [A9]: append a 6-hex-char random suffix so two POSTs landing in
+      // the same millisecond can't collide on tmpId. Parity with mcp-tools.js:213.
       const tmpId = cliType === 'claude'
-        ? `new_${Date.now()}`
+        ? `new_${Date.now()}_${require('crypto').randomBytes(3).toString('hex')}`
         : require('crypto').randomUUID();
       const tmux = tmuxName(tmpId);
 

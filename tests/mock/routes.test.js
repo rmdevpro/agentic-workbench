@@ -1545,3 +1545,27 @@ test('TSK-10: POST /api/tasks rejects missing title', async () => {
   });
 });
 
+// #334 [A9]: tmpId for Claude sessions includes a 6-hex-char random suffix so
+// rapid concurrent POSTs cannot collide on Date.now() alone.
+test('TMPID-01: 5 concurrent Claude session POSTs produce 5 distinct tmpIds', async () => {
+  await withFullServer(async ({ port }) => {
+    const results = await Promise.all(
+      Array.from({ length: 5 }, (_, i) => req(port, 'POST', '/api/sessions', {
+        project: 'test-project',
+        name: `concurrent-${i}`,
+      })),
+    );
+    const ids = await Promise.all(results.map(async (r) => {
+      assert.equal(r.status, 200);
+      const body = await r.json();
+      assert.ok(body.id.startsWith('new_'), `id ${body.id} should start with new_`);
+      return body.id;
+    }));
+    assert.equal(new Set(ids).size, 5, `expected 5 distinct ids, got: ${ids.join(', ')}`);
+    // Belt and suspenders: assert the new format includes the random suffix.
+    for (const id of ids) {
+      assert.match(id, /^new_\d+_[0-9a-f]{6}$/, `id ${id} should match new_<ms>_<hex6>`);
+    }
+  });
+});
+

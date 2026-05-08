@@ -458,6 +458,34 @@
     #auth-modal .code-submit:disabled { opacity: 0.5; cursor: not-allowed; }
     #auth-modal .step { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; text-align: left; }
 
+    /* #340 [A15]: generic modal pattern shared by input + confirm dialogs.
+       Same overlay shape as #auth-modal, smaller content card, left-aligned. */
+    .generic-modal {
+      display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0,0,0,0.7); z-index: 1000;
+      align-items: center; justify-content: center;
+    }
+    .generic-modal.visible { display: flex; }
+    .generic-modal .modal-content {
+      background: var(--bg-secondary); border: 1px solid var(--border);
+      border-radius: 12px; padding: 24px; width: 460px; max-width: 90%;
+      position: relative; text-align: left;
+    }
+    .generic-modal .modal-close {
+      position: absolute; top: 10px; right: 14px; background: none; border: none;
+      color: var(--text-secondary); font-size: 22px; cursor: pointer; padding: 4px 8px;
+    }
+    .generic-modal .modal-close:hover { color: var(--text-primary); }
+    .generic-modal h2 { font-size: 16px; margin-bottom: 8px; color: var(--text-primary); }
+    .generic-modal p { font-size: 13px; color: var(--text-secondary); }
+    .generic-modal .modal-btn-secondary {
+      padding: 8px 16px; background: var(--bg-tertiary); color: var(--text-primary);
+      border: 1px solid var(--border); border-radius: 6px; cursor: pointer;
+      font-size: 13px;
+    }
+    .generic-modal .modal-btn-secondary:hover { background: var(--border); }
+    .generic-modal.danger #confirm-modal-ok { background: var(--accent-error, #c33); }
+
     /* ── Main Area ──────────────────────────────────── */
     #main { flex: 1; display: flex; flex-direction: row; min-width: 0; }
     #primary-panel { flex: 1; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
@@ -1023,6 +1051,37 @@ build/**</textarea>
     </div>
   </div>
 
+  <!-- #340 [A15]: generic input + confirm modals replace native window.prompt /
+       window.confirm for primary CRUD. Promise-based; resolved via the
+       showInputModal / showConfirmModal helpers in the script block. -->
+  <div id="input-modal" class="generic-modal">
+    <div class="modal-content">
+      <button class="modal-close" onclick="window.dismissInputModal()" title="Close">&times;</button>
+      <h2 id="input-modal-title">Enter value</h2>
+      <p id="input-modal-label" style="margin-bottom:12px"></p>
+      <div class="code-input-group">
+        <input id="input-modal-field" class="code-input" type="text" autocomplete="off" spellcheck="false">
+      </div>
+      <div id="input-modal-error" style="display:none;margin-top:8px;color:var(--accent-error,#f55);font-size:13px"></div>
+      <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px">
+        <button class="modal-btn-secondary" onclick="window.dismissInputModal()">Cancel</button>
+        <button id="input-modal-ok" class="code-submit" onclick="window.submitInputModal()">OK</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="confirm-modal" class="generic-modal">
+    <div class="modal-content">
+      <button class="modal-close" onclick="window.dismissConfirmModal()" title="Close">&times;</button>
+      <h2 id="confirm-modal-title">Confirm</h2>
+      <p id="confirm-modal-message" style="margin-bottom:16px;line-height:1.5"></p>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="modal-btn-secondary" onclick="window.dismissConfirmModal()">Cancel</button>
+        <button id="confirm-modal-ok" class="code-submit" onclick="window.acceptConfirmModal()">Confirm</button>
+      </div>
+    </div>
+  </div>
+
   <script src="/lib/xterm/lib/xterm.js"></script>
   <div id="task-detail-modal">
     <div class="modal-content" style="width:500px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:12px;padding:28px;position:relative">
@@ -1107,6 +1166,7 @@ build/**</textarea>
   <script src="/lib/xterm-web-links/lib/addon-web-links.js"></script>
   <script src="/lib/codemirror/codemirror-bundle.js"></script>
   <script src="/lib/toastui-editor/toastui-editor.js"></script>
+  <script src="/js/modal.js"></script>
   <script>
     // ── State ────────────────────────────────────────
     const tabs = new Map();
@@ -1525,7 +1585,12 @@ build/**</textarea>
           item.querySelector('.restart').addEventListener('click', async (e) => {
             e.stopPropagation();
             const cliLabel = { claude: 'Claude', gemini: 'Gemini', codex: 'Codex' }[session.cli_type] || 'CLI';
-            if (!confirm(`Restart the tmux session? The ${cliLabel} session will be preserved.`)) return;
+            // #340 [A15]: workbench confirm modal instead of native confirm.
+            const ok = await showConfirmModal({
+              title: 'Restart Session', confirmLabel: 'Restart',
+              message: `Restart the tmux session? The ${cliLabel} session will be preserved.`,
+            });
+            if (!ok) return;
             try {
               await fetch(`/api/sessions/${session.id}/restart`, { method: 'POST' });
               loadState();
@@ -1810,7 +1875,11 @@ build/**</textarea>
         const msg = program.total === 0
           ? `Delete program "${p.name}"?`
           : `Delete program "${p.name}"?\n\nProjects exist: ${c.active} active, ${c.archived} archived (${program.total} total).\nThey will be moved to "Unassigned".`;
-        if (!confirm(msg)) return;
+        // #340 [A15]: workbench confirm modal instead of native confirm.
+        const ok = await showConfirmModal({
+          title: 'Delete Program', danger: true, confirmLabel: 'Delete', message: msg,
+        });
+        if (!ok) return;
         await fetch(`/api/programs/${p.id}`, { method: 'DELETE' });
         document.getElementById(overlayId).remove();
         await loadState();
@@ -2134,14 +2203,21 @@ build/**</textarea>
       tabDbg('switchTab:exit', { fromTabId: prevActive, toTabId: tabId, panel });
     }
 
-    function closeTab(tabId) {
+    async function closeTab(tabId) {
       const tab = tabs.get(tabId);
       if (!tab) return;
       const panel = tab.panel || 'primary';
       tabDbg('closeTab:enter', { tabId, panel });
 
       if (tab.type === 'file') {
-        if (tab.dirty && !confirm(`${tab.name} has unsaved changes. Close anyway?`)) return;
+        // #340 [A15]: workbench confirm modal instead of native confirm.
+        if (tab.dirty) {
+          const ok = await showConfirmModal({
+            title: 'Unsaved Changes', confirmLabel: 'Close', danger: true,
+            message: `${tab.name} has unsaved changes. Close anyway?`,
+          });
+          if (!ok) return;
+        }
         if (tab.editor && tab.editor.destroy) tab.editor.destroy();
       } else {
         // Disconnect WebSocket
@@ -3272,7 +3348,12 @@ build/**</textarea>
             }
             loadTaskTree();
           } else if (action === 'delete') {
-            if (!confirm('Delete task: ' + task.title + '?')) return;
+            // #340 [A15]: workbench confirm modal instead of native confirm.
+            const ok = await showConfirmModal({
+              title: 'Delete Task', danger: true, confirmLabel: 'Delete',
+              message: 'Delete task: ' + task.title + '?',
+            });
+            if (!ok) return;
             await fetch('/api/tasks/' + task.id, { method: 'DELETE' });
             loadTaskTree();
           }
@@ -3765,7 +3846,13 @@ build/**</textarea>
 
           // Wire Save As button
           saveAsBtn.addEventListener('click', async () => {
-            const newPath = window.prompt('Save as:', tab.filePath);
+            // #340 [A15]: workbench modal pattern instead of native window.prompt.
+            const newPath = await showInputModal({
+              title: 'Save As',
+              label: 'New file path:',
+              defaultValue: tab.filePath,
+              placeholder: '/data/workspace/...',
+            });
             if (!newPath || !newPath.trim()) return;
             const cleanPath = newPath.trim();
             if (cleanPath.includes('..') || !cleanPath.startsWith('/data/workspace')) {
@@ -4279,14 +4366,20 @@ build/**</textarea>
             ta.remove();
           }
         } else if (action === 'new-file') {
-          const name = prompt('File name:', 'new-file.md');
+          // #340 [A15]: workbench input modal instead of native window.prompt.
+          const name = await showInputModal({
+            title: 'New File', label: 'File name:',
+            defaultValue: 'new-file.md', placeholder: 'untitled.md',
+          });
           if (!name) return;
           const newPath = path.replace(/\/?$/, '/') + name;
           await fetch('/api/file-new', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: newPath }) });
           await _fileBrowserTree?.refreshDirectory(path);
           openFileTab(newPath);
         } else if (action === 'new-folder') {
-          const name = prompt('Folder name:');
+          const name = await showInputModal({
+            title: 'New Folder', label: 'Folder name:', placeholder: 'docs',
+          });
           if (!name) return;
           await fetch('/api/mkdir', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ path: path.replace(/\/?$/, '/') + name }) });
           await _fileBrowserTree?.refreshDirectory(path);
@@ -4295,14 +4388,22 @@ build/**</textarea>
           document.getElementById('file-upload-input').click();
         } else if (action === 'rename') {
           const oldName = path.split('/').filter(Boolean).pop();
-          const newName = prompt('New name:', oldName);
+          // #340 [A15]: workbench input modal instead of native prompt.
+          const newName = await showInputModal({
+            title: 'Rename', label: 'New name:', defaultValue: oldName,
+          });
           if (!newName || newName === oldName) return;
           const parentDir = path.replace(/[^/]+\/?$/, '');
           await fetch('/api/rename', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ oldPath: path.replace(/\/$/, ''), newPath: parentDir + newName + (isDir ? '/' : '') }) });
           await _fileBrowserTree?.refreshDirectory(parentDir || '/');
         } else if (action === 'delete') {
           const name = path.split('/').filter(Boolean).pop();
-          if (!confirm(`Delete "${name}"${isDir ? ' and all its contents' : ''}?`)) return;
+          // #340 [A15]: workbench confirm modal instead of native confirm.
+          const ok = await showConfirmModal({
+            title: 'Delete', danger: true, confirmLabel: 'Delete',
+            message: `Delete "${name}"${isDir ? ' and all its contents' : ''}? This cannot be undone.`,
+          });
+          if (!ok) return;
           await fetch('/api/file?path=' + encodeURIComponent(path.replace(/\/$/, '')), { method: 'DELETE' });
           const parentDir = path.replace(/[^/]+\/?$/, '');
           await _fileBrowserTree?.refreshDirectory(parentDir || '/');
@@ -4372,7 +4473,10 @@ build/**</textarea>
     async function fileBrowserNewFolder() {
       const targetDir = getSelectedFileBrowserDir();
       if (!targetDir) return alert('Expand a directory in the file browser first');
-      const name = prompt('Folder name:');
+      // #340 [A15]: workbench input modal instead of native prompt.
+      const name = await showInputModal({
+        title: 'New Folder', label: 'Folder name:', placeholder: 'docs',
+      });
       if (!name) return;
       try {
         const res = await fetch('/api/mkdir', {
@@ -5068,7 +5172,10 @@ build/**</textarea>
 
     async function pickerNewFolder() {
       const parentPath = document.getElementById('picker-path').value.trim() || (window._workspace || '/data/workspace');
-      const name = prompt('New folder name:');
+      // #340 [A15]: workbench input modal instead of native prompt.
+      const name = await showInputModal({
+        title: 'New Folder', label: 'Folder name:', placeholder: 'docs',
+      });
       if (!name) return;
       const parentNormalized = parentPath.replace(/\/?$/, '/');
       const newPath = parentNormalized + name;
@@ -5448,11 +5555,19 @@ build/**</textarea>
       const { accounts } = await r.json();
       const acc = accounts.find(a => a.id === id);
       if (!acc) return;
-      const newPath = prompt('Path (host/account):', acc.path);
+      // #340 [A15]: workbench input modals instead of three sequential prompts.
+      const newPath = await showInputModal({
+        title: 'Edit Git Account', label: 'Path (host/account):', defaultValue: acc.path,
+      });
       if (newPath == null) return;
-      const newName = prompt('Display name (optional):', acc.name || '');
+      const newName = await showInputModal({
+        title: 'Edit Git Account', label: 'Display name (optional):', defaultValue: acc.name || '',
+      });
       if (newName == null) return;
-      const newToken = prompt('New token (leave blank to keep existing):', '');
+      const newToken = await showInputModal({
+        title: 'Edit Git Account', label: 'New token (leave blank to keep existing):',
+        placeholder: 'ghp_...',
+      });
       if (newToken == null) return;
       const body = { path: newPath.trim(), name: newName.trim() };
       if (newToken.trim()) body.token = newToken.trim();

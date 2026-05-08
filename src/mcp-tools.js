@@ -88,7 +88,7 @@ async function ensureSessionTmux(session, projectPath) {
     if (missing) {
       throw new ToolError(`Cannot reattach session ${session.id} — JSONL missing at ${expectedPath}`, 410);
     }
-    safe.tmuxCreateCLI(tmux, projectPath, cliType, resumeArgs);
+    safe.tmuxCreateCLI(tmux, projectPath, cliType, resumeArgs, { workbenchSessionId: session.id });
     await new Promise(r => setTimeout(r, 1000));
   }
   return tmux;
@@ -219,14 +219,14 @@ handlers.session_new = async (args) => {
   if (cliType === 'bash') {
     const tmpId = crypto.randomUUID();
     const tmux = safe.tmuxNameFor(tmpId);
-    safe.tmuxCreateBash(tmux, proj.path);
+    safe.tmuxCreateBash(tmux, proj.path, { workbenchSessionId: tmpId });
     return { session_id: tmpId, tmux, project: args.project, cli: 'bash' };
   }
   const tmpId = cliType === 'claude'
     ? `new_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
     : crypto.randomUUID();
   const tmux = safe.tmuxNameFor(tmpId);
-  safe.tmuxCreateCLI(tmux, proj.path, cliType);
+  safe.tmuxCreateCLI(tmux, proj.path, cliType, [], { workbenchSessionId: tmpId });
   db.upsertSession(tmpId, proj.id, name, cliType);
   // MCP-spawned sessions default to hidden — agents creating sub-sessions
   // shouldn't clutter the human's sidebar. Pass hidden:false to override.

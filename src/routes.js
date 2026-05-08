@@ -106,7 +106,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     const resumeArgs = phase1Id
       ? ['--resume', phase1Id, '--dangerously-skip-permissions', ...cliArgs]
       : ['--dangerously-skip-permissions', ...cliArgs];
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'claude', resumeArgs);
+    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'claude', resumeArgs, { workbenchSessionId: tmpId });
     if (phase1Id) {
       // Register the real session ID so the resolver maps it correctly
       db.upsertSession(phase1Id, proj.id, null, 'claude');
@@ -124,7 +124,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       '-p', rolePrompt,
     ], projectPath);
     // Phase 2: resume latest interactively (no yolo)
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'gemini', ['--resume', 'latest']);
+    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'gemini', ['--resume', 'latest'], { workbenchSessionId: tmpId });
     // Find the new chat file produced by Phase 1 — diff against snapshot.
     try {
       const after = discoverGeminiSessions();
@@ -149,7 +149,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       ? (() => { const m = basenameFs(created.filePath, '.jsonl').match(/([0-9a-f-]{36})$/i); return m ? m[1] : null; })()
       : null;
     const resumeArgs = rolloutId ? ['resume', rolloutId] : [];
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'codex', resumeArgs);
+    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'codex', resumeArgs, { workbenchSessionId: tmpId });
     if (rolloutId) db.setCliSessionId(tmpId, rolloutId);
   }
 }
@@ -1491,10 +1491,10 @@ function registerCoreRoutes(
           await _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger);
         } catch (roleErr) {
           logger.warn('Role seeding failed — launching without role', { module: 'routes', role, err: roleErr.message });
-          safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs);
+          safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
         }
       } else {
-        safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs);
+        safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
       }
 
       if (cliType === 'claude') {
@@ -1554,7 +1554,7 @@ function registerCoreRoutes(
       const termId = `t_${Date.now()}`;
       const tmux = tmuxName(termId);
       await enforceTmuxLimit();
-      safe.tmuxCreateCLI(tmux, projectPath, 'bash');
+      safe.tmuxCreateCLI(tmux, projectPath, 'bash', [], { workbenchSessionId: termId });
       res.json({ id: termId, tmux, project, name: 'Terminal' });
     } catch (err) {
       logger.error('Error creating terminal', { module: 'routes', err: err.message });
@@ -1593,7 +1593,7 @@ function registerCoreRoutes(
             error: `Session file missing on disk (expected ${expectedPath}). Recover the file or recreate the session.`,
           });
         }
-        safe.tmuxCreateCLI(tmux, projectPath, session.cli_type || 'claude', resumeArgs);
+        safe.tmuxCreateCLI(tmux, projectPath, session.cli_type || 'claude', resumeArgs, { workbenchSessionId: session.id });
         // Wait for CLI to start — resume with JSONL loading takes longer than fresh start
         await sleep(3000);
         // Verify tmux actually started
@@ -2388,7 +2388,7 @@ function registerCoreRoutes(
       const cwd = session.project_path || WORKSPACE;
       const cliType = session.cli_type || 'claude';
       const { args: restartArgs } = await safe.buildResumeArgs(session, cwd);
-      safe.tmuxCreateCLI(tmux, cwd, cliType, restartArgs || []);
+      safe.tmuxCreateCLI(tmux, cwd, cliType, restartArgs || [], { workbenchSessionId: sessionId });
       res.json({ ok: true, sessionId, tmux });
     } catch (err) {
       res.status(500).json({ error: err.message });

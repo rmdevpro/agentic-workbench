@@ -1107,6 +1107,7 @@ build/**</textarea>
   <script src="/lib/xterm-web-links/lib/addon-web-links.js"></script>
   <script src="/lib/codemirror/codemirror-bundle.js"></script>
   <script src="/lib/toastui-editor/toastui-editor.js"></script>
+  <script src="/js/oauth-detector.js"></script>
   <script>
     // ── State ────────────────────────────────────────
     const tabs = new Map();
@@ -4427,51 +4428,25 @@ build/**</textarea>
     let ptyOutputBuffer = new Map(); // tabId → recent output for URL detection
     window.ptyOutputBuffer = ptyOutputBuffer; // expose for test instrumentation
 
-    const OAUTH_URL_PATTERNS = [
-      { start: 'https://claude.com/cai/oauth/authorize?', endMarker: 'Paste', cli: 'claude' },
-      { start: 'https://accounts.google.com/o/oauth2/', endMarker: 'Enter the authorization code', cli: 'gemini' },
-      { start: 'https://auth0.openai.com/', endMarker: 'code', cli: 'codex' },
-    ];
-    const AUTH_ERROR_PATTERN = /OAuth token has expired|authentication_error|Not logged in/;
+    // #339 [A14]: pattern table + detector logic moved to /js/oauth-detector.js
+    // for fixture-based testability. Re-export the pattern table here so any
+    // existing console-debug touchpoints still see it.
+    const OAUTH_URL_PATTERNS = OAuthDetector.OAUTH_URL_PATTERNS;
+    const AUTH_ERROR_PATTERN = OAuthDetector.AUTH_ERROR_PATTERN;
 
     // Per-CLI OAuth detection: Claude on by default, Gemini/Codex off
     let oauthDetection = { claude: true, gemini: false, codex: false };
 
+    const _oauthDetector = OAuthDetector.createOAuthDetector({
+      ptyOutputBuffer,
+      oauthDetection,
+      getCliType: (tabId) => tabs.get(tabId)?.cli_type || 'claude',
+      isModalVisible: () => authModalVisible,
+      onAuthDetected: ({ tabId, url }) => showAuthModal(url, tabId),
+    });
+
     function checkForAuthIssue(tabId, data) {
-      if (authModalVisible) return;
-      // Check which CLI this tab belongs to
-      const tab = tabs.get(tabId);
-      const cliType = tab?.cli_type || 'claude';
-      if (!oauthDetection[cliType]) return;
-
-      // Buffer recent output per tab for URL detection
-      const buf = (ptyOutputBuffer.get(tabId) || '') + data;
-      ptyOutputBuffer.set(tabId, buf.slice(-4000)); // keep last 4KB for long URLs
-
-      const fullBuf = ptyOutputBuffer.get(tabId);
-
-      // The CLI prints the OAuth URL wrapped across multiple terminal lines.
-      // Strip ANSI escapes for reliable text matching
-      const cleanBuf = fullBuf.replace(/\x1b\[[0-9;]*[a-zA-Z]/g, '').replace(/[\x07]/g, '');
-
-      for (const pattern of OAUTH_URL_PATTERNS) {
-        const urlStart = cleanBuf.indexOf(pattern.start);
-        if (urlStart === -1) continue;
-
-        const pasteIdx = cleanBuf.indexOf(pattern.endMarker, urlStart + 50);
-        if (pasteIdx === -1) continue; // URL not fully received yet — wait for more data
-
-        // Extract everything between URL start and end marker, strip whitespace to rejoin wrapped lines
-        const rawUrl = cleanBuf.substring(urlStart, pasteIdx);
-        const cleanUrl = rawUrl
-          .replace(/[\x00-\x1f]/g, '')               // control chars
-          .replace(/\s+/g, '')                        // all whitespace/newlines from wrapping
-          .replace(/[&?]+$/, '');                     // trailing & or ?
-
-        showAuthModal(cleanUrl, tabId);
-        ptyOutputBuffer.delete(tabId);
-        return;
-      }
+      _oauthDetector.feed(tabId, data);
     }
 
     function showAuthModal(url, tabId) {

@@ -84,7 +84,7 @@ module.exports = function createWsTerminal({
                 });
                 return false;
               }
-              safe.tmuxCreateCLI(tmuxSession, sessRow.project_path, sessRow.cli_type || 'claude', resumeArgs);
+              safe.tmuxCreateCLI(tmuxSession, sessRow.project_path, sessRow.cli_type || 'claude', resumeArgs, { workbenchSessionId: sessRow.id });
               // Confirm pane is up before attaching (tmuxCreateCLI uses execFileSync
               // but tmux server may need a beat to register).
               for (let i = 0; i < 10; i++) {

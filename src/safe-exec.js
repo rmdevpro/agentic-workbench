@@ -177,13 +177,21 @@ async function buildResumeArgs(session, projectPath) {
   return { args: [], missing: false };
 }
 
-function tmuxCreateCLI(sessionName, cwd, cliType, args = []) {
-  const safeName = sanitizeTmuxName(sessionName);
+// #342 [A17]: pure-function tmux launch command builder. Extracted so the
+// env-injection surface (HOME, CLAUDE_HOME, WORKBENCH_SESSION_ID, per-CLI
+// API keys) is unit-testable without spawning tmux.
+function buildTmuxLaunchCmd(cwd, cliType, args = [], opts = {}) {
   const escapedCwd = shellEscape(cwd);
-
   let binary;
   let cliArgs = [...args];
-  let envParts = [`export HOME=${shellEscape(HOME)}`];
+  const envParts = [`export HOME=${shellEscape(HOME)}`];
+
+  // #342 [A17]: WORKBENCH_SESSION_ID is forward-compatible: no CLI consumes
+  // it yet, but its presence in /proc/<pid>/environ is the canonical way to
+  // map a tmux pane back to the workbench session that spawned it.
+  if (opts.workbenchSessionId) {
+    envParts.push(`export WORKBENCH_SESSION_ID=${shellEscape(opts.workbenchSessionId)}`);
+  }
 
   switch (cliType) {
     case 'claude':
@@ -211,7 +219,12 @@ function tmuxCreateCLI(sessionName, cwd, cliType, args = []) {
 
   const escapedArgs = cliArgs.map((a) => shellEscape(a)).join(' ');
   const envExports = envParts.join(' && ');
-  const cmd = `cd ${escapedCwd} && ${envExports} && exec ${binary}${escapedArgs ? ' ' + escapedArgs : ''}`;
+  return `cd ${escapedCwd} && ${envExports} && exec ${binary}${escapedArgs ? ' ' + escapedArgs : ''}`;
+}
+
+function tmuxCreateCLI(sessionName, cwd, cliType, args = [], opts = {}) {
+  const safeName = sanitizeTmuxName(sessionName);
+  const cmd = buildTmuxLaunchCmd(cwd, cliType, args, opts);
   tmuxExecSync(['new-session', '-d', '-s', safeName, '-x', '200', '-y', '50', cmd], {
     timeout: 30000,
   });
@@ -237,8 +250,8 @@ function tmuxCreateGemini(sessionName, cwd, geminiArgs = []) {
 function tmuxCreateCodex(sessionName, cwd, codexArgs = []) {
   tmuxCreateCLI(sessionName, cwd, 'codex', codexArgs);
 }
-function tmuxCreateBash(sessionName, cwd) {
-  tmuxCreateCLI(sessionName, cwd, 'bash');
+function tmuxCreateBash(sessionName, cwd, opts = {}) {
+  tmuxCreateCLI(sessionName, cwd, 'bash', [], opts);
 }
 
 async function tmuxKill(sessionName) {
@@ -425,6 +438,7 @@ module.exports = {
   tmuxCaptureScrollback,
   tmuxExists,
   buildResumeArgs,
+  buildTmuxLaunchCmd,
   tmuxCreateCLI,
   tmuxCreateClaude,
   tmuxCreateGemini,

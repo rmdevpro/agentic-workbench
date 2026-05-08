@@ -212,6 +212,59 @@ test('SAF-12: tmuxCreateBash calls tmuxExecSync for new-session, mouse, history-
   }
 });
 
+// #342 [A17]: WORKBENCH_SESSION_ID env injection. The pure cmd-builder is
+// the testable unit; the spawn-side test verifies it lands in the new-session
+// command argv passed to tmux.
+test('SAF-13: buildTmuxLaunchCmd includes WORKBENCH_SESSION_ID export when opts.workbenchSessionId is set', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    const cmd = safe.buildTmuxLaunchCmd('/some/cwd', 'claude', [], { workbenchSessionId: 'abc-123' });
+    assert.match(cmd, /export WORKBENCH_SESSION_ID='abc-123'/);
+  } finally {
+    restore();
+  }
+});
+
+test('SAF-14: buildTmuxLaunchCmd omits WORKBENCH_SESSION_ID when not provided', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    const cmd = safe.buildTmuxLaunchCmd('/some/cwd', 'claude', []);
+    assert.ok(!cmd.includes('WORKBENCH_SESSION_ID'), `cmd should not contain the var: ${cmd}`);
+  } finally {
+    restore();
+  }
+});
+
+test('SAF-15: buildTmuxLaunchCmd shell-escapes a session id with single quotes', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    // shellEscape wraps the value in single quotes and escapes embedded ones.
+    const cmd = safe.buildTmuxLaunchCmd('/some/cwd', 'claude', [], { workbenchSessionId: "id'with'quotes" });
+    // Must not produce an unbalanced or injectable shell string.
+    assert.match(cmd, /WORKBENCH_SESSION_ID='id'\\''with'\\''quotes'/);
+  } finally {
+    restore();
+  }
+});
+
+test('SAF-16: tmuxCreateCLI passes WORKBENCH_SESSION_ID through to tmux new-session command', (t) => {
+  const calls = [];
+  t.mock.method(childProcess, 'execFileSync', (_c, args, _o) => {
+    calls.push(args.slice());
+    return '';
+  });
+  const { safe, restore } = freshSafe();
+  try {
+    safe.tmuxCreateCLI('wb_test', '/some/cwd', 'claude', [], { workbenchSessionId: 'sess-xyz' });
+    const newSessionCall = calls[0];
+    assert.equal(newSessionCall[0], 'new-session');
+    const cmd = newSessionCall[newSessionCall.length - 1];
+    assert.match(cmd, /export WORKBENCH_SESSION_ID='sess-xyz'/);
+  } finally {
+    restore();
+  }
+});
+
 test('SAF-13: tmuxKill logs debug on unexpected error', async (t) => {
   t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) => cb(new Error('permission denied')));
   const { safe, restore } = freshSafe();

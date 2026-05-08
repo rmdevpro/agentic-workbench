@@ -1713,11 +1713,15 @@ function registerCoreRoutes(
       }
       if (status !== undefined) db.setTaskStatus(id, status);
       if (archived !== undefined) db.setTaskArchived(id, !!archived);
-      if (rank !== undefined) db.setTaskRank(id, Number(rank));
-      if (parent_task_id !== undefined || project_id !== undefined) {
-        db.reparentTask(id, {
-          parentTaskId: parent_task_id === undefined ? null : parent_task_id,
+      // #327 [A2]: atomic moveTask replaces the buggy two-step
+      // setTaskRank → reparentTask which appended to the new bucket
+      // instead of inserting at the requested rank. moveTask handles
+      // all combinations (rank-only, parent-only, both) in one transaction.
+      if (rank !== undefined || parent_task_id !== undefined || project_id !== undefined) {
+        db.moveTask(id, {
+          parentTaskId: parent_task_id,
           projectId: project_id,
+          rank,
         });
       }
       res.json(db.getTask(id));

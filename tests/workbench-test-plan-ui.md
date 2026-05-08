@@ -231,6 +231,30 @@ UI tests follow one prescribed pattern, with one exception. Both surfaces drive 
 
 The "no synthetic CLI" rule is part of the 100% feature-coverage gate (§3.7). A `session_*` test row that exercised a bash session instead of a real CLI does not count as covering that tool.
 
+### 3.4b Verifiable surfaces — what a runbook entry's verify clauses can observe
+
+Per STD-003 §12.4–§12.6, every runbook entry's verify clauses must name positive-affirmation observables, and the executor agent must affirm each line backed by a screenshot. In this product, "the UI" is the rendered web shell **plus** the CLI sessions running inside its terminal panes **plus** the workbench MCP tools the CLIs call. Three classes of observable count as verifiable UI surface:
+
+**1. Rendered DOM / page state.** Modal headings, sidebar contents, file-tree state, status-bar values, button enabled/disabled, scroll position, theme variables applied. Screenshot the page; the affirmation names the exact text/state observed. Example: *"Modal heading reads exactly 'Create Task' and the Save button is enabled."*
+
+**2. Multi-turn CLI chat with sensible replies.** The agent opens a Claude / Gemini / Codex session in a workbench tab, sends a verifiable prompt (e.g. "what is 7 times 8"), waits for the CLI to reply, and affirms the reply contains the expected answer (`56` with reasoning) — not echoed input, not boilerplate, not a login screen, not a frozen prompt. The affirmation references a screenshot of the terminal pane post-reply. See REG-148-01. Use this surface for any change that touches CLI plumbing (tmux, WebSocket, session resolver, JSONL writer, keepalive, gate, OAuth flow).
+
+**3. CLI use of MCP tools with meaningful results.** The agent in a workbench CLI session invokes a workbench MCP tool (`file_search_code`, `task_add`, `session_summarize`, `gh_issue_view`, etc.) and the result demonstrates the tool ran end-to-end — the right rows changed, the right file was created, the right session got summarised, the right GitHub issue body was retrieved. The affirmation names the observable side effect AND screenshots either the CLI output panel or the workbench panel that reflects the change (Tasks panel showing the new row, Files panel showing the new file). Use this surface for changes touching MCP catalog, tool handlers, MCP-server registration, or any DB/filesystem operation reachable via a tool.
+
+A single runbook entry may combine all three (e.g., a session-creation test that checks the sidebar updates AND the CLI replies AND a `task_add` from inside the chat appears in the Tasks panel). Verify clauses across these surfaces are weighted equally — a DOM-only entry isn't more "rigorous" than a CLI-chat entry; both are positive-affirmation observables of the same product.
+
+What is NOT a verifiable UI surface (these are integration tests per STD-003 §2 — live tier — not UI tests):
+
+- An HTTP route's response shape or status code (e.g. `GET /api/mcp/tools returns 51 names`)
+- A database row count or column value (gray-box per STD-005 §7.1; supports a UI test but isn't one)
+- A log line or metric counter
+- A file's existence on the host filesystem (unless a panel reflects it)
+- A WebSocket frame's payload
+
+Heuristic for authors confused on whether a test is integration or UI: if a real user sitting in front of the rendered workbench cannot observe the assertion through the browser or terminal pane, it's an integration test, not a UI test.
+
+The 3-CLI test review at the phase gate enforces this — a runbook entry whose verify clauses are actually integration assertions in disguise gets flagged for rewrite.
+
 ### 3.5 Baseline Reset Protocol
 
 Every test starts from a known clean state:

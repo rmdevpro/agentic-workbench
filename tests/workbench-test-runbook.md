@@ -48,7 +48,8 @@ Historical incident notes appear in some test sections — those are records of 
 - **MCP Tools:** 44 flat tools — `file_*` (8), `session_*` (19), `project_*` (11), `task_*` (5), `log_*` (1)
 - **Settings tabs:** General, Claude Code, Vector Search, System Prompts
 - **Session types:** Claude, Gemini, Codex (selected via + dropdown)
-- **Test Plan:** See `docs/work-specs/workbench-test-plan.md`
+- **Test Plan:** See `tests/workbench-test-plan-ui.md`
+- **Verify-clause contract:** Every runbook entry's `Verify:` lines must be positive-affirmation observables (name what you'll see, not the absence of error) per STD-003 §12.4–§12.6. The verifiable UI surfaces in this product — rendered DOM, multi-turn CLI chat with sensible replies, CLI use of MCP tools — are defined in `tests/workbench-test-plan-ui.md` §3.4b. An integration assertion (HTTP response shape, DB row count, log line) dressed as a UI verify clause will be rejected by the 3-CLI test review at the gate.
 
 ## IMPORTANT: What changed since the original runbook
 

@@ -313,12 +313,12 @@ A dedicated `docker-compose.test.yml` override file provides these isolation set
 | Data | Source | Loading Method | Idempotency |
 |------|--------|---------------|-------------|
 | Test project | Local directory in test workspace | `POST /api/projects` with existence check | `ensureProject` is idempotent by design |
-| Test sessions | `scripts/prime-test-session.js` | Creates synthetic JSONL from fixture data. For threshold tests, generate single large string entries rather than thousands of small messages to avoid I/O bottleneck. Fixtures must generate **assistant usage entries** consistent with how `getTokenUsage()` calculates token percentage | Script checks for existing session before creating. The script must execute Docker commands programmatically (via `child_process.exec`), not print them to stdout for manual execution. For multi-cycle stress tests (CST-06), the script must support an `--append` mode that injects data into an existing session's JSONL file rather than only creating new sessions |
+| ~~Test sessions~~ | ~~`scripts/prime-test-session.js`~~ REMOVED in #320 (Phase 0). Smart-compaction was removed in test plan v7.0; the priming script's only consumer was the smart-compaction stress tests, so both went together. Tests that need synthetic session data now generate it inline via `tests/fixtures/test-data.js` factories. | — |
 | Seed tasks | `POST /api/projects/:name/tasks` | Created per test, cleaned up after | Each test uses unique task text |
 | Compaction test data | Synthetic JSONL sized to trigger thresholds | `docker cp` prior to test | Script checks existing state |
 | Webhook targets | Local HTTP echo server | Started as part of test harness | Stateless echo server |
 
-**`prime-test-session.js` location:** `scripts/prime-test-session.js`, invoked from the test host (not inside the container). Requires a running test container on port 7867 and uses `docker cp` to place JSONL files.
+**~~`prime-test-session.js` location~~** — REMOVED in #320 (Phase 0). See note in §3.3 above.
 
 ### 3.4 Test Fixtures
 
@@ -363,16 +363,9 @@ The MCP stdio server (`mcp-server.js`) communicates via stdin/stdout, not HTTP. 
 - **Mock tests:** Import `mcp-server.js` functions directly, mock the HTTP fetch calls to Workbench's internal API
 - **Live tests:** Spawn `mcp-server.js` as a child process via `child_process.spawn` inside the test container using `docker exec`. Write JSON-RPC messages to stdin, read responses from stdout. The stdio server calls Workbench's HTTP API internally, so the live Workbench container must be running
 
-### 3.7 prime-test-session.js Self-Test
+### 3.7 ~~prime-test-session.js Self-Test~~ — REMOVED
 
-Before any threshold or stress test, verify that the priming script produces accurate output:
-
-| ID | Input | Expected | Layer |
-|----|-------|----------|-------|
-| UTIL-01 | Run `prime-test-session.js` targeting 65% capacity | Resulting JSONL produces token usage between 63% and 67% when parsed by real `getTokenUsage` | Live |
-| UTIL-02 | Run targeting 90% capacity | Token usage between 88% and 92% | Live |
-
-These self-tests gate the threshold and stress suites. If priming is inaccurate, those tests are meaningless.
+This section was removed in #320 (Phase 0) along with `scripts/prime-test-session.js` itself. Smart-compaction tests (the script's only consumer) were removed in test plan v7.0. UTIL-01 and UTIL-02 are no longer applicable.
 
 ### 3.8 Test Tooling
 
@@ -500,7 +493,7 @@ Coverage completeness is enforced by structural coverage tooling (`c8`) per §3.
 | ID | Capability | Layer | Status |
 |----|-----------|-------|--------|
 | SRV-01 | Server starts and binds to PORT | Live | NONE |
-| SRV-02 | Static file serving (public/, xterm, jquery) | Live | NONE |
+| SRV-02 | Static file serving (public/, xterm, codemirror) | Live | NONE |
 | SRV-03 | WebSocket upgrade on `/ws/:tmuxSession` | Live | NONE |
 | SRV-04 | Startup sequence (config init, watcher start, orphan cleanup) | Live | NONE |
 | SRV-05 | Graceful error handling (uncaughtException exits, unhandledRejection logs) | Mock | NONE |
@@ -1173,8 +1166,8 @@ Previously in this section:
 
 | ID | Capability | Layer | Status |
 |----|-----------|-------|--------|
-| UTIL-01 | `prime-test-session.js` targeting 65% produces 63-67% token usage | Live | NONE |
-| UTIL-02 | `prime-test-session.js` targeting 90% produces 88-92% token usage | Live | NONE |
+| ~~UTIL-01~~ REMOVED in #320 (Phase 0) — `prime-test-session.js` deleted | — | — |
+| ~~UTIL-02~~ REMOVED in #320 (Phase 0) — `prime-test-session.js` deleted | — | — |
 
 #### 4.1.40 Auth Modal Parsing
 
@@ -1229,7 +1222,7 @@ This section defines specific scenarios, inputs, expected outcomes, and gray-box
 - Gray-box: Container log shows "Server listening on port 3000"
 
 **SRV-02: Static file serving**
-- Input: `GET /` (serves index.html), `GET /lib/xterm/xterm.js`, `GET /lib/jquery/jquery.min.js`
+- Input: `GET /` (serves index.html), `GET /lib/xterm/lib/xterm.js`, `GET /lib/codemirror/codemirror-bundle.js`. Regression check: `GET /lib/jquery/jquery.min.js` must return 404 (route deleted in #319 Phase 0)
 - Expected: 200 OK with correct content-type for each
 - Layer: Live
 - Note: Verify actual routes match `server.js` static mappings before test implementation
@@ -1396,7 +1389,7 @@ This section defines specific scenarios, inputs, expected outcomes, and gray-box
 
 **WAT-12:** Watcher on `new_123`, resolve to UUID → old stops, new starts. Mock + Live.
 
-**WAT-13:** Prime session to near-max capacity via `prime-test-session.js`, then write large JSONL in one shot → watcher handles parse of large file without OOM, crash, or V8 heap limit. Live. Gray-box: container stays healthy, no restart detected.
+**~~WAT-13~~** REMOVED in #320 (Phase 0). Original test depended on `scripts/prime-test-session.js` (deleted) and the smart-compaction priming flow (removed in test plan v7.0). The "watcher handles large JSONL parse without OOM" property is now exercised indirectly by the live `tests/live/context-stress.test.js` suite.
 
 ### 5.9 WebSocket Terminal
 
@@ -1669,7 +1662,7 @@ See §3.6 for methodology. Mock tests import functions; live tests use `child_pr
 | FS-01 | `GET /api/mounts` | Mount array | Live |
 | FS-02 | `GET /api/browse?path=/workspace` | Dir listing, dot dirs hidden | Live |
 | FS-03 | `GET /api/file` valid + outside workspace | 200 for both (AD-001) | Live |
-| FS-04 | `POST /api/jqueryFileTree` | HTML listing | Live |
+| FS-04 | `GET /api/browse?path=...` | JSON `{path, parent, entries: [{name, type}]}` (replaces removed `POST /api/jqueryFileTree`) | Live |
 | FS-05 | File > 1MB | 413 | Mock + Live |
 | FS-06 | ~~`workbench_update_plan` with `../`~~ REMOVED — plan tools deleted | — | — |
 
@@ -2934,7 +2927,7 @@ QRM-01..15: REMOVED — quorum.js deleted.
 | `tests/helpers/ws-client.js` | WebSocket test client |
 | `tests/helpers/http-client.js` | HTTP client configured for test port |
 | `tests/browser/screenshots/` | Screenshot output directory (§3.12) |
-| `scripts/prime-test-session.js` | Session priming utility (§3.3) |
+| ~~`scripts/prime-test-session.js`~~ REMOVED in #320 (Phase 0) | — |
 
 ---
 
@@ -3183,7 +3176,7 @@ Gate A must pass before Gate B and C are attempted. Gate B and Gate C run agains
 | Claude MAJ-05 | No metrics endpoint exclusion | Added to §14.1 exclusions |
 | Claude MAJ-06 | CMP-48 state-dependency ambiguity | Specified "fresh session, no prior threshold crossings" as initial state |
 | Claude MIN-01 | ENT-12 no failure recovery plan | Added crash recovery note to §5.26 |
-| Claude MIN-02 | SRV-02 inputs don't match actual routes | Fixed to `/`, `/lib/xterm/xterm.js`, `/lib/jquery/jquery.min.js` |
+| Claude MIN-02 | SRV-02 inputs don't match actual routes | (Historical) Fixed to `/`, `/lib/xterm/xterm.js`, `/lib/jquery/jquery.min.js`. Subsequently updated in #319 Phase 0 (jquery deleted) — current inputs are `/`, `/lib/xterm/lib/xterm.js`, `/lib/codemirror/codemirror-bundle.js` with `/lib/jquery/jquery.min.js` asserted 404 as a regression check. |
 | Claude MIN-03 | MAX_TMUX_SESSIONS not in compose | Added to §3.1 isolation table |
 | Claude MIN-04 | MCP-06a..q missing §5 detail | Added §5.29 with per-tool table including gray-box for MCP-06g, 06k, 06n |
 | Claude MIN-05 | FS-05 layer conflict | Resolved to Mock + Live |

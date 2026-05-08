@@ -1754,8 +1754,8 @@ Every backend API reachable through UI actions. All are verified via gray-box or
 | GET `/api/sessions/:id/tokens` | Status polling | STB-05, STB-08, CTX-01 |
 | GET `/api/auth/status` | Auth polling | AUTH-06..07, REF-02 |
 | GET `/api/file` | File viewer | FIL-02, FIL-06, FIL-08 |
-| POST `/api/jqueryfiletree` | File tree (jQuery FileTree POST) | FIL-01, AP-02 |
-| GET `/api/browse` | Directory browsing (if used by addProject) | AP-02 |
+| ~~POST `/api/jqueryfiletree`~~ REMOVED in #319 (Phase 0 jQuery deletion) | — | — |
+| GET `/api/browse` | Directory browsing — vanilla `createFileTree` consumer (replaces removed jqueryfiletree) | FIL-01, AP-02 |
 | GET `/api/mounts` | File browser root | FIL-01, FIL-05, FIL-10 |
 | WS `/ws/:tmuxSession` | Terminal tabs | TIO-01..05, RCN-01..10 |
 
@@ -1779,7 +1779,7 @@ This appendix documents how each reviewer finding was dispositioned during revis
 | R-04 | `.session-item.open` state not tested | Added SB-12 and UI-E31 |
 | R-05 | "Hidden" session state workflow not tested | Added ARC-03, ARC-04 |
 | R-06 | Git clone path not covered | Added AP-07, AP-08 |
-| R-08 | Appendix B HTTP method error | Corrected to POST for `/api/jqueryfiletree`; added `/api/browse` |
+| R-08 | Appendix B HTTP method error | (Historical) Corrected to POST for `/api/jqueryfiletree`; added `/api/browse`. The jqueryfiletree endpoint was subsequently REMOVED in #319 (Phase 0); the current file tree consumes `GET /api/browse`. |
 | R-09 | `/api/sessions/:id/name` not accounted for | Added to Appendix B |
 | R-10 | NS-01/NS-08 button label wrong | Corrected to "Start Session" |
 | R-11 | WebLinks addon not in exclusions | Added to §15.1 |

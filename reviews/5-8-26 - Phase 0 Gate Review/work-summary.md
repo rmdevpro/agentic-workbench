@@ -3,7 +3,7 @@
 **Date:** 2026-05-08
 **Phase:** Phase 0 — Stabilize the model (cleanup hygiene, build hygiene, dev tooling, mock test stabilisation)
 **Gate issue:** #389
-**Verify branch:** `phase-0-verify` HEAD = `6052132` (post-fold-back + post-disposition-closure). Commit chain on this branch: `010ebf0` (initial Phase 0 stack of 12 PRs) → `afd5215` (Work Summary v1) → `36d3906` (Q7 #409 fold-back merge from review consensus) → `97edeaa` (3-CLI review docs committed) → `9841c5b` (Q9 #413 smoke-framing fix) → `5423dec` (Work Summary disposition section v1) → `a15a58d` (Q8 #412 A.1 inline note) → `6052132` (Work Summary disposition section v2 closes A.1/A.4/§E1/§E2). The 12 original PRs + 1 fold-back PR (Q7) are stacked here; Q8 + Q9 are in-place commits with retroactive issues filed; remaining commits are doc updates that don't change the runtime image.
+**Verify branch:** `phase-0-verify` HEAD = `d5cef11` (most recent Work Summary refresh). Commit chain on this branch: `010ebf0` (initial Phase 0 stack of 12 PRs) → `afd5215` (Work Summary v1) → `36d3906` (Q7 #409 fold-back merge from review consensus) → `97edeaa` (3-CLI review docs committed) → `9841c5b` (Q9 #413 smoke-framing fix) → `5423dec` (Work Summary disposition section v1) → `a15a58d` (Q8 #412 A.1 inline note) → `6052132` (Work Summary disposition section v2 closes A.1/A.4/§E1/§E2) → `d5cef11` (Work Summary refresh: Q7-Q9 in commit table + counts + diff stat current). The 12 original PRs + 1 fold-back PR (Q7) are stacked here; Q8 + Q9 are in-place commits with retroactive issues filed; remaining commits are doc updates that don't change the runtime image.
 **Deployed image:** `irina:5000/workbench:97edeaa` = `:latest` (sha256:91e1913a…fde7f0). Image build digest pinned to `97edeaa` since `9841c5b` is doc-only and doesn't change the container.
 **Deploy target:** M5/dev via RUN-001
 **Diff vs main:** 41 files changed, +5452 / −7141 (the −6667 line block is the dead `public/spike/issues.json` deletion; the largest +4886 line block is the `reviews/` audit-trail commit per Q6 #401 + the 3-CLI review docs committed per `97edeaa` + Work Summary disposition updates)
@@ -216,8 +216,8 @@ Per memory `feedback_no_punted_followups.md`, every "deferred" / "follow-up" / "
 |---|---|---|---|
 | Stale jQuery + jqueryfiletree refs in active tests + plans + runbook | Claude (B-F2) + Codex (Major + Moderate) | Q7 #409 / PR #410 / commit `37eab54`: rewrote SRV-02 to assert codemirror + xterm + jquery 404; rewrote file-browser.spec to use `GET /api/browse?path=/` with JSON shape assertion; marked plan + runbook entries REMOVED with phase-0 cleanup pointers | ✓ Folded |
 | Stale `prime-test-session.js` refs in test plans (UTIL-01/02, WAT-13, §3.3, §3.7) | Codex (Moderate) | Same Q7 PR — REMOVED-marked all references with #320 pointer | ✓ Folded |
-| Diff-stat in Work Summary inaccurate (`33 files / +106 / −7102`) | Claude + Codex (Minor) | Updated to actual `41 files / +5406 / −7141` (this commit) | ✓ Folded |
-| Work Summary HEAD reference outdated | Codex (Minor) | Updated `010ebf0` → `9841c5b` with explicit deploy/review/doc commit chain (this commit) | ✓ Folded |
+| Diff-stat in Work Summary inaccurate (`33 files / +106 / −7102`) | Claude + Codex (Minor) | Updated to current `41 files / +5452 / −7141`. Recomputed each Work Summary revision via `git diff --stat main..phase-0-verify`. | ✓ Folded |
+| Work Summary HEAD reference outdated | Codex (Minor) | Updated to current HEAD (see header at top of this document for the live value + commit chain). | ✓ Folded |
 
 ### Single-CLI observations (accepted with documented disposition)
 

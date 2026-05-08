@@ -250,7 +250,7 @@ Per gate checklist (#389):
    - `eslint.config.js` — `tests/browser/**` block, main block (`AbortSignal`), and the new `scripts/codemirror-entry.js` module override block
    - `tests/workbench-test-plan-ui.md` §3.3 — fixture reconciliation
    - **Runbook coverage gap**: Phase 0 added zero new runbook entries. Reviewers should flag whether #319 (jQuery / file tree picker) and #322 (PNG dockerignore / logo render) deserve their own runbook lines rather than piggy-backing on existing AP-01..04 / NF-15 / GATE-MKT-01 / SMOKE-01 entries.
-3. **3-CLI code review** — `git diff main..phase-0-verify` (41 files, +5452/−7141). Independent reviews of the merged code change.
+3. **3-CLI code review** — `git diff main..phase-0-verify`. Independent reviews of the merged code change.
 4. **Regression — mock** — already at 257 pass / 5 fail; the 5 are O3 #377 scope.
 5. **Regression — live** — `npm run test:live` against M5 (gate runs this).
 6. **Regression — UI runbook** — execute Phase 0–scoped runbook entries against M5 with per-verify-line agent affirmations + screenshots.

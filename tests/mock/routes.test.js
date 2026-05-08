@@ -181,10 +181,15 @@ function makeApp(overrides = {}) {
     getProgramByName: () => null,
     addProgram: (name, description = '') => ({ id: 1, name, description }),
     updateProgram: (id, fields) => ({ id, ...fields }),
+    renameProgramSafe: (id, newName) => ({ id, name: newName }),
     deleteProgram: () => {},
     countProjectsInProgram: () => 0,
     setProjectProgram: () => {},
     DATA_DIR: '/tmp/bp-data',
+    // Final spread lets a caller pass `db: { getProgram: ..., ...}` overrides
+    // through the test wrapper. The comment block at line ~166 about
+    // "program-aware overrides" assumed this was wired.
+    ...(overrides.db || {}),
   };
   const existsFn = overrides.tmuxExists ?? (async () => false);
   const firedEvents = [];
@@ -1542,6 +1547,46 @@ test('TSK-10: POST /api/tasks rejects missing title', async () => {
     assert.equal(r.status, 400);
     const body = await r.json();
     assert.ok(body.error.includes('title'));
+  });
+});
+
+// #332 [A7]: PUT /api/programs/:id atomic rename. The race window between
+// "is the new name free?" and "rename row" is closed by db.renameProgramSafe;
+// route translates duplicate_name → 409.
+test('PRG-RN-01: PUT /api/programs/:id rename to free name returns 200', async () => {
+  let renameCalled = false;
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'PUT', '/api/programs/7', { name: 'newname' });
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.name, 'newname');
+    assert.ok(renameCalled, 'renameProgramSafe must be invoked when name changes');
+  }, {
+    db: {
+      getProgram: (id) => ({ id, name: 'oldname', description: '', status: 'active' }),
+      renameProgramSafe: (id, newName) => {
+        renameCalled = true;
+        return { id, name: newName };
+      },
+    },
+  });
+});
+
+test('PRG-RN-02: PUT /api/programs/:id rename to colliding name returns 409', async () => {
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'PUT', '/api/programs/7', { name: 'taken' });
+    assert.equal(r.status, 409);
+    const body = await r.json();
+    assert.match(body.error, /already exists/i);
+  }, {
+    db: {
+      getProgram: (id) => ({ id, name: 'oldname', description: '', status: 'active' }),
+      renameProgramSafe: () => {
+        const e = new Error('program with name already exists');
+        e.code = 'duplicate_name';
+        throw e;
+      },
+    },
   });
 });
 

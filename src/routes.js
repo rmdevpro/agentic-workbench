@@ -1095,23 +1095,33 @@ function registerCoreRoutes(
     const program = db.getProgram(id);
     if (!program) return res.status(404).json({ error: 'program not found' });
     const { name, description, status } = req.body || {};
-    const fields = {};
+    let cleanName = null;
     if (name !== undefined) {
-      const clean = String(name).trim();
-      if (!clean) return res.status(400).json({ error: 'name cannot be empty' });
-      if (clean !== program.name) {
-        const dup = db.getProgramByName(clean);
-        if (dup && dup.id !== id) return res.status(409).json({ error: 'program with that name already exists' });
+      cleanName = String(name).trim();
+      if (!cleanName) return res.status(400).json({ error: 'name cannot be empty' });
+    }
+    if (status !== undefined && !['active', 'archived'].includes(status)) {
+      return res.status(400).json({ error: 'invalid status' });
+    }
+    // #332 [A7]: atomic rename — db.renameProgramSafe wraps the dup check and
+    // UPDATE in one SQLite transaction so concurrent PUTs can't both win.
+    let updated = program;
+    if (cleanName !== null && cleanName !== program.name) {
+      try {
+        updated = db.renameProgramSafe(id, cleanName);
+      } catch (e) {
+        if (e.code === 'duplicate_name') {
+          return res.status(409).json({ error: 'program with that name already exists' });
+        }
+        throw e;
       }
-      fields.name = clean;
     }
-    if (description !== undefined) fields.description = String(description);
-    if (status !== undefined) {
-      if (!['active', 'archived'].includes(status))
-        return res.status(400).json({ error: 'invalid status' });
-      fields.status = status;
+    const otherFields = {};
+    if (description !== undefined) otherFields.description = String(description);
+    if (status !== undefined) otherFields.status = status;
+    if (Object.keys(otherFields).length) {
+      updated = db.updateProgram(id, otherFields);
     }
-    const updated = db.updateProgram(id, fields);
     res.json(updated);
   });
 

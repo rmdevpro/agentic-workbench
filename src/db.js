@@ -448,6 +448,23 @@ module.exports = {
     if (fields.status !== undefined) stmts.setProgramStatus.run(fields.status, fields.status, id);
     return stmts.getProgram.get(id);
   },
+  // #332 [A7]: atomic rename — check name uniqueness and apply the UPDATE in
+  // one transaction so two concurrent PUTs targeting the same new name can't
+  // both pass the duplicate check and then both succeed. Throws { code:
+  // 'duplicate_name' } when another program already owns the target name.
+  renameProgramSafe(id, newName) {
+    const run = db.transaction(() => {
+      const dup = stmts.getProgramByName.get(newName);
+      if (dup && dup.id !== id) {
+        const e = new Error(`program with name '${newName}' already exists`);
+        e.code = 'duplicate_name';
+        throw e;
+      }
+      stmts.renameProgram.run(newName, id);
+    });
+    run();
+    return stmts.getProgram.get(id);
+  },
   deleteProgram(id) {
     // Projects' program_id is automatically set to NULL via ON DELETE SET NULL.
     stmts.deleteProgram.run(id);

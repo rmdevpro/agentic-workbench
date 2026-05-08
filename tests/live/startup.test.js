@@ -26,9 +26,13 @@ test('SRV-02: serves index.html with Workbench title', async () => {
   assert.ok(text.includes('<html'));
 });
 
-test('SRV-02: serves xterm.js and jquery', async () => {
+test('SRV-02: serves static lib assets (xterm, codemirror)', async () => {
   assert.equal((await fetch(`${BASE_URL}/lib/xterm/lib/xterm.js`)).status, 200);
-  assert.equal((await fetch(`${BASE_URL}/lib/jquery/jquery.min.js`)).status, 200);
+  assert.equal((await fetch(`${BASE_URL}/lib/codemirror/codemirror-bundle.js`)).status, 200);
+  // Regression for #319: jquery and jqueryfiletree static routes were removed.
+  // If a future change re-introduces them, this test will fail and the change
+  // must be reviewed against the cleanup decision.
+  assert.equal((await fetch(`${BASE_URL}/lib/jquery/jquery.min.js`)).status, 404);
 });
 
 test('SRV-04: container alive and server listening', () => {

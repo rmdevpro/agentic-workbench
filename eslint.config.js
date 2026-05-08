@@ -24,6 +24,7 @@ module.exports = [
         URL: 'readonly',
         URLSearchParams: 'readonly',
         AbortController: 'readonly',
+        AbortSignal: 'readonly',
         fetch: 'readonly',
         Response: 'readonly',
         Headers: 'readonly',
@@ -71,6 +72,8 @@ module.exports = [
         WebSocket: 'readonly',
         Event: 'readonly',
         CustomEvent: 'readonly',
+        KeyboardEvent: 'readonly',
+        MouseEvent: 'readonly',
         // App-specific browser globals (defined in public/index.html, referenced in page.evaluate())
         ptyOutputBuffer: 'readonly',
         showAuthModal: 'readonly',
@@ -89,8 +92,22 @@ module.exports = [
         pollTokenUsage: 'readonly',
         renameSession: 'readonly',
         archiveSession: 'readonly',
-        KeyboardEvent: 'readonly',
+        // Frontend functions exercised via page.evaluate() in spec files
+        openFileTab: 'readonly',
+        tabs: 'readonly',
+        switchPanel: 'readonly',
+        switchSettingsTab: 'readonly',
+        setTaskFilter: 'readonly',
+        loadTaskTree: 'readonly',
+        expandedTaskFolders: 'readonly',
+        openProjectConfig: 'readonly',
       },
+    },
+  },
+  {
+    files: ['scripts/codemirror-entry.js'],
+    languageOptions: {
+      sourceType: 'module',
     },
   },
   {

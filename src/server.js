@@ -22,7 +22,6 @@ const createWatchers = require('./watchers');
 const createKbWatcher = require('./kb-watcher');
 const createWsTerminal = require('./ws-terminal');
 const registerCoreRoutes = require('./routes');
-// Voice input (Deepgram) removed — feature disabled
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -187,8 +186,6 @@ app.use(
   '/lib/xterm-web-links',
   express.static(join(__dirname, '..', 'node_modules/@xterm/addon-web-links')),
 );
-app.use('/lib/jqueryfiletree', express.static(join(__dirname, '..', 'node_modules/jqueryfiletree/dist')));
-app.use('/lib/jquery', express.static(join(__dirname, '..', 'node_modules/jquery/dist')));
 app.use('/lib/codemirror', express.static(join(__dirname, '..', 'public/lib/codemirror')));
 app.use('/lib/toastui-editor', express.static(join(__dirname, '..', 'public/lib/toastui-editor')));
 

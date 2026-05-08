@@ -4229,18 +4229,22 @@ Should print the input unchanged — author lines / non-URL `@` patterns are NOT
 7. **Verify horizontal scroll works for long names**: drill into a directory with long filenames OR resize the panel narrower. Drag the horizontal scrollbar at the bottom of the file tree → tail of long filenames becomes visible. The horizontal scrollbar must be at the visible bottom of the panel, NOT off-screen.
 
 **Verification recipe (when no real tree is tall enough):**
-After expanding the real tree, run `browser_evaluate` to inject synthetic LIs:
+After expanding the real tree, run `browser_evaluate` to inject synthetic LIs into the vanilla file tree (`#jqft-tree.ft-tree`, replacing the removed jQuery FileTree per #319):
 ```js
 const tree = document.querySelector('#file-browser-tree');
-const ul = tree.querySelector('UL.jqueryFileTree');
+// The vanilla createFileTree renders rows as `.ft-row`/`.ft-children` divs, not <UL>.
+// Inject synthetic rows that mimic the live tree's class shape so the overflow
+// + scrollbar measurements below remain valid.
+const root = tree.querySelector('.ft-tree') || tree;
+const synthContainer = document.createElement('div');
+synthContainer.className = 'ft-children';
 for (let i = 0; i < 200; i++) {
-  const li = document.createElement('li');
-  li.className = 'file ext_md';
-  const a = document.createElement('a');
-  a.innerText = `synthetic-file-${i}-with-extra-length-to-fill.md`;
-  li.appendChild(a);
-  ul.appendChild(li);
+  const row = document.createElement('div');
+  row.className = 'ft-row ft-file';
+  row.innerText = `synthetic-file-${i}-with-extra-length-to-fill.md`;
+  synthContainer.appendChild(row);
 }
+root.appendChild(synthContainer);
 ```
 Then measure:
 - `document.querySelector('#right-panel').getBoundingClientRect()` → bottom should equal `window.innerHeight`

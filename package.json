@@ -18,8 +18,6 @@
     "better-sqlite3": "11.8.1",
     "chokidar": "4.0.3",
     "express": "4.21.2",
-    "jquery": "4.0.0",
-    "jqueryfiletree": "2.1.4",
     "node-pty": "1.0.0",
     "simple-git": "3.27.0",
     "ws": "8.18.0"

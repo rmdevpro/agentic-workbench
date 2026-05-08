@@ -19,10 +19,8 @@ const crypto = require('crypto');
 const express = require('express');
 const { registerMcpRoutes } = require('./mcp-tools');
 const { registerWebhookRoutes } = require('./webhooks');
-// File-tree directory listing endpoint. Replaced the upstream jqueryFileTree
-// node connector (was 2014-era sync I/O, no folder-first sort, no in-place
-// refresh on the front-end) with a JSON endpoint feeding a vanilla-JS tree
-// component in public/index.html.
+// File-tree directory listing endpoint. Returns folder-first sorted JSON
+// for the vanilla-JS tree component in public/index.html.
 
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const PROJECT_NAME_MAX_LEN = 255;
@@ -2183,7 +2181,7 @@ function registerCoreRoutes(
           tail = '(could not read session file: ' + err.message + ')';
         }
         const tailPath = join('/tmp', `workbench-resume-${sessionId}-${Date.now()}.txt`);
-        require('fs').writeFileSync(tailPath, tail, 'utf-8');
+        await writeFile(tailPath, tail, 'utf-8');
         const byteCount = Buffer.byteLength(tail, 'utf-8');
         return res.json({
           prompt: config.getPrompt('session-resume', {

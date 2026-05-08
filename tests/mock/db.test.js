@@ -172,3 +172,39 @@ test('DB-12: concurrent upsertSession calls do not corrupt', async () => {
     assert.equal(s.name, 'First');
   });
 });
+
+// #332 [A7]: renameProgramSafe atomically validates uniqueness and renames.
+test('DB-PRG-01: renameProgramSafe renames a program when target name is free', async () => {
+  await withDb(async (db) => {
+    const a = db.addProgram('alpha');
+    const out = db.renameProgramSafe(a.id, 'gamma');
+    assert.equal(out.name, 'gamma');
+    assert.equal(db.getProgram(a.id).name, 'gamma');
+    assert.equal(db.getProgramByName('alpha'), undefined);
+  });
+});
+
+test('DB-PRG-02: renameProgramSafe throws duplicate_name when another row owns the name', async () => {
+  await withDb(async (db) => {
+    const a = db.addProgram('alpha');
+    db.addProgram('beta');
+    let caught = null;
+    try {
+      db.renameProgramSafe(a.id, 'beta');
+    } catch (e) {
+      caught = e;
+    }
+    assert.ok(caught, 'expected throw');
+    assert.equal(caught.code, 'duplicate_name');
+    // Ensure the rename did NOT take effect — transaction rolled back.
+    assert.equal(db.getProgram(a.id).name, 'alpha');
+  });
+});
+
+test('DB-PRG-03: renameProgramSafe is a no-op when newName equals current', async () => {
+  await withDb(async (db) => {
+    const a = db.addProgram('alpha');
+    const out = db.renameProgramSafe(a.id, 'alpha');
+    assert.equal(out.name, 'alpha');
+  });
+});

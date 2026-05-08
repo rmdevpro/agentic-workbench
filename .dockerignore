@@ -5,7 +5,9 @@ test-results
 docker-compose*.yml
 LICENSE
 *.png
+!public/*.png
 *.txt
+!tests/fixtures/*.txt
 # Keep config/ prompts (*.md files inside config are needed)
 README.md
 CLAUDE_PENANCE.txt

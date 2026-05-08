@@ -3,10 +3,10 @@
 **Date:** 2026-05-08
 **Phase:** Phase 0 — Stabilize the model (cleanup hygiene, build hygiene, dev tooling, mock test stabilisation)
 **Gate issue:** #389
-**Verify branch:** `phase-0-verify` HEAD = `9841c5b` (post-fold-back). Reviewed-at-deploy commits: `010ebf0` (initial Phase 0 stack of 12 PRs) → `afd5215` (Work Summary v1) → `36d3906` (Q7 fold-back from review consensus) → `97edeaa` (3-CLI review docs committed) → `9841c5b` (smoke-framing fix). The 12 PR + 1 fold-back PR are stacked here; remaining commits are doc updates that don't change the runtime image.
+**Verify branch:** `phase-0-verify` HEAD = `6052132` (post-fold-back + post-disposition-closure). Commit chain on this branch: `010ebf0` (initial Phase 0 stack of 12 PRs) → `afd5215` (Work Summary v1) → `36d3906` (Q7 #409 fold-back merge from review consensus) → `97edeaa` (3-CLI review docs committed) → `9841c5b` (Q9 #413 smoke-framing fix) → `5423dec` (Work Summary disposition section v1) → `a15a58d` (Q8 #412 A.1 inline note) → `6052132` (Work Summary disposition section v2 closes A.1/A.4/§E1/§E2). The 12 original PRs + 1 fold-back PR (Q7) are stacked here; Q8 + Q9 are in-place commits with retroactive issues filed; remaining commits are doc updates that don't change the runtime image.
 **Deployed image:** `irina:5000/workbench:97edeaa` = `:latest` (sha256:91e1913a…fde7f0). Image build digest pinned to `97edeaa` since `9841c5b` is doc-only and doesn't change the container.
 **Deploy target:** M5/dev via RUN-001
-**Diff vs main:** 41 files changed, +5406 / −7141 (the −6667 line block is the dead `public/spike/issues.json` deletion; the +4886 line block is the `reviews/` audit-trail commit per Q6 #401 + the 3-CLI review docs committed per `97edeaa`)
+**Diff vs main:** 41 files changed, +5452 / −7141 (the −6667 line block is the dead `public/spike/issues.json` deletion; the largest +4886 line block is the `reviews/` audit-trail commit per Q6 #401 + the 3-CLI review docs committed per `97edeaa` + Work Summary disposition updates)
 
 ---
 
@@ -20,13 +20,13 @@ Foundational hygiene work that unblocks subsequent phases:
 - Fix the ESLint test-globals scope so browser specs lint cleanly; add Node-builtin globals (AbortSignal); add module override for ES-module entry point
 - Stabilise the mock test fixture so the suite is truthful
 
-Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 6 Q-series additions surfaced during Phase 0 verification (Q1–Q6).
+Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 9 Q-series additions surfaced during Phase 0 verification + gate review (Q1–Q9).
 
 ---
 
 ## Issues + commits + branches
 
-**14 issues, 12 PRs, 12 commits, all stacked clean onto `phase-0-verify`** (2 issues are untracked-file rms with no PR).
+**17 issues, 13 PRs, 13 PR-merge commits, all stacked clean onto `phase-0-verify`** (2 issues are untracked-file rms with no PR; 2 issues — Q8 #412 and Q9 #413 — are in-place commits with retroactive issues filed for audit-trail traceability).
 
 | # | PR | Branch | Commit | Change |
 |---|---|---|---|---|
@@ -44,18 +44,22 @@ Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 6 Q-s
 | 399 [Q4] | #406 | `cleanup/Q4-delete-public-spike` | `ec50fe0` | `git rm -r public/spike/` — 2 files, 6667 line deletions; zero consumers; saves 145KB in image |
 | 400 [Q5] | — | — | — | rm untracked `tests/executor-briefing-2026-05-03-baseline.md`. No PR — file was never in git |
 | 401 [Q6] | #407 | `cleanup/Q6-reviews-commit-normalize` | `0bc000c` | git add `reviews/` (7 files: 6 review docs from initial 3-CLI code review + Phase 0 Gate Work Summary); rename `5-7-26  - Full Code Review/` (two spaces) → `5-7-26 - Full Code Review/` (one space) |
+| 409 [Q7] | #410 | `cleanup/Q7-staleref-sweep` | `37eab54` | Sweep stale jQuery + prime-test-session refs in tests/plans/runbook (Phase 0 gate-review fold-back; Claude B-F2 + Codex Major+Moderate consensus). 5 files: `tests/live/startup.test.js` SRV-02 → asserts xterm + codemirror serve, jquery 404; `tests/browser/file-browser.spec.js` → uses `GET /api/browse?path=/`; plan + runbook entries REMOVED-marked with phase-0 cleanup pointers |
+| 412 [Q8] | — | — | `a15a58d` | In-place commit on phase-0-verify (no PR — single-file inline comment). Add note for future test authors next to the program-method block in `tests/mock/routes.test.js` pointing at `makeApp(overrides)` mechanism with concrete example. From Claude gate review §A.1 single-CLI caveat. Issue filed retroactively as audit-trail anchor. |
+| 413 [Q9] | — | — | `9841c5b` | In-place commit on phase-0-verify (no PR — repo-side audit doc, not in build context). Replace 4 instances of "Manual smoke: hands-on by user" in `REMEDIATION_EXECUTION_SUMMARY.md` with "End-to-end smoke (agent-driven)" framing. User-flagged misframing during gate cycle. Memory `feedback_user_does_not_test.md` saved. Issue filed retroactively as audit-trail anchor. |
 
-`phase-0-verify` HEAD = `9841c5b` (12 original Phase 0 merge commits + Q7 #409 fold-back merge + 3 doc commits — review docs committed, smoke-framing fix). No conflicts on any merge.
+`phase-0-verify` HEAD = `6052132` (12 original Phase 0 merge commits + Q7 #409 fold-back merge + Q8 #412 + Q9 #413 in-place commits + 3 Work-Summary doc commits + 1 review-docs commit). No conflicts on any merge.
 
 ---
 
 ## Verify artifact
 
-- **Branch:** `phase-0-verify` @ `010ebf0` — pushed to origin
-- **Image:** `irina:5000/workbench:010ebf0`, retagged `:latest`
-  - SHA256: `sha256:5aaf94d0ca171919116b05e502b3352e9278c6b59bf556dcf2b5ce10238b6c35`
-  - Image build layer: `746f3345c8a3`
-- **Container:** `workbench` on M5 (192.168.1.120:7860), recreated 2026-05-08T19:25Z (UTC), `/health` returns `{status:"ok"}`
+- **Branch:** `phase-0-verify` @ `6052132` (HEAD) — pushed to origin
+- **Image:** `irina:5000/workbench:97edeaa`, retagged `:latest` — last deploy point. Subsequent commits (`5423dec`, `a15a58d`, `6052132`) are doc-only / inline-comment changes that don't change the runtime image.
+  - SHA256: `sha256:91e1913a34cbb808ac13422c97e865820ea63ff0b548f2a39a950cc8fefde7f0`
+  - Image build layer: `9586d4a41db0`
+  - Earlier deploy points (preserved in registry for rollback): `010ebf0` (sha256:5aaf94d0…) initial 12-PR stack; `99c9a13` (sha256:391d2a0d…) post-Q1 AbortSignal
+- **Container:** `workbench` on M5 (192.168.1.120:7860), recreated 2026-05-08T19:30Z (UTC, last redeploy after 97edeaa), `/health` returns `{status:"ok"}`
 - **Compose:** unchanged from prior deploys (override at `/srv/.admin/workbench/docker-compose.override.yml` is host-config-only)
 
 ---
@@ -153,7 +157,7 @@ typeof createFileTree      → "function"
 
 ### Per-issue checklist status
 
-All 14 issue bodies (#318, #319, #320, #321, #322, #323, #324, #325, #395, #397, #398, #399, #400, #401) have their workflow checklists ticked with concrete inline evidence per item. Items not applicable to a given issue are explicitly marked `[N/A]: <reason>`.
+All 17 issue bodies (#318, #319, #320, #321, #322, #323, #324, #325, #395, #397, #398, #399, #400, #401, #409, #412, #413) have their workflow checklists ticked with concrete inline evidence per item. Items not applicable to a given issue are explicitly marked `[N/A]: <reason>`. (Q8 #412 + Q9 #413 are retroactive issues anchored to in-place commits; their workflow checklists are minimal because the work was already complete when the issue was filed.)
 
 #322 (C1) note: the original acceptance criterion `tests/fixtures/ansi-auth-url.txt is present in the container` was split into two — "the .dockerignore override is in effect" (✓, ticked) and "the fixture is captured" (UNTICKED, blocked on F7 #363 per C7 #323's plan §3.3 reconciliation). #322's standalone work is fully verified; the fixture itself is F7 scope.
 
@@ -172,6 +176,9 @@ Per memory `feedback_no_punted_followups.md`, every "deferred" / "follow-up" / "
 - Dead `public/spike/` directory → Q4 #399 ✓
 - Dead `tests/executor-briefing-…` → Q5 #400 ✓
 - Untracked `reviews/` audit trail → Q6 #401 ✓
+- Stale jQuery + prime-test-session refs (gate-review consensus fold-back) → Q7 #409 ✓
+- Mock test fixture future-author note (gate-review §A.1) → Q8 #412 ✓
+- Smoke framing in REMEDIATION_EXECUTION_SUMMARY.md (user-flagged in gate cycle) → Q9 #413 ✓
 
 **Cannot rationally be done in Phase 0 (filed + deferred to Phase 1):**
 
@@ -243,11 +250,11 @@ Per gate checklist (#389):
    - `eslint.config.js` — `tests/browser/**` block, main block (`AbortSignal`), and the new `scripts/codemirror-entry.js` module override block
    - `tests/workbench-test-plan-ui.md` §3.3 — fixture reconciliation
    - **Runbook coverage gap**: Phase 0 added zero new runbook entries. Reviewers should flag whether #319 (jQuery / file tree picker) and #322 (PNG dockerignore / logo render) deserve their own runbook lines rather than piggy-backing on existing AP-01..04 / NF-15 / GATE-MKT-01 / SMOKE-01 entries.
-3. **3-CLI code review** — `git diff main..phase-0-verify` (41 files, +5406/−7141). Independent reviews of the merged code change.
+3. **3-CLI code review** — `git diff main..phase-0-verify` (41 files, +5452/−7141). Independent reviews of the merged code change.
 4. **Regression — mock** — already at 257 pass / 5 fail; the 5 are O3 #377 scope.
 5. **Regression — live** — `npm run test:live` against M5 (gate runs this).
 6. **Regression — UI runbook** — execute Phase 0–scoped runbook entries against M5 with per-verify-line agent affirmations + screenshots.
-7. **CLI parity** — N/A for any of the 14 issues (none touch CLI plumbing); reviewer should confirm.
+7. **CLI parity** — N/A for any of the 17 issues (none touch CLI plumbing); reviewer should confirm.
 8. **Cleanup verification** — repo state.
 9. **Runbook entry** — gate run logged.
 10. **Sign-off** — present + ask permission.
@@ -272,4 +279,4 @@ Independent, no leading. Each CLI reaches its own conclusion before any cross-co
 
 - Test review and code review run as separate 3-CLI passes (six total review sessions).
 - Findings dispositioned per PROC-002 §"Step 5 Peer review": ≥2-CLI consensus = fold back into the relevant per-issue branch + re-run affected verify steps; single-CLI flags noted, folded only if obviously a real bug.
-- After all reviews land + dispositions complete + regression suite green: present full evidence package to user; ask permission to merge the 12 PRs and close the 14 work issues + the gate issue.
+- After all reviews land + dispositions complete + regression suite green: present full evidence package to user; ask permission to merge the 13 PRs and close the 17 work issues + the gate issue.

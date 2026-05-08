@@ -343,6 +343,10 @@ const stmts = {
   shiftRanksUp: db.prepare("UPDATE tasks SET rank = rank + 1 WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ? AND rank >= ? AND rank < ? AND id != ?"),
   shiftRanksDown: db.prepare("UPDATE tasks SET rank = rank - 1 WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ? AND rank > ? AND rank <= ? AND id != ?"),
   densifyRanks: db.prepare("UPDATE tasks SET rank = rank - 1 WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ? AND rank > ?"),
+  // #327 [A2]: open a slot at targetRank in destination bucket for an incoming
+  // cross-bucket task. No `id != ?` constraint — the moving task isn't in the
+  // destination bucket yet.
+  shiftRanksUpAtAndAbove: db.prepare("UPDATE tasks SET rank = rank + 1 WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ? AND rank >= ?"),
   maxRankInBucket: db.prepare("SELECT COALESCE(MAX(rank), 0) AS m FROM tasks WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ?"),
   deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
   addTaskHistory: db.prepare('INSERT INTO task_history (task_id, event_type, old_value, new_value, created_by) VALUES (?, ?, ?, ?, ?)'),
@@ -672,6 +676,94 @@ module.exports = {
       JSON.stringify({ project_id: t.project_id, parent: t.parent_task_id }),
       JSON.stringify({ project_id: newProjectId, parent: newParent }),
       'human');
+    return stmts.getTask.get(id);
+  },
+  // #327 [A2]: atomic reparent + rank assignment. Replaces the buggy two-step
+  // call pattern (db.setTaskRank → db.reparentTask) which was non-atomic and
+  // produced wrong ranks: setTaskRank shifted the OLD bucket then reparentTask
+  // overrode rank to (max+1) in the NEW bucket — appended instead of inserted.
+  //
+  // moveTask handles all sub-cases in a single transaction:
+  //   - same-bucket rerank (rank only) — densify within bucket
+  //   - cross-bucket move with target rank — densify old + shift new at target + reparent
+  //   - reparent without explicit rank — appends to new bucket
+  //
+  // Returns the updated task row.
+  moveTask(id, { parentTaskId = undefined, projectId = undefined, rank = undefined } = {}) {
+    const t = stmts.getTask.get(id);
+    if (!t) { const e = new Error('task not found'); e.code = 'not_found'; throw e; }
+
+    const newProjectId = projectId == null ? t.project_id : Number(projectId);
+    const newParent = parentTaskId == null ? null : Number(parentTaskId);
+    const oldBucketParent = t.parent_task_id ?? 0;
+    const newBucketParent = newParent ?? 0;
+    const sameBucket = (t.project_id === newProjectId && oldBucketParent === newBucketParent);
+
+    // Validate cycle + parent existence + project match
+    if (newParent != null) {
+      const desc = module.exports.collectDescendants(id);
+      if (desc.has(newParent)) {
+        const e = new Error('cannot reparent: target would create a cycle');
+        e.code = 'task_validation'; throw e;
+      }
+      const parentRow = stmts.getTask.get(newParent);
+      if (!parentRow) { const e = new Error('parent task not found'); e.code = 'task_validation'; throw e; }
+      if (parentRow.project_id !== newProjectId) {
+        const e = new Error('cannot reparent across projects without project_id matching the new parent');
+        e.code = 'task_validation'; throw e;
+      }
+    }
+
+    // Determine target rank.
+    // Same-bucket cap = current max (task already counted in the max).
+    // Cross-bucket cap = current max + 1 (incoming task adds a slot).
+    const newBucketMax = stmts.maxRankInBucket.get(newProjectId, newBucketParent).m;
+    let targetRank;
+    if (rank == null) {
+      targetRank = sameBucket ? t.rank : newBucketMax + 1;
+    } else {
+      const cap = sameBucket ? Math.max(1, newBucketMax) : (newBucketMax + 1);
+      targetRank = Math.max(1, Math.min(Number(rank), cap));
+    }
+
+    // No-op fast path
+    if (sameBucket && targetRank === t.rank) return t;
+
+    const run = db.transaction(() => {
+      if (sameBucket) {
+        // Same bucket — just rerank
+        if (targetRank < t.rank) {
+          stmts.shiftRanksUp.run(t.project_id, oldBucketParent, targetRank, t.rank, id);
+        } else {
+          stmts.shiftRanksDown.run(t.project_id, oldBucketParent, t.rank, targetRank, id);
+        }
+        stmts.setTaskRank.run(targetRank, id);
+      } else {
+        // Cross-bucket move
+        // 1. Densify old bucket — close the gap left by departing task
+        stmts.densifyRanks.run(t.project_id, oldBucketParent, t.rank);
+        // 2. Shift new bucket up at and above targetRank — open a slot
+        stmts.shiftRanksUpAtAndAbove.run(newProjectId, newBucketParent, targetRank);
+        // 3. Reparent + set new rank (single UPDATE for the moving task)
+        stmts.reparentTask.run(newParent, newProjectId, targetRank, id);
+        // 4. Cascade project_id to descendants if cross-project
+        if (t.project_id !== newProjectId) {
+          const descIds = Array.from(module.exports.collectDescendants(id)).filter((d) => d !== id);
+          const setProj = db.prepare("UPDATE tasks SET project_id = ?, updated_at = datetime('now') WHERE id = ?");
+          for (const d of descIds) setProj.run(newProjectId, d);
+        }
+      }
+    });
+    run();
+
+    if (sameBucket) {
+      stmts.addTaskHistory.run(id, 'reranked', String(t.rank), String(targetRank), 'human');
+    } else {
+      stmts.addTaskHistory.run(id, 'moved',
+        JSON.stringify({ project_id: t.project_id, parent: t.parent_task_id, rank: t.rank }),
+        JSON.stringify({ project_id: newProjectId, parent: newParent, rank: targetRank }),
+        'human');
+    }
     return stmts.getTask.get(id);
   },
   deleteTask(id) {

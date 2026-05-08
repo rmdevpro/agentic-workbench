@@ -719,16 +719,15 @@ handlers.task_update = async (args) => {
       throw e;
     }
   }
-  // Rank
-  if (args.rank !== undefined) {
-    db.setTaskRank(id, Number(args.rank));
-  }
-  // Reparent
-  if (args.parent_task_id !== undefined || args.project_id !== undefined) {
+  // #327 [A2]: atomic moveTask replaces the buggy two-step
+  // setTaskRank → reparentTask which appended to the new bucket
+  // instead of inserting at the requested rank.
+  if (args.rank !== undefined || args.parent_task_id !== undefined || args.project_id !== undefined) {
     try {
-      db.reparentTask(id, {
-        parentTaskId: args.parent_task_id === undefined ? null : args.parent_task_id,
+      db.moveTask(id, {
+        parentTaskId: args.parent_task_id,
         projectId: args.project_id,
+        rank: args.rank,
       });
     } catch (e) {
       if (e.code === 'task_validation') throw new ToolError(e.message, 400);

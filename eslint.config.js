@@ -24,6 +24,7 @@ module.exports = [
         URL: 'readonly',
         URLSearchParams: 'readonly',
         AbortController: 'readonly',
+        AbortSignal: 'readonly',
         fetch: 'readonly',
         Response: 'readonly',
         Headers: 'readonly',

@@ -145,7 +145,7 @@ Auth status is informational only — it does not affect the overall healthy/deg
 
 ## Filesystem Access
 
-Workbench is a single-user, Docker-containerized IDE. Per AD-001, it intentionally provides full filesystem access to the user through `/api/browse`, `/api/file`, and the jqueryfiletree connector. No path containment checks are applied to these endpoints to support external file mounts (NFS, bind mounts) that may reside outside the workspace directory.
+Workbench is a single-user, Docker-containerized IDE. Per AD-001, it intentionally provides full filesystem access to the user through two backend endpoints — `GET /api/browse` (directory listing) and `GET /api/file` (file content) — consumed by the vanilla `createFileTree` frontend (in `public/index.html`). No path containment checks are applied to these endpoints to support external file mounts (NFS, bind mounts) that may reside outside the workspace directory.
 
 Plan file operations (`workbench_read_plan`, `workbench_update_plan`) do enforce path containment within `WORKBENCH_DATA/plans` using symlink-aware async validation, as these are internal data structures.
 

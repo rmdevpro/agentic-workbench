@@ -263,3 +263,30 @@ test('SAF-15: tmuxSendKeyAsync sends named key to tmux session', async (t) => {
     restore();
   }
 });
+
+// #346 [C4]: tmuxNamePrefix is the documented inverse of tmuxNameFor's
+// 12-char id window. ws-terminal's auto-respawn relies on this round-trip
+// for db.getSessionByPrefix() lookups.
+test('SAF-NP-01: tmuxNamePrefix returns the same window as the magic-number slice', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    const name = safe.tmuxNameFor('abc-123-some-long-session-id');
+    assert.equal(safe.tmuxNamePrefix(name), name.slice(3, 15));
+  } finally {
+    restore();
+  }
+});
+
+test('SAF-NP-02: tmuxNamePrefix recovers the truncated session id', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    const sessionId = 'session-1234567890-extra';
+    const name = safe.tmuxNameFor(sessionId);
+    // tmuxNameFor uses sessionId.substring(0, 12); sanitizeTmuxName keeps
+    // alphanumerics, `_`, and `-`, so for an all-printable ASCII id the
+    // prefix is just the first-12-chars window unchanged.
+    assert.equal(safe.tmuxNamePrefix(name), sessionId.substring(0, 12));
+  } finally {
+    restore();
+  }
+});

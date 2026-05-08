@@ -1,0 +1,62 @@
+A1 326 routes.js:2165 path-encoding mismatch breaks /api/sessions/:id/session
+A10 335 Gemini JSON/JSONL parser inconsistency
+A11 336 /api/projects/:name/remove cascade tmux + JSONL + MCP entries
+A12 337 server.js gate page sync read at module load
+A13 338 session-resolver async conversion
+A14 339 Frontend OAuth stream parser extraction (testable module)
+A15 340 Save As / confirm / alert / prompt sweep → modal pattern
+A16 341 Two escapeHtml implementations consolidated
+A17 342 WORKBENCH_SESSION_ID env var injection at session spawn
+A18 343 switchTab layout thrashing fix (absolute positioning)
+A2 327 Task reparent + rank atomicity
+A3 328 /api/issues GraphQL string concat + GitHub Enterprise host derivation
+A4 329 Frontend issue picker hardcodes rmdevpro/ org
+A5 330 file_find arg interpolation → execFile + validation
+A6 331 gh_cmd command argument validation + chunked output
+A7 332 /api/programs PUT name uniqueness in transaction
+A8 333 /api/auth/login stop burning Claude tokens
+A9 334 Claude tmpId collision under rapid creation
+B1 318 Delete dead voice.js module + tests + references
+B2 319 Delete jQuery + jqueryfiletree dependencies (frontend already replaced)
+B3 320 Delete scripts/prime-test-session.js (stale)
+B4 321 Delete .dockerignore exclusions for non-existent files
+C1 322 .dockerignore exclusions break local docker builds (PNG/TXT)
+C2 344 Externalize 26 orphan config keys to defaults.json
+C3 345 Hardcoded constants → src/constants.js
+C4 346 Tmux name parsing helper safe.tmuxNamePrefix
+C5 347 Inline require() hoist (AST-verified)
+C6 348 Trivial cleanup batch (gate Space ID, PORT 3000, db.js comment)
+C7 323 Test artifact .gitignore + capture missing fixtures
+C8 349 Legacy helpers in safe-exec.js — delete or relocate
+D1 350 Cookie secure flag for non-HTTPS deployments
+D10 359 /tmp resume tail file cleanup (mcp-tools.js session_resume_post_compact)
+D2 351 Rate limit /api/gate/login with bucket reset verification
+D3 352 Qdrant background-launch health monitoring
+D4 353 Pin CLI versions in Dockerfile
+D5 354 Pin esbuild as devDependency
+D6 355 Centralized PTY registry + process.on('exit') cleanup hook
+D7 356 Logger batched persistence (avoid per-line SQLite INSERT)
+D8 357 KB watcher mutex split (prevent pull starvation)
+D9 358 tmux-lifecycle scan optimization (drop second-pass tmuxExists)
+E1 371 /api/state payload reduction
+E2 372 session-utils unified discovery cache
+E3 369 Optimistic-mutation poll-collision fix
+F0 364 [Parent] Frontend monolith decomposition (14 ES modules + CSS extraction)
+F7 363 F7 (canary): public/js/oauth-detector.js extraction
+G0 365 [Parent] routes.js decomposition into 9 domain modules
+H0 366 [Parent] session-utils.js decomposition by CLI + factory-DI
+I0 370 [Parent] watchers.js decomposition (2 watchers + 3 cli-config modules)
+J1 367 qdrant-sync factory-DI conversion + streaming for large files
+K1 360 Numbered DB migration runner
+L1 361 MCP catalog single source of truth
+M1 368 Move KB clone + sync poller from server.js startup to kb-watcher.js
+N1a 362 ESLint rules + Prettier (warnings tier)
+N1b 373 ESLint rules — escalate to errors after C5 + cleanup
+N2 374 ESLint stops ignoring public/**
+N3 375 Match c8 thresholds to test plan
+N4 324 ESLint test-globals override (clears 49 lint errors)
+O1 325 Mock test failures fix (chokidar, getAllPrograms mock, MCP count)
+O2 376 Browser spec rewrites for task v2 selectors
+O3 377 Live test rewrites for task v2 API shape
+O4 378 Test plan + traceability matrix update for task v2
+P1 379 README reconciliation rewrite

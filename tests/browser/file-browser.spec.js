@@ -54,35 +54,29 @@ describe('file browser (browser)', () => {
       'File tree container must be visible',
     );
     // Gray-box: verify the file tree API is responsive and returns content.
+    // Per #319 (jQuery removal), the endpoint is now GET /api/browse?path=...
+    // returning JSON ({path, parent, entries: [{name, type}]}). The vanilla
+    // createFileTree consumes this shape.
     const apiResponse = await page.evaluate(async () => {
       try {
-        const r = await fetch('/api/jqueryfiletree', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: 'dir=/',
-        });
-        const text = await r.text();
+        const r = await fetch('/api/browse?path=/');
+        const data = await r.json();
         return {
           ok: r.ok,
           status: r.status,
-          hasContent: text.length > 0,
-          contentLength: text.length,
+          entryCount: Array.isArray(data.entries) ? data.entries.length : 0,
+          path: data.path,
         };
       } catch (e) {
         return { ok: false, error: e.message };
       }
     });
-    assert.ok(apiResponse.ok, 'File tree API /api/jqueryfiletree must respond successfully');
-    // Hard assertion: the API must return actual file listing content, not an empty response.
-    // Previously this test skipped DOM population assertion entirely.
+    assert.ok(apiResponse.ok, 'File tree API /api/browse must respond successfully');
     assert.ok(
-      apiResponse.hasContent,
-      'File tree API must return non-empty directory listing content',
+      apiResponse.entryCount > 0,
+      `File tree API must return non-empty entries array (got ${apiResponse.entryCount})`,
     );
-    assert.ok(
-      apiResponse.contentLength > 10,
-      `File tree API response must contain meaningful HTML listing (got ${apiResponse.contentLength} bytes)`,
-    );
+    assert.equal(apiResponse.path, '/', 'API echoes the requested path back');
     await page.screenshot({ path: `${SS}/files--panel.png` });
     assert.equal(errors.length, 0, errors.join(', '));
   });

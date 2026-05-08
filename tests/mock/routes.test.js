@@ -197,16 +197,18 @@ function makeApp(overrides = {}) {
     db,
     safe: {
       resolveProjectPath: (n) => path.join(WORKSPACE, n),
-      findSessionsDir: () => path.join(WORKSPACE, '.sessions'),
+      findSessionsDir: (p) => path.join(WORKSPACE, '.sessions', String(p || '').replace(/[\/_]/g, '-')),
       tmuxCreateCLI() {},
       tmuxCreateClaude() {},
       tmuxCreateBash() {},
       tmuxExists: existsFn,
       tmuxExecAsync: async () => '',
       tmuxSendKeysAsync: async () => {},
+      tmuxKill: overrides.tmuxKill ?? (async () => {}),
       claudeExecAsync: overrides.claudeExecAsync ?? (async () => 'ok'),
       gitCloneAsync: async () => 'cloned',
       sanitizeErrorForClient: (msg) => msg,
+      HOME: overrides.home ?? CLAUDE_HOME,
     },
     config: {
       get: (k, fb) =>
@@ -1659,4 +1661,93 @@ test('TMPID-01: 5 concurrent Claude session POSTs produce 5 distinct tmpIds', as
       assert.match(id, /^new_\d+_[0-9a-f]{6}$/, `id ${id} should match new_<ms>_<hex6>`);
     }
   });
+});
+
+// #336 [A11]: project removal cascades through tmux + Claude JSONL dir +
+// per-CLI trust/projects entries. Each cleanup is best-effort and never
+// blocks the row delete.
+test('PRJ-RM-01: POST /api/projects/:name/remove kills tmux for each session', async () => {
+  const killed = [];
+  await withFullServer(async ({ port, db }) => {
+    const proj = db.ensureProject('rm-proj-1', '/workspace/rm-proj-1');
+    db.upsertSession('s-rm-1', proj.id, 'A');
+    db.upsertSession('s-rm-2', proj.id, 'B');
+    const r = await req(port, 'POST', '/api/projects/rm-proj-1/remove', {});
+    assert.equal(r.status, 200);
+    // Two sessions → two tmuxKill calls (order-insensitive).
+    assert.equal(killed.length, 2);
+    assert.deepEqual(new Set(killed), new Set(['wb_s-rm-1', 'wb_s-rm-2']));
+    // DB row gone.
+    assert.equal(db.getProject('rm-proj-1'), undefined);
+  }, {
+    tmuxKill: async (name) => { killed.push(name); },
+  });
+});
+
+test('PRJ-RM-02: POST /api/projects/:name/remove succeeds even if tmuxKill throws', async () => {
+  await withFullServer(async ({ port, db }) => {
+    const proj = db.ensureProject('rm-proj-err', '/workspace/rm-proj-err');
+    db.upsertSession('s-err', proj.id, 'X');
+    const r = await req(port, 'POST', '/api/projects/rm-proj-err/remove', {});
+    assert.equal(r.status, 200);
+    assert.equal(db.getProject('rm-proj-err'), undefined);
+  }, {
+    tmuxKill: async () => { throw new Error('tmux down'); },
+  });
+});
+
+test('PRJ-RM-03: POST /api/projects/:name/remove strips ~/.claude.json projects entry', async () => {
+  const fs = require('node:fs');
+  const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-rmcl-'));
+  const projPath = path.join(claudeHome, 'workspace', 'cleanup-target');
+  fs.mkdirSync(projPath, { recursive: true });
+  const cfg = { projects: { [projPath]: { hasTrustDialogAccepted: true }, '/other': { keep: true } } };
+  fs.writeFileSync(path.join(claudeHome, '.claude.json'), JSON.stringify(cfg));
+  await withFullServer(async ({ port, db }) => {
+    db.ensureProject('cleanup-target', projPath);
+    const r = await req(port, 'POST', '/api/projects/cleanup-target/remove', {});
+    assert.equal(r.status, 200);
+    const after = JSON.parse(fs.readFileSync(path.join(claudeHome, '.claude.json'), 'utf-8'));
+    assert.equal(after.projects[projPath], undefined, 'project entry must be stripped');
+    assert.deepEqual(after.projects['/other'], { keep: true }, 'other entries must be preserved');
+  }, { claudeHome });
+});
+
+test('PRJ-RM-04: POST /api/projects/:name/remove strips Gemini trustedFolders entry', async () => {
+  const fs = require('node:fs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-rmgem-'));
+  const projPath = path.join(home, 'workspace', 'gem-target');
+  fs.mkdirSync(projPath, { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'trustedFolders.json'), JSON.stringify({
+    [projPath]: 'TRUST_FOLDER',
+    '/keep': 'TRUST_FOLDER',
+  }));
+  await withFullServer(async ({ port, db }) => {
+    db.ensureProject('gem-target', projPath);
+    const r = await req(port, 'POST', '/api/projects/gem-target/remove', {});
+    assert.equal(r.status, 200);
+    const after = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'trustedFolders.json'), 'utf-8'));
+    assert.equal(after[projPath], undefined);
+    assert.equal(after['/keep'], 'TRUST_FOLDER');
+  }, { home });
+});
+
+test('PRJ-RM-05: POST /api/projects/:name/remove strips Codex config.toml block', async () => {
+  const fs = require('node:fs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-rmcdx-'));
+  const projPath = path.join(home, 'workspace', 'cdx-target');
+  fs.mkdirSync(projPath, { recursive: true });
+  fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+  const tomlBefore = `[some.other.block]\nkey = "value"\n\n[projects."${projPath}"]\ntrust_level = "trusted"\n\n[projects."/keep/me"]\ntrust_level = "trusted"\n`;
+  fs.writeFileSync(path.join(home, '.codex', 'config.toml'), tomlBefore);
+  await withFullServer(async ({ port, db }) => {
+    db.ensureProject('cdx-target', projPath);
+    const r = await req(port, 'POST', '/api/projects/cdx-target/remove', {});
+    assert.equal(r.status, 200);
+    const after = fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf-8');
+    assert.ok(!after.includes(`[projects."${projPath}"]`), 'target block must be stripped');
+    assert.ok(after.includes('[projects."/keep/me"]'), 'other project block must remain');
+    assert.ok(after.includes('[some.other.block]'), 'unrelated headers must remain');
+  }, { home });
 });

@@ -2160,8 +2160,13 @@ function registerCoreRoutes(
       const { mode = 'info', tailLines = 60 } = req.body;
       const entry = db.getSession(sessionId);
       const project = entry ? entry.project_name : (req.body.project || '');
-      const projectHash = (project ? safe.resolveProjectPath(project) : '').replace(/[^a-zA-Z0-9]/g, '-');
-      const sessionFile = join(CLAUDE_HOME, 'projects', projectHash, `${sessionId}.jsonl`);
+      // #326 [A1]: Use canonical encoder safe.findSessionsDir which replaces
+      // [\/_] with '-' (matches Claude Code's actual encoding). The previous
+      // inline replace(/[^a-zA-Z0-9]/g, '-') was over-eager — it mangled
+      // valid path characters (., ~, +, space) and produced session-file
+      // paths that don't exist on disk.
+      const projectPath = project ? safe.resolveProjectPath(project) : '';
+      const sessionFile = join(safe.findSessionsDir(projectPath), `${sessionId}.jsonl`);
 
       if (mode === 'info') {
         let exists = false;

@@ -116,3 +116,41 @@ test('MCP session_wait rejects seconds <= 0', async () => {
     assert.equal(r.status, 400);
   });
 });
+
+// #330 [A5]: file_find argv-safety + bounds.
+test('MCP file_find rejects file_type with shell metachars', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'file_find',
+      args: { pattern: 'workbench', file_type: 'js;rm -rf /' },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /file_type/i);
+  });
+});
+
+test('MCP file_find accepts plain file_type and returns matches array', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'file_find',
+      args: { pattern: 'workbench', file_type: 'tsx' },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.result.pattern, 'workbench');
+    assert.ok(Array.isArray(r.body.result.matches), 'matches must be an array');
+  });
+});
+
+test('MCP file_find clamps oversized context_lines without error', async () => {
+  // ctx=999 would be valid for grep but the handler must clamp to 0..10 so an
+  // adversarial ask doesn't blow up the response post-slice budget. Observable
+  // effect: the call succeeds and returns the expected shape.
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'file_find',
+      args: { pattern: 'workbench', context_lines: 999 },
+    });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.result.matches));
+  });
+});

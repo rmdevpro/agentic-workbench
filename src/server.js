@@ -22,7 +22,6 @@ const createWatchers = require('./watchers');
 const createKbWatcher = require('./kb-watcher');
 const createWsTerminal = require('./ws-terminal');
 const registerCoreRoutes = require('./routes');
-// Voice input (Deepgram) removed — feature disabled
 
 // ── Configuration ───────────────────────────────────────────────────────────
 

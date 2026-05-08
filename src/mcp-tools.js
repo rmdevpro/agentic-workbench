@@ -4,7 +4,7 @@ const crypto = require('crypto');
 const fs = require('fs');
 const { readdir } = require('fs/promises');
 const { join, basename, resolve, dirname } = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const safe = require('./safe-exec');
 const sessionUtils = require('./session-utils');
 const logger = require('./logger');
@@ -154,18 +154,31 @@ handlers.file_delete = async (args) => {
   }
 };
 
+const FILE_TYPE_PATTERN = /^[a-zA-Z0-9_+-]+$/;
+
 handlers.file_find = async (args) => {
   require_(args, 'pattern');
-  const ctx = args.context_lines || 2;
+  // #330 [A5]: clamp context_lines to a sane integer range. Anything
+  // outside 0..10 is forced into bounds; non-numeric falls back to 2.
+  let ctx = Number(args.context_lines);
+  if (!Number.isFinite(ctx)) ctx = 2;
+  ctx = Math.max(0, Math.min(10, Math.trunc(ctx)));
+  // #330 [A5]: file_type goes verbatim into a grep --include pattern, so
+  // reject anything that isn't a plain extension token. Blocks injection
+  // like `file_type: "js;rm -rf /"` even though we now use execFile.
+  if (args.file_type !== undefined && args.file_type !== null && args.file_type !== '') {
+    if (!FILE_TYPE_PATTERN.test(String(args.file_type))) {
+      throw new ToolError('file_type must match /^[a-zA-Z0-9_+-]+$/', 400);
+    }
+  }
   // -m 50: cap matches per file. Without this a common pattern like
-  // "deployment" overflows execSync's maxBuffer in seconds on a busy
-  // workspace. We post-slice to 200 lines anyway, so matches beyond
-  // that aren't useful.
+  // "deployment" overflows the buffer in seconds on a busy workspace.
+  // We post-slice to 200 lines anyway, so matches beyond that aren't useful.
   const grepArgs = ['-rn', '--color=never', `-C${ctx}`, '-m', '50'];
   if (args.file_type) grepArgs.push(`--include=*.${args.file_type}`);
-  grepArgs.push('--', safe.shellEscape(args.pattern), safe.shellEscape(WORKSPACE));
+  grepArgs.push('--', String(args.pattern), WORKSPACE);
   try {
-    const out = execSync(`grep ${grepArgs.join(' ')}`, {
+    const out = execFileSync('grep', grepArgs, {
       encoding: 'utf-8', timeout: 10000, maxBuffer: 16 * 1024 * 1024,
     }).trim();
     const lines = out.split('\n').slice(0, 200);

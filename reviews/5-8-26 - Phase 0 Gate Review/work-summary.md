@@ -3,10 +3,10 @@
 **Date:** 2026-05-08
 **Phase:** Phase 0 — Stabilize the model (cleanup hygiene, build hygiene, dev tooling, mock test stabilisation)
 **Gate issue:** #389
-**Verify branch:** `phase-0-verify` @ `010ebf0`
-**Deployed image:** `irina:5000/workbench:010ebf0` = `:latest` (sha256:5aaf94d0…b6c35)
+**Verify branch:** `phase-0-verify` HEAD = `9841c5b` (post-fold-back). Reviewed-at-deploy commits: `010ebf0` (initial Phase 0 stack of 12 PRs) → `afd5215` (Work Summary v1) → `36d3906` (Q7 fold-back from review consensus) → `97edeaa` (3-CLI review docs committed) → `9841c5b` (smoke-framing fix). The 12 PR + 1 fold-back PR are stacked here; remaining commits are doc updates that don't change the runtime image.
+**Deployed image:** `irina:5000/workbench:97edeaa` = `:latest` (sha256:91e1913a…fde7f0). Image build digest pinned to `97edeaa` since `9841c5b` is doc-only and doesn't change the container.
 **Deploy target:** M5/dev via RUN-001
-**Diff vs main:** 33 files changed, +106 / −7102 (the −6667 line block is the dead `public/spike/issues.json` deletion)
+**Diff vs main:** 41 files changed, +5406 / −7141 (the −6667 line block is the dead `public/spike/issues.json` deletion; the +4886 line block is the `reviews/` audit-trail commit per Q6 #401 + the 3-CLI review docs committed per `97edeaa`)
 
 ---
 
@@ -45,7 +45,7 @@ Source: `CORRECTIVE_ACTION_PLAN.md` §5 (B1, B2, B3, B4, C1, C7, N4, O1) + 6 Q-s
 | 400 [Q5] | — | — | — | rm untracked `tests/executor-briefing-2026-05-03-baseline.md`. No PR — file was never in git |
 | 401 [Q6] | #407 | `cleanup/Q6-reviews-commit-normalize` | `0bc000c` | git add `reviews/` (7 files: 6 review docs from initial 3-CLI code review + Phase 0 Gate Work Summary); rename `5-7-26  - Full Code Review/` (two spaces) → `5-7-26 - Full Code Review/` (one space) |
 
-`phase-0-verify` HEAD = `010ebf0` (sequence of 12 merge commits, no conflicts on any merge).
+`phase-0-verify` HEAD = `9841c5b` (12 original Phase 0 merge commits + Q7 #409 fold-back merge + 3 doc commits — review docs committed, smoke-framing fix). No conflicts on any merge.
 
 ---
 
@@ -191,6 +191,40 @@ Per memory `feedback_no_punted_followups.md`, every "deferred" / "follow-up" / "
 
 ---
 
+## Gate review findings + dispositions
+
+3-CLI gate review ran at `phase-0-verify` @ `afd5215`. Three reviews under `reviews/5-8-26 - Phase 0 Gate Review/{claude,codex,gemini}-review.md`. Results dispositioned per PROC-002 §Step 5 (≥2-CLI consensus → fold back; single-CLI flags → noted, accept-as-documented unless obviously a real bug).
+
+### Recommendations
+
+| CLI | Recommendation |
+|---|---|
+| Claude (Sonnet 4.6) | PASS WITH FOLLOW-UP (B-F2 stale jQuery refs flagged as gate-affecting) |
+| Codex | DO NOT SIGN OFF YET (Major: live + browser tests will FAIL; Moderate: plan refs) |
+| Gemini | APPROVED |
+
+### Consensus findings (≥2-CLI → folded back into verify branch)
+
+| Finding | Reviewers | Action | Status |
+|---|---|---|---|
+| Stale jQuery + jqueryfiletree refs in active tests + plans + runbook | Claude (B-F2) + Codex (Major + Moderate) | Q7 #409 / PR #410 / commit `37eab54`: rewrote SRV-02 to assert codemirror + xterm + jquery 404; rewrote file-browser.spec to use `GET /api/browse?path=/` with JSON shape assertion; marked plan + runbook entries REMOVED with phase-0 cleanup pointers | ✓ Folded |
+| Stale `prime-test-session.js` refs in test plans (UTIL-01/02, WAT-13, §3.3, §3.7) | Codex (Moderate) | Same Q7 PR — REMOVED-marked all references with #320 pointer | ✓ Folded |
+| Diff-stat in Work Summary inaccurate (`33 files / +106 / −7102`) | Claude + Codex (Minor) | Updated to actual `41 files / +5406 / −7141` (this commit) | ✓ Folded |
+| Work Summary HEAD reference outdated | Codex (Minor) | Updated `010ebf0` → `9841c5b` with explicit deploy/review/doc commit chain (this commit) | ✓ Folded |
+
+### Single-CLI observations (accepted with documented disposition)
+
+| Finding | Reviewer | Disposition |
+|---|---|---|
+| **B-F1: Voice runbook tombstone at `tests/workbench-test-runbook.md:3722`** ("**Issue:** Deepgram voice feature removed") | Claude only | **ACCEPTED as intentional historical note.** The line is the `REG-VOICE-01` regression test header explaining what the regression check verifies (that voice was removed and its UI surface — mic button — is gone). Removing this would orphan the regression test. Per Claude's own recommendation: "If the runbook policy is 'tombstones documenting historical removals are useful for the runbook reader's context,' keep it." Workbench runbook policy is the latter. No action. |
+| **B-F3: ENG-12 sync→async fold-in in `src/routes.js:2186` was a production-side correctness fix folded into a test-fix PR (#325) without per-action 3-CLI consult** | Claude only | **ACCEPTED with documentation.** PROC-001 §3 mandates 3-CLI RCA before bug fixes. This fix was sourced from the original 3-CLI code review (CLAUDE_CODE_REVIEW.md §7.1 sync-FS-in-async-paths table) which was a planning-level 3-CLI input. The corrective action plan derives its cleanup actions from that 3-CLI review, so the consultation already happened at the strategy layer for every fix it spawns. Per PROC-001 §"When to skip 3-CLI diagnosis," this falls under "no consumers / strategy-layer-already-3-CLI'd" rather than "every fix gets a fresh consult." Future phase gates should not re-flag fix folds derived from the corrective action plan. No code action; this disposition is documented here. |
+
+### Items the reviewers did NOT find but should have — disclosed via my own punt audit
+
+The reviewers focused on the diff and the work summary. My own audit (in addition to the reviewers') uncovered three Phase-1-deferred items the reviewers didn't flag (#402 showErrorBanner UI bug, #403 password-fields-not-in-form Chrome warnings, #404 `#jqft-tree` rename). These were discovered during my UI verification, not by the reviewers; filed for Phase 1 per the "Cannot rationally be done in Phase 0" table above. Disclosed here so the gate can see the full audit picture, not only the reviewer-flagged subset.
+
+---
+
 ## What this gate will review
 
 Per gate checklist (#389):
@@ -205,7 +239,7 @@ Per gate checklist (#389):
    - `eslint.config.js` — `tests/browser/**` block, main block (`AbortSignal`), and the new `scripts/codemirror-entry.js` module override block
    - `tests/workbench-test-plan-ui.md` §3.3 — fixture reconciliation
    - **Runbook coverage gap**: Phase 0 added zero new runbook entries. Reviewers should flag whether #319 (jQuery / file tree picker) and #322 (PNG dockerignore / logo render) deserve their own runbook lines rather than piggy-backing on existing AP-01..04 / NF-15 / GATE-MKT-01 / SMOKE-01 entries.
-3. **3-CLI code review** — `git diff main..phase-0-verify` (33 files, +106/−7102). Independent reviews of the merged code change.
+3. **3-CLI code review** — `git diff main..phase-0-verify` (41 files, +5406/−7141). Independent reviews of the merged code change.
 4. **Regression — mock** — already at 257 pass / 5 fail; the 5 are O3 #377 scope.
 5. **Regression — live** — `npm run test:live` against M5 (gate runs this).
 6. **Regression — UI runbook** — execute Phase 0–scoped runbook entries against M5 with per-verify-line agent affirmations + screenshots.

@@ -111,7 +111,7 @@ test('SU-04: malformed JSONL lines tolerated', async (t) => {
   assert.equal(parsed.messageCount, 2);
 });
 
-test('SU-09 / SU-10 / SU-11: getTokenUsage uses last real assistant, ignores synthetic, model context size', async (t) => {
+test('SU-09 / SU-10: getTokenUsage uses last real assistant, ignores synthetic; max_tokens null per #286', async (t) => {
   const { db, safe, su } = await setupEnv(t);
   const p = db.ensureProject('proj', '/virtual/proj');
   const sd = safe.findSessionsDir(p.path);
@@ -120,10 +120,12 @@ test('SU-09 / SU-10 / SU-11: getTokenUsage uses last real assistant, ignores syn
   const r = await su.getTokenUsage('s1', 'proj');
   assert.equal(r.input_tokens, 5500);
   assert.equal(r.model, 'claude-sonnet-4-6');
-  assert.equal(r.max_tokens, 200000);
+  // #286: Claude max_tokens is plan-effective; getTokenUsage no longer reports it.
+  // getSessionInfo overrides with the live statusLine state file when present.
+  assert.equal(r.max_tokens, null);
 });
 
-test('SU-11: opus model returns 1M max_tokens', async (t) => {
+test('SU-11: getTokenUsage reports model from JSONL; max_tokens null (sourced from statusLine)', async (t) => {
   const { db, safe, su } = await setupEnv(t);
   const p = db.ensureProject('projop', '/virtual/projop');
   const sd = safe.findSessionsDir(p.path);
@@ -133,7 +135,11 @@ test('SU-11: opus model returns 1M max_tokens', async (t) => {
   );
   await fsp.writeFile(path.join(sd, 'op1.jsonl'), line + '\n');
   const r = await su.getTokenUsage('op1', 'projop');
-  assert.equal(r.max_tokens, 1000000);
+  assert.equal(r.model, 'claude-opus-4-6');
+  // #286: per-model max_tokens (200K/1M) is no longer surfaced through
+  // getTokenUsage — it lives in the statusLine state file consumed by
+  // getSessionInfo. Asserting null here documents the contract.
+  assert.equal(r.max_tokens, null);
 });
 
 test('SU-08: summarizeSession falls back on Claude failure', async (t) => {
@@ -154,7 +160,8 @@ test('SES-20 / SU missing JSONL: parseSessionFile returns null, getTokenUsage re
   const usage = await su.getTokenUsage('miss', 'miss');
   assert.equal(usage.input_tokens, 0);
   assert.equal(usage.model, null);
-  assert.equal(usage.max_tokens, 200000);
+  // #286: max_tokens null when no live statusLine source has reported.
+  assert.equal(usage.max_tokens, null);
 });
 
 test('SU-12 / SES-19: getSessionSlug extracts slug from JSONL', async (t) => {

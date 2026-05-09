@@ -5,6 +5,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { post } = require('../helpers/http-client');
+const { createSession } = require('../helpers/http-client');
 const { resetBaseline, dockerExec } = require('../helpers/reset-state');
 
 function fileExists(path) {
@@ -29,29 +30,27 @@ function readFile(path) {
   try { return dockerExec(`cat ${path} 2>/dev/null || echo ""`); } catch { return ''; }
 }
 
-test('A11-LIVE-01: project remove kills tmux session for each session in the project', async () => {
+test('A11-LIVE-01: project remove kills tmux for each Claude session in the project', async () => {
   await resetBaseline();
   dockerExec('mkdir -p /data/workspace/a11_tmux_proj');
   await post('/api/projects', { path: '/data/workspace/a11_tmux_proj', name: 'a11_tmux_proj' });
-  // Create two terminal sessions (don't try to spawn real Claude — that's slow + auth-dependent)
-  const t1 = await post('/api/terminals', { project: 'a11_tmux_proj' });
-  const t2 = await post('/api/terminals', { project: 'a11_tmux_proj' });
-  assert.equal(t1.status, 200);
-  assert.equal(t2.status, 200);
-  // Wait for tmux sessions to actually exist
+  // Create two Claude sessions (which write to the sessions table — that's
+  // what the cascade enumerates).
+  const s1 = await createSession('a11_tmux_proj', 'a11-session-1');
+  const s2 = await createSession('a11_tmux_proj', 'a11-session-2');
+  assert.equal(s1.status, 200, `session 1 create: ${JSON.stringify(s1.data)}`);
+  assert.equal(s2.status, 200, `session 2 create: ${JSON.stringify(s2.data)}`);
   await new Promise((r) => setTimeout(r, 1500));
-  const before1 = tmuxHas(t1.data.tmux);
-  const before2 = tmuxHas(t2.data.tmux);
-  assert.ok(before1, `tmux ${t1.data.tmux} must exist before delete`);
-  assert.ok(before2, `tmux ${t2.data.tmux} must exist before delete`);
+  const before1 = tmuxHas(s1.data.tmux);
+  const before2 = tmuxHas(s2.data.tmux);
+  assert.ok(before1, `tmux ${s1.data.tmux} must exist before delete`);
+  assert.ok(before2, `tmux ${s2.data.tmux} must exist before delete`);
 
-  // Delete project
   const r = await post('/api/projects/a11_tmux_proj/remove', {});
   assert.equal(r.status, 200, `delete failed: ${JSON.stringify(r.data)}`);
-  // Wait for tmux kill to propagate
-  await new Promise((rs) => setTimeout(rs, 800));
-  assert.ok(!tmuxHas(t1.data.tmux), `tmux ${t1.data.tmux} must be killed after delete (still in tmux ls)`);
-  assert.ok(!tmuxHas(t2.data.tmux), `tmux ${t2.data.tmux} must be killed after delete (still in tmux ls)`);
+  await new Promise((rs) => setTimeout(rs, 1200));
+  assert.ok(!tmuxHas(s1.data.tmux), `tmux ${s1.data.tmux} must be killed after delete`);
+  assert.ok(!tmuxHas(s2.data.tmux), `tmux ${s2.data.tmux} must be killed after delete`);
 });
 
 test('A11-LIVE-02: project remove strips ~/.claude.json projects entry', async () => {

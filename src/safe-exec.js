@@ -2,6 +2,7 @@
 
 const childProcess = require('child_process');
 const { execFileSync } = childProcess;
+const crypto = require('crypto');
 const fs = require('fs');
 const { writeFile: writeFileAsync, unlink: unlinkAsync } = require('fs/promises');
 const { resolve, join } = require('path');
@@ -33,7 +34,6 @@ function sanitizeTmuxName(name) {
 // any module reasoning about a session's tmux pane (session-utils, tmux-lifecycle,
 // routes, ws-terminal) gets the same name without re-implementing the format.
 function tmuxNameFor(sessionId) {
-  const crypto = require('crypto');
   const hash = crypto.createHash('md5').update(sessionId).digest('hex').substring(0, 4);
   return sanitizeTmuxName(`wb_${sessionId.substring(0, 12)}_${hash}`);
 }
@@ -162,9 +162,7 @@ async function buildResumeArgs(session, projectPath) {
     const cliSessId = session.cli_session_id;
     if (!cliSessId) return { args: ['--resume', 'latest'], missing: false };
     try {
-      const { execFile } = require('child_process');
-      const { promisify } = require('util');
-      const execFileAsync = promisify(execFile);
+      // execFileAsync is defined at module top.
       const { stdout } = await execFileAsync('gemini', ['--list-sessions'], { cwd: projectPath });
       // Line format: "  <index>. <title> (<time>) [<session-id>]"
       for (const line of stdout.split('\n')) {

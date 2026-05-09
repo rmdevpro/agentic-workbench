@@ -785,7 +785,7 @@ function registerCoreRoutes(
   app.get('/api/projects/:name/git-remote', async (req, res) => {
     try {
       const projectName = req.params.name;
-      const project = db.getProjectByName(projectName);
+      const project = db.getProject(projectName);
       if (!project) return res.status(404).json({ error: 'project not found' });
       let remoteUrl;
       try {

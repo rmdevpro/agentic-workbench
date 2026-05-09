@@ -31,9 +31,34 @@ function dockerExec(cmd) {
 }
 
 async function resetBaseline(page = null) {
+  // SAFETY GUARD (Codex R2 BLOCKER): this helper destructively wipes all
+  // task rows + broad classes of session/project rows + kills every tmux
+  // session matching the configured prefix. Against a shared dev/prod
+  // Workbench (M5/dev or hf-prod) that destroys real user work. The
+  // helper REFUSES to run unless WORKBENCH_TEST_SANDBOX=1 is set in the
+  // environment — that env var must only be set inside an isolated test
+  // container whose /data is dedicated to the test run.
+  if (process.env.WORKBENCH_TEST_SANDBOX !== '1') {
+    throw new Error(
+      'resetBaseline refuses to run without WORKBENCH_TEST_SANDBOX=1. ' +
+      'This helper destructively wipes tasks/sessions and kills tmux sessions ' +
+      'in /data/.workbench — only safe in an isolated test container. ' +
+      'Set WORKBENCH_TEST_SANDBOX=1 only in the env of a dedicated test container.'
+    );
+  }
   try {
     const sqlReset = `sqlite3 /data/.workbench/workbench.db "DELETE FROM sessions WHERE id LIKE 'test_%' OR id LIKE 'new_%' OR project_id IN (SELECT id FROM projects WHERE (name LIKE '%_proj' OR name LIKE 'test_%') AND name != 'wb-seed'); DELETE FROM projects WHERE (name LIKE '%_proj' OR name LIKE 'test_%') AND name != 'wb-seed'; DELETE FROM tasks; DELETE FROM task_history;"`;
-    const tmuxKill = `sh -c "tmux ls -F '#{session_name}' 2>/dev/null | grep '^wb_' | xargs -I {} tmux kill-session -t {} 2>/dev/null || true"`;
+    // Tightened tmux kill (Codex R2): default prefix is `wb_test_` not `wb_`
+    // so even with the sandbox guard, the helper can't accidentally kill a
+    // production-style `wb_<sid>` session if the env-var misconfiguration
+    // ever lets it through. Tests that spawn sessions via the workbench's
+    // normal POST /api/sessions path use `wb_<sid>` (per safe-exec
+    // tmuxNameFor); those tests should use the test-container's isolated
+    // /data and override the prefix to `wb_` for cleanup. Tests that use
+    // the default prefix kill nothing pre-existing and only their own
+    // explicitly-named `wb_test_*` sessions.
+    const killPrefix = process.env.WORKBENCH_TEST_TMUX_PREFIX || 'wb_test_';
+    const tmuxKill = `sh -c "tmux ls -F '#{session_name}' 2>/dev/null | grep '^${killPrefix}' | xargs -I {} tmux kill-session -t {} 2>/dev/null || true"`;
     if (_IN_CONTAINER) {
       execSync(sqlReset, { stdio: 'ignore', timeout: 10000, shell: '/bin/sh' });
       execSync(tmuxKill, { stdio: 'ignore', timeout: 10000, shell: '/bin/sh' });

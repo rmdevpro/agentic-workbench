@@ -1152,6 +1152,10 @@ function registerCoreRoutes(
       if (!project) return res.status(404).json({ error: 'project not found' });
       await cascadeCleanupProject(project);
       db.deleteProject(project.id);
+      // #372 [E2] (Claude R2 F1): invalidate per-CLI discovery caches —
+      // cascade removed JSONLs/rollouts may still appear in the cached
+      // discovery results until the 10s TTL expires otherwise.
+      sessionUtils.invalidateDiscoveryCache();
       res.json({ removed: req.params.name });
     } catch (err) {
       logger.error('Error removing project', { module: 'routes', err: err.message });
@@ -1495,6 +1499,15 @@ function registerCoreRoutes(
         }
       } else {
         await safe.tmuxCreateCLIAsync(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
+      }
+
+      // #372 [E2] (Claude R2 F1): invalidate the per-CLI discovery cache for
+      // the spawned CLI so the next /api/state poll's discovery picks up the
+      // freshly-created Gemini chat / Codex rollout file rather than waiting
+      // for the 10s TTL to expire. No-op for Claude (Claude file naming is
+      // session-id direct; doesn't go through the discovery cache).
+      if (cliType === 'gemini' || cliType === 'codex') {
+        sessionUtils.invalidateDiscoveryCache(cliType);
       }
 
       if (cliType === 'claude') {

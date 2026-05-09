@@ -1551,11 +1551,11 @@ build/**</textarea>
             newMenu.style.display = 'none';
             const cli = item.dataset.cli;
             if (cli === 'gemini' && !window._cliCreds?.gemini) {
-              alert('Gemini API key not configured. Go to Settings to add it.');
+              showErrorModal({ title: 'Credential missing', message: 'Gemini API key not configured. Go to Settings to add it.' });
               return;
             }
             if (cli === 'codex' && !window._cliCreds?.openai) {
-              alert('OpenAI API key not configured. Go to Settings to add it.');
+              showErrorModal({ title: 'Credential missing', message: 'OpenAI API key not configured. Go to Settings to add it.' });
               return;
             }
             if (cli === 'terminal') {
@@ -1646,7 +1646,7 @@ build/**</textarea>
           item.addEventListener('click', (e) => {
             if (e.target.closest('.session-action-btn')) return;
             if (session.project_missing) {
-              alert('Project directory not found — it may have been moved or deleted.');
+              showErrorModal({ title: 'Project missing', message: 'Project directory not found — it may have been moved or deleted.' });
               return;
             }
             _lastClickedProjectPath = project.path;
@@ -1668,7 +1668,7 @@ build/**</textarea>
             try {
               await fetch(`/api/sessions/${session.id}/restart`, { method: 'POST' });
               loadState();
-            } catch (err) { alert('Restart failed: ' + err.message); }
+            } catch (err) { showErrorModal({ title: 'Restart failed', message: err.message }); }
           });
           const archEl = item.querySelector('.archive, .unarchive');
           if (archEl) {
@@ -1900,7 +1900,7 @@ build/**</textarea>
 
     async function openProgramConfig(programId) {
       const program = await fetch(`/api/programs/${programId}/project-count`).then(r => r.ok ? r.json() : null);
-      if (!program) { alert('Program not found'); return; }
+      if (!program) { showErrorModal({ title: 'Not found', message: 'Program not found' }); return; }
       const p = program.program;
       const overlayId = 'prog-cfg-' + Date.now();
       const body = `
@@ -1982,7 +1982,7 @@ build/**</textarea>
       })
       .then(r => r.json())
       .then(data => {
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showErrorModal({ title: 'Open session failed', message: data.error }); return; }
         createTab(tabId, data.tmux, session.name, projectName, session.cli_type);
       })
       .catch(err => console.error('Failed to open session:', err));
@@ -2052,7 +2052,7 @@ build/**</textarea>
             body: JSON.stringify(body),
           });
           const data = await res.json();
-          if (data.error) { alert('Error: ' + data.error); btn.textContent = 'Start Session'; btn.disabled = false; return; }
+          if (data.error) { showErrorModal({ title: 'Start session failed', message: data.error }); btn.textContent = 'Start Session'; btn.disabled = false; return; }
 
           overlay.remove();
           createTab(data.id, data.tmux, data.name, projectName, cliType);
@@ -2084,7 +2084,7 @@ build/**</textarea>
           body: JSON.stringify({ project: projectName }),
         });
         const data = await res.json();
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showErrorModal({ title: 'Open terminal failed', message: data.error }); return; }
         createTab(data.id, data.tmux, data.name, projectName, 'bash');
       } catch (err) {
         console.error('Failed to create terminal:', err);
@@ -3421,7 +3421,7 @@ build/**</textarea>
             });
             if (!r.ok) {
               const err = await r.json().catch(() => ({}));
-              alert(err.error || 'Failed to toggle archive');
+              showErrorModal({ title: 'Archive failed', message: err.error || 'Failed to toggle archive' });
             }
             loadTaskTree();
           } else if (action === 'delete') {
@@ -3469,12 +3469,12 @@ build/**</textarea>
           }
         } else if (_addTaskCtx) projectId = _addTaskCtx.projectId;
         if (projectId == null) {
-          alert('No project context to scope the picker. Open the task from inside a project.');
+          showErrorModal({ title: 'Picker unavailable', message: 'No project context to scope the picker. Open the task from inside a project.' });
           return;
         }
         const proj = _findProjectById(projectId);
         if (!proj || !proj.has_repo) {
-          alert('Project has no enclosing git repo. Issue picker requires a repo-backed project.');
+          showErrorModal({ title: 'Picker unavailable', message: 'Project has no enclosing git repo. Issue picker requires a repo-backed project.' });
           return;
         }
         // #329 [A4]: ask the server to derive {host, owner, name} from
@@ -3486,14 +3486,17 @@ build/**</textarea>
         const remRes = await fetch(`/api/projects/${encodeURIComponent(proj.name)}/git-remote`);
         if (!remRes.ok) {
           const err = await remRes.json().catch(() => ({}));
-          alert(err.error === 'no_git_remote'
-            ? 'Project has no git remote configured (no `origin` set). Set one with `git remote add origin <url>` and retry.'
-            : `Could not derive repo from project: ${err.error || `HTTP ${remRes.status}`}`);
+          showErrorModal({
+            title: 'Could not derive repo',
+            message: err.error === 'no_git_remote'
+              ? 'Project has no git remote configured (no `origin` set). Set one with `git remote add origin <url>` and retry.'
+              : `Could not derive repo from project: ${err.error || `HTTP ${remRes.status}`}`,
+          });
           return;
         }
         const remData = await remRes.json();
         repo = remData.repo;  // host/owner/name
-      } catch (err) { alert('Picker setup error: ' + err.message); return; }
+      } catch (err) { showErrorModal({ title: 'Picker setup error', message: err.message }); return; }
       _issuePickerCtx = { repo };
       _issuePickerCache = [];
       document.getElementById('issue-picker-repo').textContent = repo;
@@ -3937,7 +3940,7 @@ build/**</textarea>
             if (!newPath || !newPath.trim()) return;
             const cleanPath = newPath.trim();
             if (cleanPath.includes('..') || !cleanPath.startsWith('/data/workspace')) {
-              alert('Save As path must be within /data/workspace');
+              showErrorModal({ title: 'Invalid path', message: 'Save As path must be within /data/workspace' });
               return;
             }
             let content;
@@ -4553,7 +4556,7 @@ build/**</textarea>
 
     async function fileBrowserNewFolder() {
       const targetDir = getSelectedFileBrowserDir();
-      if (!targetDir) return alert('Expand a directory in the file browser first');
+      if (!targetDir) { showErrorModal({ title: 'No directory selected', message: 'Expand a directory in the file browser first' }); return; }
       // #340 [A15]: workbench input modal instead of native prompt.
       const name = await showInputModal({
         title: 'New Folder', label: 'Folder name:', placeholder: 'docs',
@@ -4566,9 +4569,9 @@ build/**</textarea>
           body: JSON.stringify({ path: targetDir.replace(/\/$/, '') + '/' + name }),
         });
         const data = await res.json();
-        if (data.error) return alert('Error: ' + data.error);
+        if (data.error) { showErrorModal({ title: 'Create folder failed', message: data.error }); return; }
         await _fileBrowserTree?.refreshDirectory(targetDir);
-      } catch (err) { alert('Error: ' + err.message); }
+      } catch (err) { showErrorModal({ title: 'Create folder failed', message: err.message }); }
     }
 
     async function fileBrowserUpload(files) {
@@ -4576,7 +4579,7 @@ build/**</textarea>
       // action; fall back to the panel's selected/expanded directory.
       const targetDir = selectedUploadDir || getSelectedFileBrowserDir();
       selectedUploadDir = null;
-      if (!targetDir) return alert('Expand a directory in the file browser first');
+      if (!targetDir) { showErrorModal({ title: 'No directory selected', message: 'Expand a directory in the file browser first' }); return; }
       for (const file of files) {
         try {
           const buf = await file.arrayBuffer();
@@ -4589,7 +4592,7 @@ build/**</textarea>
             },
             body: buf,
           });
-        } catch (err) { alert('Upload failed: ' + err.message); }
+        } catch (err) { showErrorModal({ title: 'Upload failed', message: err.message }); }
       }
       document.getElementById('file-upload-input').value = '';
       await _fileBrowserTree?.refreshDirectory(targetDir);
@@ -5213,7 +5216,7 @@ build/**</textarea>
     async function pickerSelect(overlayId) {
       const path = document.getElementById('picker-path').value.trim();
       const name = document.getElementById('picker-name').value.trim() || path.split('/').filter(Boolean).pop();
-      if (!path || path === '/') { alert('Select a directory first'); return; }
+      if (!path || path === '/') { showErrorModal({ title: 'No directory selected', message: 'Select a directory first' }); return; }
       try {
         const res = await fetch('/api/projects', {
           method: 'POST',
@@ -5221,7 +5224,7 @@ build/**</textarea>
           body: JSON.stringify({ path, name }),
         });
         const data = await res.json();
-        if (data.error) { alert('Error: ' + data.error); return; }
+        if (data.error) { showErrorModal({ title: 'Add project failed', message: data.error }); return; }
         // If addProject was invoked with a programId, assign the new project to it.
         if (window._pendingProgramId != null) {
           await fetch(`/api/projects/${encodeURIComponent(data.name)}/program`, {
@@ -5232,7 +5235,7 @@ build/**</textarea>
         window._pendingProgramId = null;
         document.getElementById(overlayId).remove();
         loadState();
-      } catch (err) { alert('Error: ' + err.message); }
+      } catch (err) { showErrorModal({ title: 'Add project failed', message: err.message }); }
     }
 
     async function pickerNewFolder() {
@@ -5251,13 +5254,13 @@ build/**</textarea>
           body: JSON.stringify({ path: newPath }),
         });
         const data = await res.json();
-        if (data.error) return alert('Error: ' + data.error);
+        if (data.error) { showErrorModal({ title: 'Create folder failed', message: data.error }); return; }
         // Refresh the parent in place so the new folder appears.
         await window._pickerTree?.refreshDirectory(parentNormalized);
         // Set the new folder as selected
         document.getElementById('picker-path').value = newPath + '/';
         document.getElementById('picker-name').value = name;
-      } catch (err) { alert('Error: ' + err.message); }
+      } catch (err) { showErrorModal({ title: 'Create folder failed', message: err.message }); }
     }
 
     function switchSettingsTab(tab) {
@@ -5656,7 +5659,7 @@ build/**</textarea>
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        alert('Update failed: ' + (e.error || res.statusText));
+        showErrorModal({ title: 'Update failed', message: e.error || res.statusText });
       }
       refreshGitAccounts();
     }
@@ -5706,7 +5709,7 @@ build/**</textarea>
         refreshGitAccounts();
       } catch (err) {
         console.error('addGitAccount failed:', err);
-        alert('Add account failed: ' + err.message);
+        showErrorModal({ title: 'Add account failed', message: err.message });
       }
     }
 
@@ -5714,7 +5717,7 @@ build/**</textarea>
       const res = await fetch('/api/git-accounts/' + id, { method: 'DELETE' });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        alert('Delete failed: ' + (e.error || res.statusText));
+        showErrorModal({ title: 'Delete failed', message: e.error || res.statusText });
       }
       refreshGitAccounts();
     }
@@ -5812,14 +5815,14 @@ build/**</textarea>
       // actually visible; if not, fall back to alert.
       const modalRoot = document.getElementById('settings-modal');
       if (!modalRoot || !modalRoot.classList.contains('visible')) {
-        alert(String(msg));
+        showErrorModal({ title: 'Settings error', message: String(msg) });
         return;
       }
       let banner = document.getElementById('settings-error-banner');
       if (!banner) {
         const modal = document.querySelector('#settings-modal .modal-content');
         if (!modal) {
-          alert(String(msg));
+          showErrorModal({ title: 'Settings error', message: String(msg) });
           return;
         }
         banner = document.createElement('div');

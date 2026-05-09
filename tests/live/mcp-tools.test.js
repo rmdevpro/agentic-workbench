@@ -6,13 +6,15 @@ const { get, post } = require('../helpers/http-client');
 const { resetBaseline } = require('../helpers/reset-state');
 const { queryCount } = require('../helpers/db-query');
 
-test('MCP-01: GET /api/mcp/tools lists 44 flat tools', async () => {
+test('MCP-01: GET /api/mcp/tools lists the flat tool catalog', async () => {
   const r = await get('/api/mcp/tools');
   assert.equal(r.status, 200);
-  assert.equal(r.data.tools.length, 44, `expected 44 tools, got ${r.data.tools.length}`);
-  // Spot-check that the names are flat (no double-prefix) and grouped by domain
+  // Catalog grew from 44 → 51 (gh_ tools added). Just assert non-empty +
+  // shape so the test doesn't tripwire on every catalog addition; the
+  // mock-layer CATALOG-01..03 tests pin exact parity with handlers.
+  assert.ok(r.data.tools.length >= 44, `expected ≥44 tools, got ${r.data.tools.length}`);
   for (const name of r.data.tools) {
-    assert.ok(/^(file|session|project|task|log)_/.test(name), `tool name not flat: ${name}`);
+    assert.ok(/^(file|session|project|task|log|gh)_/.test(name), `tool name not flat: ${name}`);
   }
 });
 

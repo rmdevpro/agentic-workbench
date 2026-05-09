@@ -36,8 +36,11 @@ async function del(path) {
  * Returns { status, data } where data.id is guaranteed on success.
  */
 async function createSession(project, prompt = 'test session') {
+  // POST /api/sessions requires `name` (returns 400 without it). The legacy
+  // signature passed `prompt` only; pass it as both so existing callers that
+  // expect their string in `prompt` still work, plus name is now satisfied.
   for (let attempt = 0; attempt < 3; attempt++) {
-    const r = await post('/api/sessions', { project, prompt });
+    const r = await post('/api/sessions', { project, name: prompt, prompt });
     if (r.data && r.data.id) return r;
     // 500 with no ID means tmux name collision — wait and retry
     if (attempt < 2) {
@@ -45,7 +48,7 @@ async function createSession(project, prompt = 'test session') {
     }
   }
   // Final attempt failed — return whatever we got
-  return post('/api/sessions', { project, prompt });
+  return post('/api/sessions', { project, name: prompt, prompt });
 }
 
 module.exports = { api, get, post, put, del, createSession, BASE_URL };

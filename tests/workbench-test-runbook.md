@@ -5898,6 +5898,15 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 2. Read `#kb-status-line` text after a few seconds.
 **Verify:** No 401 / "could not connect" / "auth" errors in the status line. Status either shows `lastPullAt` updated, or a content-level error like "Pull (ff-only) failed: Diverging branches" — both confirm auth completed. The KB clone's `.git/config` `[remote "origin"]` URL should be plain `https://github.com/<account>/<repo>` with no embedded credentials (verify via `docker exec workbench cat /data/knowledge-base/.git/config` if needed).
 
+### PICKER-A4-01: Picker derives repo from actual git remote, not hardcoded org (#329)
+**Issue:** #329 [A4].
+**Setup:** Plant a project on M5 whose `origin` remote is `https://github.com/different-org/picker-test-repo.git` (NOT under `rmdevpro/`). Add a task in that project. No `git_account` row for `github.com/different-org` (so the picker will surface `no_account_for_path` rather than rendering issues — that's fine; we verify the **repo string the picker resolved**, not the issue list).
+**Steps (browser):**
+1. Open the right panel → Tasks. Expand the project. `browser_evaluate` `openTaskDetail(<task_id>)` to open the task detail modal.
+2. `browser_evaluate` `openIssuePicker(<task_id>, <project_id>)` directly (the picker button is otherwise hidden behind the task-detail modal interaction).
+3. Wait for the picker modal to render.
+**Verify:** The element `#issue-picker-repo` text is `github.com/different-org/picker-test-repo` — i.e., the host/owner/name derived from the actual `git remote get-url origin`, NOT `rmdevpro/<anything>`. The picker error (if any) reports `no_account_for_path: github.com/different-org` — proving the routing reached the correct upstream. Pre-fix the picker hardcoded `rmdevpro/<last-path-segment>` and would have shown `github.com/rmdevpro/picker-test-repo` regardless of the project's actual remote, so any non-rmdevpro repo's issues were unreachable.
+
 ### PICKER-A3-01: GHES repo routes to enterprise host (#328)
 **Issue:** #328 [A3].
 **Setup:** Plant a `git_accounts` entry for `enterprise.example.com/test-owner` with a dummy token (sqlite settings table). No real network access to `enterprise.example.com` required.

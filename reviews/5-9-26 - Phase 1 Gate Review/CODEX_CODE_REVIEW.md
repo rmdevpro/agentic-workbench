@@ -221,3 +221,76 @@ The updated summary is clearer that `001-baseline.js` anchors the runner. The re
 ## Summary
 
 The updated work summary is stronger and adds useful punt-audit detail, but it still overclaims A2 and A5, and the browser test command can silently pass without running browser tests. I recommend holding the gate until the critical/high items are fixed or explicitly re-scoped by the user.
+
+---
+
+# Codex Third Review — Additional Updated Work Summary
+
+**Date:** 2026-05-09  
+**Review scope:** Manual re-review after the latest `work-summary.md` update and fold-back disposition section. I did not run tests and did not use CodeRabbit. I reread the work summary completely and manually inspected the source paths for the previously disputed fold-backs.
+
+## Gate Recommendation
+
+Pass with follow-up, not unconditional sign-off. The earlier Codex gate blockers I rechecked are now mostly represented in the source: A12 gate page mode injection, D6 signal exits, A2 MCP `task_move`, A5 async `file_find`, A11 `.mcp.json` / DB cleanup, A15 listed primary CRUD error modals, and removal of the npm `test:browser` entrypoint.
+
+The remaining issues are either accepted/deferred by the updated summary or lower-severity cleanup from the fold-back. The branch still needs the pre-merge fresh image rebuild / redeploy / regression sweep described in the work summary before it should be merged, because the summary says the currently verified runtime includes `docker cp` mutations after the published image build.
+
+## Findings
+
+### Major: A14 still does not satisfy the original real-fixture acceptance
+
+**File:** `tests/mock/oauth-detector.test.js:23`
+
+The updated summary correctly changes the disposition to defer real OAuth transcript capture to #441, but the code still uses synthetic OAuth fixtures. The test itself states the fixtures are synthetic and that real fixture capture is still the live-test acceptance criterion.
+
+**Impact:** The detector is covered for the expected parser shape, but not for current Claude / Gemini / Codex OAuth output. CLI prompt drift can still break production detection while these tests pass.
+
+**Disposition:** Accept only if #441 remains an explicit Phase 2 gate item. Do not record A14 as fully satisfying the original captured-fixture acceptance.
+
+### Major: C5 structural coverage is skipped in the production-container gate evidence
+
+**File:** `tests/mock/require-hoist.test.js:19`
+
+The `require-hoist` test skips when `acorn` is absent. The work summary documents this as intentional because production containers omit dev dependencies. That is an honest disposition, but it means the deployed-container mock evidence does not execute C5's structural acceptance check.
+
+**Impact:** This is not a product runtime bug, but it is a gate-evidence gap against STD-005's no-skips posture. The C5 check should be proven in a dev/CI environment with dev dependencies, or the gate package should stop counting it as deployed-container coverage.
+
+**Disposition:** Accept-with-documentation is reasonable, but only if the gate evidence clearly separates "skipped in prod container" from "passed locally/CI."
+
+### Moderate: Fold-back leaves an unused `execFileSync` import in MCP tools
+
+**File:** `src/mcp-tools.js:8`
+
+The A5 fold-back correctly moved `file_find` to promisified async `execFile`, but `execFileSync` remains imported from `child_process`. I found no remaining `execFileSync` use in `src/mcp-tools.js` beyond the import and explanatory comments.
+
+**Impact:** This is small, but it is exactly the kind of cleanup that can add or preserve `no-unused-vars` lint failures in a branch already carrying a lint-error baseline. It also makes the A5 code read as if sync child-process usage may still be active in this module.
+
+**Suggested fix:** Remove `execFileSync` from the destructured import.
+
+### Minor: `file_find` buffer-limit error still hardcodes 16 MB
+
+**File:** `src/mcp-tools.js:191`, `src/mcp-tools.js:204`
+
+`file_find` now reads `mcp.fileFindMaxBuffer` from config, but the `ENOBUFS` error message still says `find output exceeded 16 MB`. If an operator changes the configured buffer, the client-facing message becomes inaccurate.
+
+**Impact:** Low product risk, but it undermines the C2/A5 goal of making the limit operationally tunable and observable.
+
+**Suggested fix:** Build the message from `maxBuffer`, preferably formatting it as MiB or bytes.
+
+## Resolved From Prior Codex Reviews
+
+I rechecked the previous high-priority Codex findings against source and no longer consider these blockers:
+
+- **A12 gate page mode:** `src/server.js` caches `GATE_PAGE_TEMPLATE` and calls `renderGatePage(GATE_PAGE_TEMPLATE, authMode)` per request.
+- **D6 signal handling:** `src/ws-terminal.js` exits with `143` for `SIGTERM` and `130` for `SIGINT` after PTY cleanup.
+- **A2 MCP task move:** `src/mcp-tools.js` now routes `task_move` through `db.moveTask(...)`, and `src/mcp-catalog.js` exposes `rank`.
+- **A5 async search:** `src/mcp-tools.js` now awaits promisified `execFile`.
+- **A11 MCP cleanup:** `src/routes.js` removes `<project.path>/.mcp.json` and calls `db.clearProjectMcpEnabled(project.id)`.
+- **A15 listed primary CRUD alerts:** the eight call sites Codex listed have been converted to `window.showErrorModal(...)`.
+- **Browser silent-green npm command:** `package.json` no longer exposes `test:browser`.
+
+## Notes
+
+Remaining native `alert()` calls still exist in `public/index.html`, but the updated summary narrows the fold-back to the eight primary CRUD call sites Codex listed. I am treating the rest as accepted scope control rather than a renewed blocker.
+
+The updated summary's pre-merge action items are still important: rebuild the image from `phase-1-verify` HEAD, redeploy M5 from that image, rerun the agreed sweeps, and spot-check the browser MCP scenarios. I did not execute those steps in this review.

@@ -133,13 +133,23 @@ These bugs are real product issues that would have shipped silently without the 
 
 ## Evidence collected
 
-### Mock suite (in deployed container)
+### Mock suite — split reporting per Codex R3 accept-condition
 
-`docker exec workbench sh -c "cd /app && npm test"` → **336 pass / 5 fail / 1 skip** of 342 tests.
+Mock evidence is now reported in two categories so deployed-container coverage isn't conflated with dev/CI coverage:
 
-The 5 failures are O3 #377 task v1→v2 schema mismatches, explicitly scoped to Phase 4. Phase 1 BASELINE gate cannot reach 0 fail without #377; the 5 failures are out-of-scope-by-plan and pre-existed Phase 1.
+**(a) Deployed-container mock evidence** (`docker exec workbench sh -c "cd /app && npm test"`):
+**336 pass / 5 fail / 1 skip** of 342 tests.
 
-The 1 skip is `tests/mock/require-hoist.test.js` — gated to skip when `acorn` (devDep) is not installed, which is the case in production containers (`npm ci --omit=dev`). Tests run locally where devDeps are present.
+- 5 fails: O3 #377 task v1→v2 schema mismatches (DB-05, TSK-07, TSK-08, TSK-09, "task CRUD success paths with DB verification"). Pre-existed Phase 1; out-of-scope-by-plan; tracked for Phase 4.
+- 1 skip: `tests/mock/require-hoist.test.js` — gated to skip when `acorn` (devDep) is not installed in the production container (`npm ci --omit=dev`). Skipped by design.
+
+**(b) Dev/CI mock evidence** (`npm test` from a working tree with devDeps installed):
+**339 pass / 5 fail / 0 skip** of 344 tests.
+
+- Same 5 O3 baseline fails.
+- 0 skips: `require-hoist.test.js` runs and passes (3 sub-tests via acorn AST walk over `src/routes.js`, `src/mcp-tools.js`, `src/safe-exec.js`).
+
+The C5 structural-quality acceptance is **proven in (b)**, not in (a). The gate package treats (a) as the deployed-runtime evidence and (b) as the structural-acceptance evidence — both are required, neither alone is sufficient.
 
 ### Live suite (in deployed container, per-file)
 
@@ -381,8 +391,8 @@ Codex's R1+R2 high-severity findings were folded into `phase-1-verify` in one ba
 | Finding | Source | Disposition |
 |---|---|---|
 | **K1 #360** — `001-baseline.js` is empty; the legacy 20+ ALTER blocks at the top of `db.js` weren't replaced. Plan wording said K1 would replace them. | Claude R1 (LOW-MED), Codex R1+R2 (Minor) | **Re-scope as baseline-only foundation.** Both CLIs concur this is acceptable as a forward-looking anchor — first real `002-*` migration drives the byte-identical-`.schema` capture and the partial-apply test. The legacy ALTER blocks are idempotent + in-prod; replacing them would be its own multi-day effort. K1 #360's issue body is updated to clarify "baseline-only foundation; legacy ALTER conversion deferred to Phase 4 K1b". |
-| **A14 #339** — OAuth detector tests use synthetic fixture strings, not captured CLI output. Plan acceptance asked for redacted real-CLI fixtures. | Codex R1+R2 (Major), Claude silent | **DEFER to Phase 2.** Capturing the fixtures requires running the OAuth flow per CLI in a controlled environment and redacting tokens — non-trivial. The synthetic fixtures still pin the parser shape; the brittleness risk Codex flags (CLI prompt drift) is real but bounded. Filed as new follow-up issue: see #441 (filed during disposition). |
-| **`require-hoist` test skipped in production container** | Codex R2 (Major) | **Accept-with-documentation.** The test is structural-quality (AST walk via `acorn`, a devDep). Production containers run `npm ci --omit=dev` and don't ship acorn. The gate-evidence claim already counts the test as skipped, not passing. Per Codex's suggestion, the C5 #347 issue body is updated to clarify "structural test skipped in prod container by design; runs in dev/CI". |
+| **A14 #339** — OAuth detector tests use synthetic fixture strings, not captured CLI output. Plan acceptance asked for redacted real-CLI fixtures. | Codex R1+R2+R3 (Major), Claude silent | **DEFER to Phase 2 with explicit gate-item flag (Codex R3 condition).** Capturing the fixtures requires running the OAuth flow per CLI in a controlled environment and redacting tokens — non-trivial. The synthetic fixtures pin the parser shape; the brittleness risk Codex flags (CLI prompt drift) is real but bounded. Filed as #441. **A14 is NOT recorded as fully satisfying the original captured-fixture acceptance** — A14 #339's body is updated to mark the captured-fixture box `Deferred to #441 (Phase 2)` rather than ticked. The #441 issue is an explicit Phase 2 gate item per Codex R3's accept-condition. |
+| **`require-hoist` test skipped in production container** | Codex R2+R3 (Major) | **Accept-with-documentation, with separated gate-evidence reporting.** The test is structural-quality (AST walk via `acorn`, a devDep). Production containers run `npm ci --omit=dev` and don't ship acorn. Per Codex R3's accept-condition, gate-evidence reporting now separates two categories: (a) **deployed-container mock evidence** = 336/5/1 (1 skip = require-hoist by design); (b) **dev/CI mock evidence** = 339/5/0 (require-hoist passes when run with devDeps). The work summary §"Mock suite" is updated to reflect this split so the gate package doesn't conflate skipped-in-prod with passed-locally. C5 #347 issue body marks the structural test as "deployed-container: SKIP (acorn devDep absent by design); dev/CI: PASS." |
 | **PHASE-1-GATE-01 is regression baseline, not cumulative** | Claude R1 (MED) → R2 walk-back to NOTED-DEFENSIBLE | **Accept-with-documentation per Claude R2.** The cumulative gate is the gate process (10 steps including UI runbook), not a single test. The 7 per-fix runbook entries running cumulatively against the same M5 deployment satisfy the spirit of `feedback_phase_gate_tests.md`. Tighter version (one orchestrated browser test exercising 3-5 fixes in sequence) noted as future improvement. |
 | **Mock fail attribution unspecified (5 names)** | Claude R1 → R2 RESOLVED via Gemini's R2 listing | **RESOLVED.** The 5 mock fails are: `DB-05` (task CRUD lifecycle), `TSK-07` (created_by), `TSK-08` (tree object shape), `TSK-09` (tree filter param), and "task CRUD success paths with DB verification". All five are pre-v2 task API tests; tracked by O3 #377 for Phase 4 alignment. |
 | **`task_update` `{updated:true}` masking missing rows** | Claude R1+R2 (D) | **FILED #438** ✓ (Phase 4) |

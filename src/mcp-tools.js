@@ -5,7 +5,7 @@ const fs = require('fs');
 const path = require('path');
 const { readdir } = require('fs/promises');
 const { join, basename, resolve, dirname } = require('path');
-const { execSync, execFileSync, execFile } = require('child_process');
+const { execSync, execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const safe = require('./safe-exec');
@@ -202,7 +202,13 @@ handlers.file_find = async (args) => {
     // exit code on `e.code` (numeric). Treat as empty result.
     if (e.code === 1 || e.status === 1) return { pattern: args.pattern, matches: [] };
     if (e.code === 'ENOBUFS') {
-      throw new ToolError('find output exceeded 16 MB — narrow your pattern or use file_type filter', 413);
+      // Codex Phase 1 gate R3 fold-back: build the limit text from the
+      // configured maxBuffer so operators tuning `mcp.fileFindMaxBuffer`
+      // see the truth in the client error, not a stale literal.
+      const limitText = (maxBuffer >= 1024 * 1024)
+        ? `${(maxBuffer / 1024 / 1024).toFixed(0)} MB`
+        : `${maxBuffer} bytes`;
+      throw new ToolError(`find output exceeded ${limitText} — narrow your pattern or use file_type filter`, 413);
     }
     throw e;
   }

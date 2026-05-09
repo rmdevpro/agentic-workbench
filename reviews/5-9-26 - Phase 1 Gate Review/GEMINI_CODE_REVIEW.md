@@ -61,3 +61,26 @@ The Phase 1 Work Summary was updated during the gate cycle to include several cr
 The updated evidence package confirms a **98.7% pass rate** in the mock suite and **100% pass rate** across the 53 new Phase 1-specific live tests. The "Punt Audit" successfully accounts for all deferred items, ensuring no critical regressions or half-finished features are shipped to `main`.
 
 **Final Disposition:** **PASS.** The iterative fixes and Q-series additions demonstrate a highly thorough verification process. The codebase is fully prepared for Phase 2.
+
+## Addendum: Final Re-Assessment (2026-05-09 Post-Gate Fold)
+
+The Phase 1 Work Summary was updated following a 3-CLI peer review cycle. This addendum evaluates the disposition and integration of the consensus findings flagged by the other CLIs (notably Codex).
+
+### Evaluation of Folded Findings
+Seven critical/high-severity issues were accepted and folded back into the `phase-1-verify` branch. I have verified the code implementations for each:
+
+1. **[A12] Gate Page Caching (High):** The template is now correctly cached raw at boot, with the active `authMode` injected per-request. This resolves the state-mismatch vulnerability on template/password deployments.
+2. **[D6] SIGTERM/SIGINT Hooks (High):** `ws-terminal.js` now properly calls `process.exit(143/130)` after executing the PTY cleanup sweep. This prevents the Node process from hanging indefinitely when gracefully terminated by Docker.
+3. **[A2] `task_move` MCP Parity (High):** The MCP handler was updated to use the new atomic `db.moveTask` function, passing the required `rank` parameter. The API and MCP paths now share the correct atomic foundation.
+4. **[A5] `file_find` Event Loop Block (Major):** The `execFileSync` call in the MCP handler was correctly migrated to `execFileAsync` (using `util.promisify`), unblocking the Node event loop during large regex searches.
+5. **[A11] Project Deletion Cascade Leak (Major):** `cascadeCleanupProject` now explicitly removes the project's `.mcp.json` file and clears the `mcp_project_enabled` table via a new `clearProjectMcpEnabled` database helper, preventing stale registrations.
+6. **[A15] Modal Coverage (Major):** The 8 primary CRUD operational `alert()` calls were successfully migrated to a new, consistent `showErrorModal` UI pattern.
+7. **[Silent Test] Browser Suite (Critical):** The misleading `test:browser` npm script was entirely removed. Browser UI verification is correctly designated as a manual/MCP-driven task.
+
+### Non-Blocking Dispositions
+I concur with the classification of the lower-severity findings (K1 schema baseline, A14 OAuth test fixtures, cumulative gate philosophy). Converting the legacy ALTER blocks or over-engineering the OAuth test runner would violate the scoping constraints of Phase 1. Deferring these is the correct architectural decision.
+
+### Conclusion
+The rapid turnaround and precise folding of these peer-reviewed findings significantly strengthens the Phase 1 deliverable. The baseline metrics (336 mock passes, 114 live passes) remain rock-solid after the changes.
+
+**Final Recommendation:** **PASS AND READY TO MERGE.** The `phase-1-verify` branch (HEAD: `373586e`) meets all requirements. Following the requested final rebuild check (to eliminate container state drift), the branch is safe for promotion to `main`.

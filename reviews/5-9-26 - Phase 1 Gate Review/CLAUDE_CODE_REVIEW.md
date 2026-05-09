@@ -226,3 +226,81 @@ Two **new** follow-up issues filed by the developer agent (#439, #440) are corre
 Net recommendation for the user: accept Phase 1 as complete after (a) the 3-CLI consensus review lands, (b) any consensus folds are applied, (c) one fresh-rebuild verification cycle proves the merge candidate behaves identically to the patched runtime, (d) the existing 41 work issues are eligible for closure per `feedback_never_close_without_permission.md`. Issues #438/#439/#440 stay open as Phase 2-4 follow-ups.
 
 — end of Round 2 review
+
+---
+
+## H. Round 3 — Post-fold review (work summary now contains §"Gate review findings + dispositions")
+
+**Date:** 2026-05-09 (later still)
+**Trigger:** Work summary substantially expanded with a new §"Gate review findings + dispositions" containing R1/R2 verdicts from all three CLIs, a 7-item consensus-fold table, a 9-item lower-severity disposition table, and pre-merge action items capturing my §G.4.1 ask. The fold-back commit `373586e` ("phase-1 gate: fold-back consensus blockers from 3-CLI review") now sits on `phase-1-verify`.
+**Method:** Re-read the updated work summary in full. Read Codex's full review (`CODEX_CODE_REVIEW.md`, R1 + R2). Read Gemini's review + addendum. Verified each of the seven folds landed in the actual code via `grep` against `phase-1-verify` HEAD. Cross-checked the disposition table against R1+R2 of my own review.
+
+### H.1 — What this round does well
+
+The §"Gate review findings + dispositions" is the right shape for a 3-CLI-reviewed gate close. Three things are particularly healthy:
+
+- **Verdict transparency.** Round-by-round verdicts from all three CLIs are listed: Claude (R1 PASS-WITH-FOLLOW-UP, R2 same + rebuild-cycle ask), Codex (R1 DO NOT SIGN OFF, R2 same + Critical browser-test bug), Gemini (R1 PASS, R2 PASS). The honest reporting of Codex's two DO-NOT-SIGN-OFF verdicts is exactly the audit trail PROC-002 calls for.
+- **Fold-back commit traceability.** The seven consensus / Codex-flagged blockers are listed in one table with file paths, severity, and the action taken. The commit `373586e` (verified via `git log --grep`) shows all seven landed in one batch — `package.json`, `public/index.html`, `public/js/modal.js`, `src/db.js`, `src/gate-page.js`, `src/mcp-catalog.js`, `src/mcp-tools.js`, `src/routes.js`, `src/server.js`, `src/ws-terminal.js`, `tests/mock/d6-pty-cleanup.test.js`. Total +675/-44 lines.
+- **My R2 §G.4.1 captured.** "Image-state honesty: runtime patched, not clean rebuild" is dispositioned as **DO BEFORE MERGE** with the four explicit pre-merge steps (rebuild → redeploy → regression sweep → spot-check). This is exactly the framing I asked for. Work summary §"Pre-merge action items" makes them mandatory before merge, not optional Phase-2 follow-up.
+
+### H.2 — Verification of the seven folds
+
+I read the post-fold code on `phase-1-verify` HEAD for each. All seven landed correctly:
+
+| Fold | What I verified | Status |
+|---|---|---|
+| **A12** gate-page mode caching | `src/server.js:154-164` calls `loadGatePageTemplate(...)` (raw template cache) at boot, then `serveGatePage` calls `renderGatePage(GATE_PAGE_TEMPLATE, authMode)` per request. `src/gate-page.js` exports both functions separately. Mode is now resolved at request time, after `detectAuthMode()` has run. | PASS |
+| **D6** SIGTERM/SIGINT | `src/ws-terminal.js:57-58` — `process.on('SIGTERM', () => { _cleanupAllPtys(); process.exit(143); })` and matching SIGINT → `process.exit(130)`. Conventional `128+signum` codes. Mock pin SAF-PTY-02 in `d6-pty-cleanup.test.js` updated. | PASS |
+| **A2** MCP `task_move` | `src/mcp-tools.js:723-728` now routes through `db.moveTask(id, {parentTaskId, projectId, rank})`. `src/mcp-catalog.js` task_move schema now includes `rank: { type: 'number', description: '...' }`. Both call sites (routes.js + mcp-tools.js) genuinely call the unified handler now. | PASS |
+| **A5** `file_find` async | `src/mcp-tools.js:10` imports `execFile` + `util.promisify`; line 194 calls `await execFileAsync('grep', grepArgs, { ... })`. `execFileSync` is no longer used in this handler. Timeout + maxBuffer sourced from `mcp.fileFindTimeoutMs` + `mcp.fileFindMaxBuffer` (C2 #344's externalised keys). | PASS |
+| **A11** `.mcp.json` cleanup | `src/routes.js:1154` removes the project-local `.mcp.json` via `rm`. `src/routes.js:1164-1165` calls `db.clearProjectMcpEnabled(project.id)`. `src/db.js` adds the new helper that runs `DELETE FROM mcp_project_enabled WHERE project_id = ?`. | PASS |
+| **A15** 8 primary-CRUD error sites | `public/js/modal.js:94` exports `showErrorModal({title, message})`. `public/index.html` converts the 8 representative call sites Codex listed (1828, 1882, 3284, 3353, 3901, 3997, 5577, 5633) — verified via grep, all 8 use `await window.showErrorModal(...)`. The cancel-button-hide pattern reuses `#confirm-modal` DOM. | PASS |
+| **Browser test silent-green** | `package.json` no longer exposes a `test:browser` script — confirmed via grep (`test:browser` returns no match). The spec files remain as documentation of what to verify, but cannot be invoked via npm to fake a green gate. | PASS |
+
+All seven changes match the disposition table's stated actions. The fold-back is real, not just claimed.
+
+### H.3 — Acknowledgment of my R1 + R2 verification gaps
+
+Three of the seven Codex-caught bugs were items I either claimed-as-PASS or didn't deep-check in my R1 + R2 reviews:
+
+- **A2** — In R1 §A.1 I wrote: *"Both call sites (`routes.js:1887`, `mcp-tools.js:753`) call the unified handler."* That was wrong. The MCP side was still calling `db.reparentTask`, and the catalog had no `rank` arg. I trusted the work summary's claim ("Routes + MCP `task_move` updated to call it") without reading the MCP handler post-fix. Codex read it; I did not.
+- **A5** — In my Phase 1 verification I read this as PASS based on the work summary's "uses `execFile`" claim. The actual code imported `execFileSync`. I missed the sync-vs-async distinction by not reading the file.
+- **A11** — In R1 §A.1 I wrote: *"unregisters from all three CLI configs (`~/.claude.json` projects entry, `~/.gemini/trustedFolders.json`, `~/.codex/config.toml`)."* The plan §A11 acceptance also called for "unregister project-scoped MCP entries" — the project-local `.mcp.json` and the `mcp_project_enabled` DB rows. I read the three CLI configs but didn't notice the project-local MCP scope in the cascade was missing. Codex caught both.
+
+The other four (A12, D6, A15, browser-test silent-green) were beyond what I deep-read in R1/R2.
+
+This is the 3-CLI peer review process working as designed: my "trust the work summary's per-issue claim, deep-check only the most-risky items" approach has lower fidelity than Codex's "read every claim against the actual code" pass. Both are useful — different methods catch different classes of bug — but on this gate Codex's method caught more. Worth noting for future gate reviews: when a work summary makes a claim like *"both call sites updated"*, that's an invitation to verify both call sites, not to accept the claim.
+
+### H.4 — Lower-severity disposition assessment
+
+The disposition table handles nine lower-severity items. I read each:
+
+- **K1 baseline-only re-scope.** My R1 §B.1 + R2 §G.3 flagged the missing partial-apply test + byte-identical `.schema` capture; Codex flagged the legacy ALTER blocks weren't replaced. Both are now framed as *re-scope as baseline-only foundation* with Phase 4 K1b for the legacy conversion. Defensible — the runner is correct for the empty-baseline pattern; the legacy-conversion work is genuinely separate.
+- **A14 synthetic vs real-CLI fixtures → DEFER to Phase 2 + filed #441.** Codex's flag is real; the synthetic fixtures pin parser shape but don't catch CLI prompt drift. Phase 2 placement + new follow-up #441 is correct.
+- **`require-hoist` test skipped in prod → accept-with-doc.** Codex flagged this as Major (gate evidence shouldn't include skipped acceptance tests). The disposition documents it as design-intent (acorn is dev-only). Acceptable trade-off; the C5 #347 issue body is updated to reflect the design choice.
+- **PHASE-1-GATE-01 cumulative → accept-with-doc per my R2 walk-back.** Resolved.
+- **Mock fail attribution → RESOLVED.** Gemini's R2 listed the 5 names: `DB-05`, `TSK-07`, `TSK-08`, `TSK-09`, "task CRUD success paths with DB verification". This satisfies my R1 §B.3 exactly.
+- **#438 / #439 / #440** — all filed (verified earlier in this review).
+
+The single soft point in the disposition table: the `require-hoist` skipped-in-prod accept-with-doc is technically a gate-evidence concession. It's defensible (acorn is genuinely dev-only and the test runs in dev/CI), but a tighter version would either (a) fold acorn into runtime deps for the structural test or (b) separate "deployed-container-mock-evidence" from "dev-environment-acceptance-evidence" in the gate report. Worth filing as a Phase 4 cleanup item if not already covered, but not gate-blocking.
+
+### H.5 — Updated final disposition
+
+**Round 3: PASS WITH PRE-MERGE REBUILD CYCLE.**
+
+The state on `phase-1-verify` HEAD is materially different from R2:
+
+- R2 had three open follow-ups (K1 test gaps, gate-cumulative-vs-regression, image-state honesty) and one new finding (#G.4.1 rebuild ask).
+- R3 has the seven Codex-caught blockers folded back, all lower-severity items dispositioned, three follow-up issues (#438/#439/#440) filed, and one new follow-up (#441 for A14 real-CLI fixtures).
+
+The remaining gating concern is the **pre-merge rebuild cycle** (work summary §"Pre-merge action items"). The fold-back commit `373586e` itself was applied to the running M5 container via `docker cp` per the iterative-dev path. The merge candidate has never been a clean build of `phase-1-verify` HEAD that exercises the live + browser tests against itself. The four pre-merge steps (rebuild image from HEAD → redeploy → regression sweep → spot-check 1-2 browser MCP scenarios) close that gap.
+
+Recommendation:
+1. **Before merge:** execute the four pre-merge action items (~30 min).
+2. **At merge:** the user grants permission to merge `phase-1-verify` → `main` and close the 41 Phase 1 work issues + #390 gate issue per `feedback_never_close_without_permission.md`.
+3. **Post-merge:** issues #438 (Phase 4), #439 (Phase 4 — recommend Major severity per R2), #440 (Phase 2/3, parent A11), and #441 (Phase 2, A14 real-CLI fixtures) stay open as scoped follow-ups.
+4. **Phase 4 watch-list:** when the first real `002-*` migration lands, that's the right time to add the K1 partial-apply mock test + byte-identical `.schema` live capture (per my R1 §B.1).
+
+Net assessment: this gate cycle did the 3-CLI peer review process correctly. The seven Codex-caught bugs were real; the folds are real; the disposition table is honest about which CLI caught what; my own R1 verification gaps are now visible. The cumulative effect of three reviewers + post-fold verification is materially higher fidelity than any single review would have produced. Phase 1 is ready to merge after the 30-minute rebuild-equivalence check.
+
+— end of Round 3 review

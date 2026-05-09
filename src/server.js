@@ -164,16 +164,46 @@ function serveGatePage(res) {
   res.type('html').send(GATE_PAGE_HTML);
 }
 
+// #351 [D2]: per-IP token bucket for /api/gate/login. 10 attempts/minute,
+// refill 1/6s. Rate-limit response is 429; failed-but-not-rate-limited gets a
+// 500 ms async pause before responding to slow brute-force loops.
+const _loginBuckets = new Map(); // ip → { tokens, lastRefill }
+function _consumeLoginBucket(ip) {
+  const now = Date.now();
+  const refillRateMs = 6000; // 1 token per 6 seconds = 10/min steady state
+  const cap = 10;
+  let b = _loginBuckets.get(ip);
+  if (!b) { b = { tokens: cap, lastRefill: now }; _loginBuckets.set(ip, b); }
+  const elapsed = now - b.lastRefill;
+  const refill = Math.floor(elapsed / refillRateMs);
+  if (refill > 0) {
+    b.tokens = Math.min(cap, b.tokens + refill);
+    b.lastRefill = b.lastRefill + refill * refillRateMs;
+  }
+  if (b.tokens <= 0) return false;
+  b.tokens -= 1;
+  return true;
+}
+
 // Login endpoint for password mode
-app.post('/api/gate/login', (req, res) => {
+app.post('/api/gate/login', async (req, res) => {
   if (authMode !== 'password') return res.status(404).json({ error: 'not found' });
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  if (!_consumeLoginBucket(ip)) {
+    return res.status(429).json({ error: 'too many attempts' });
+  }
   const { username, password } = req.body;
   if (username === GATE_USER && password === GATE_PASS) {
     const token = crypto.randomBytes(32).toString('hex');
     sessionTokens.add(token);
-    res.cookie('wb_session', token, { httpOnly: true, sameSite: 'lax' });
+    // #350 [D1]: secure: true when behind HTTPS (HF Spaces forwards x-forwarded-proto)
+    // OR in production. Local docker-compose (HTTP, no gate) never reaches this path.
+    const isHttps = req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
+    res.cookie('wb_session', token, { httpOnly: true, sameSite: 'lax', secure: isHttps });
     res.json({ success: true });
   } else {
+    // #351 [D2]: 500ms async pause on failed login to slow brute-force.
+    await new Promise(r => setTimeout(r, 500));
     res.status(401).json({ error: 'Invalid credentials' });
   }
 });

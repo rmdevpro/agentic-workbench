@@ -72,6 +72,13 @@ module.exports = function createTmuxLifecycle({
           return { name: parts[0], lastActivity: parseInt(parts[1], 10) || 0 };
         });
 
+      // #358 [D9]: track which sessions we kill in the idle pass so we can
+      // exclude them from the limit-enforcement pass without paying for an
+      // N×tmuxExists round-trip after. The list-sessions snapshot was already
+      // authoritative when we read it; the only mutations between then and
+      // limit enforcement are our own kills, which we track inline.
+      const killed = new Set();
+
       // Enforce idle timeouts
       for (const s of sessions) {
         const idleSeconds = now - s.lastActivity;
@@ -81,6 +88,7 @@ module.exports = function createTmuxLifecycle({
 
         if (idleMs > threshold) {
           await safe.tmuxKill(s.name);
+          killed.add(s.name);
           if (typeof _onSessionKilled === 'function') _onSessionKilled(s.name);
           logger.info('Killed idle tmux session', {
             module: 'tmux-lifecycle',
@@ -92,11 +100,9 @@ module.exports = function createTmuxLifecycle({
         }
       }
 
-      // Enforce session limit (kill oldest first)
-      const remaining = [];
-      for (const s of sessions) {
-        if (await safe.tmuxExists(s.name)) remaining.push(s);
-      }
+      // Enforce session limit (kill oldest first). #358 [D9]: filter via the
+      // local `killed` set — no per-session tmuxExists shell-out.
+      const remaining = sessions.filter((s) => !killed.has(s.name));
       remaining.sort((a, b) => a.lastActivity - b.lastActivity);
 
       while (remaining.length > MAX_TMUX_SESSIONS) {

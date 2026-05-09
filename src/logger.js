@@ -40,19 +40,33 @@ function _getDb() {
   return _db;
 }
 
-function _persist(entry) {
+// #356 [D7]: batched log persistence. Buffer entries and flush every 250ms or
+// 100 entries (whichever comes first) via a single multi-row INSERT. Avoids
+// per-line SQLite calls under sustained log volume. Synchronous flush still
+// runs at process exit so we don't lose the last batch on shutdown.
+const _logBuffer = [];
+const FLUSH_BATCH = 100;
+const FLUSH_INTERVAL_MS = 250;
+let _flushTimer = null;
+
+function _flushLogs() {
+  if (_logBuffer.length === 0) return;
   const db = _getDb();
-  if (!db || typeof db.insertLog !== 'function') return;
+  if (!db || typeof db.insertLog !== 'function') {
+    // No DB yet — drop the buffer to avoid unbounded memory growth.
+    _logBuffer.length = 0;
+    return;
+  }
+  const batch = _logBuffer.splice(0);
   try {
-    const { timestamp, level, message, ...rest } = entry;
-    const mod = rest.module || null;
-    delete rest.module;
-    const contextJson = Object.keys(rest).length ? JSON.stringify(rest) : null;
-    db.insertLog(timestamp, level, mod, message, contextJson);
+    if (typeof db.insertLogBatch === 'function') {
+      db.insertLogBatch(batch);
+    } else {
+      for (const e of batch) db.insertLog(e.timestamp, e.level, e.module, e.message, e.contextJson);
+    }
   } catch (err) {
-    // Never throw back into the caller. One stderr line per process to avoid spam.
-    if (!_persist._warned) {
-      _persist._warned = true;
+    if (!_flushLogs._warned) {
+      _flushLogs._warned = true;
       process.stderr.write(
         JSON.stringify({
           timestamp: new Date().toISOString(),
@@ -63,6 +77,30 @@ function _persist(entry) {
       );
     }
   }
+}
+
+function _persist(entry) {
+  const { timestamp, level, message, ...rest } = entry;
+  const mod = rest.module || null;
+  delete rest.module;
+  const contextJson = Object.keys(rest).length ? JSON.stringify(rest) : null;
+  _logBuffer.push({ timestamp, level, module: mod, message, contextJson });
+  if (_logBuffer.length >= FLUSH_BATCH) {
+    _flushLogs();
+    return;
+  }
+  if (!_flushTimer) {
+    _flushTimer = setTimeout(() => {
+      _flushTimer = null;
+      _flushLogs();
+    }, FLUSH_INTERVAL_MS);
+    if (_flushTimer.unref) _flushTimer.unref();
+  }
+}
+
+if (!global.__wbLoggerExitFlushBound) {
+  process.on('exit', () => { try { _flushLogs(); } catch { /* exiting anyway */ } });
+  global.__wbLoggerExitFlushBound = true;
 }
 
 function emit(level, stream, message, context) {

@@ -884,6 +884,16 @@ module.exports = {
   insertLog(ts, level, mod, message, context) {
     stmts.insertLog.run(ts, level, mod, message, context);
   },
+  // #356 [D7]: batched insert wrapped in a single transaction so the disk
+  // sync cost is paid once per batch instead of once per row.
+  insertLogBatch(entries) {
+    const run = db.transaction((rows) => {
+      for (const r of rows) {
+        stmts.insertLog.run(r.timestamp, r.level, r.module, r.message, r.contextJson);
+      }
+    });
+    run(entries);
+  },
   errorCountSince(sinceTs) {
     return stmts.errorCountSince.get(sinceTs).n;
   },

@@ -346,7 +346,21 @@ handlers.session_resume_post_compact = async (args) => {
   // Always write the tail to a file and return the path. Inline return blew
   // past the CLI's tool-result token cap on long sessions; the file path
   // pattern lets the model chunk-read with Read offset/limit at its own pace.
-  const tailPath = join('/tmp', `workbench-resume-${args.session_id}-${Date.now()}.txt`);
+  // #359 [D10]: drop the timestamp suffix so each session_id reuses a single
+  // file (overwrite-on-call). Also sweep stale resume files older than 24h on
+  // every call so an offline session that never resumes doesn't leave a
+  // permanent file on disk.
+  const tailPath = join('/tmp', `workbench-resume-${args.session_id}.txt`);
+  try {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const f of fs.readdirSync('/tmp')) {
+      if (!f.startsWith('workbench-resume-')) continue;
+      const fp = join('/tmp', f);
+      try {
+        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
   fs.writeFileSync(tailPath, tail, 'utf-8');
   const byteCount = Buffer.byteLength(tail, 'utf-8');
   return config.getPrompt('session-resume', {

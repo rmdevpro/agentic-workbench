@@ -27,6 +27,30 @@ module.exports = function createWsTerminal({
   const pingIntervalMs = config ? config.get('ws.pingIntervalMs', 30000) : 30000;
   const ptySpawn = spawnPty || ptyDefault.spawn;
 
+  // #355 [D6]: live PTY registry. process exit hook iterates this and kills
+  // every still-attached PTY before Node exits. Without this an unclean
+  // shutdown leaves orphaned tmux-attached PTY processes attached to the
+  // dead WS — they never reap and accumulate across restarts.
+  const _ptyRegistry = new Map(); // tmuxSession → ptyProcess
+  function _registerPty(tmuxSession, ptyProcess) {
+    _ptyRegistry.set(tmuxSession, ptyProcess);
+  }
+  function _deregisterPty(tmuxSession) {
+    _ptyRegistry.delete(tmuxSession);
+  }
+  function _cleanupAllPtys() {
+    for (const [name, p] of _ptyRegistry) {
+      try { p.kill(); } catch (_e) { /* already dead */ }
+      _ptyRegistry.delete(name);
+    }
+  }
+  if (!global.__wbWsTerminalCleanupBound) {
+    process.on('exit', _cleanupAllPtys);
+    process.on('SIGTERM', _cleanupAllPtys);
+    process.on('SIGINT', _cleanupAllPtys);
+    global.__wbWsTerminalCleanupBound = true;
+  }
+
   function dbgTab(event, extra) {
     if (!(config && config.get('debug.tabSwitching', false))) return;
     logger.info(`[tab-dbg] ${event}`, { module: 'ws-terminal', ...extra, mapSize: sessionWsClients.size, mapKeys: [...sessionWsClients.keys()] });
@@ -157,6 +181,8 @@ module.exports = function createWsTerminal({
       ws.close();
       return;
     }
+    // #355 [D6]: register so the process-exit hook can reap on shutdown.
+    _registerPty(tmuxSession, ptyProcess);
 
     const browserCount = incrementBrowserCount();
     keepalive.onBrowserConnect();
@@ -200,6 +226,9 @@ module.exports = function createWsTerminal({
 
     ptyProcess.onExit(({ exitCode }) => {
       logger.info('PTY exited', { module: 'ws-terminal', tmuxSession, exitCode });
+      // #355 [D6]: deregister so the cleanup hook doesn't try to kill an
+      // already-exited PTY.
+      _deregisterPty(tmuxSession);
       if (ws.readyState === ws.OPEN) {
         ws.send('\r\n\x1b[33m[Session detached]\x1b[0m\r\n');
         ws.close();

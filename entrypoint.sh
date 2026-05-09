@@ -93,12 +93,26 @@ PERSISTENT_COUNT=$(ls /data/.local/node_modules 2>/dev/null | wc -w)
 [ "$PERSISTENT_COUNT" -gt 0 ] && echo "[entrypoint] Persistent packages: $PERSISTENT_COUNT installed"
 
 # Start Qdrant vector database in background
+# #352 [D3]: prefix qdrant stdio with `qdrant: ` so its log lines are
+# distinguishable from workbench output in `docker logs`. Schedule a one-shot
+# health probe at 5s; on failure, drop a marker file the workbench logger
+# picks up so vector-search status is reported in the UI.
 QDRANT_STORAGE="$WB_DATA/qdrant"
 mkdir -p "$QDRANT_STORAGE" 2>/dev/null || true
 if command -v qdrant &>/dev/null; then
   export QDRANT__STORAGE__STORAGE_PATH="$QDRANT_STORAGE"
-  qdrant --disable-telemetry &
+  qdrant --disable-telemetry 2>&1 | sed -u 's/^/qdrant: /' &
   echo "[entrypoint] Qdrant started on port 6333 (storage: $QDRANT_STORAGE)"
+  (
+    sleep 5
+    if curl -sf http://localhost:6333/health > /dev/null 2>&1; then
+      echo "[entrypoint] Qdrant health probe: ok"
+    else
+      echo "[entrypoint] Qdrant health probe: FAIL — vector search will be unavailable" >&2
+      mkdir -p "$WB_DATA" 2>/dev/null
+      printf '{"qdrant":"unhealthy","ts":"%s"}\n' "$(date -u +%FT%TZ)" > "$WB_DATA/.qdrant-health"
+    fi
+  ) &
 fi
 
 echo "[entrypoint] Workbench starting on port ${PORT:-7860}"

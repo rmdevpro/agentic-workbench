@@ -56,6 +56,13 @@ module.exports = [
       'use-isnan': 'error',
       'valid-typeof': 'error',
       'no-redeclare': 'error',
+      // #362 [N1a]: warnings tier — surface common pitfalls without blocking
+      // CI. N1b (Phase 4) escalates these to errors after a sweep.
+      'no-unsafe-optional-chaining': 'warn',
+      'no-unused-expressions': 'warn',
+      'eqeqeq': 'warn',
+      'prefer-const': 'warn',
+      'no-var': 'warn',
     },
   },
   {

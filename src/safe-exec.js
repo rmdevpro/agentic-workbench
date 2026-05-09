@@ -2,6 +2,7 @@
 
 const childProcess = require('child_process');
 const { execFileSync } = childProcess;
+const crypto = require('crypto');
 const fs = require('fs');
 const { writeFile: writeFileAsync, unlink: unlinkAsync } = require('fs/promises');
 const { resolve, join } = require('path');
@@ -33,9 +34,19 @@ function sanitizeTmuxName(name) {
 // any module reasoning about a session's tmux pane (session-utils, tmux-lifecycle,
 // routes, ws-terminal) gets the same name without re-implementing the format.
 function tmuxNameFor(sessionId) {
-  const crypto = require('crypto');
   const hash = crypto.createHash('md5').update(sessionId).digest('hex').substring(0, 4);
   return sanitizeTmuxName(`wb_${sessionId.substring(0, 12)}_${hash}`);
+}
+
+// #346 [C4]: extract the 12-char id-derived prefix from a tmux session name.
+// tmuxNameFor returns `wb_<sessionId.substring(0,12)>_<md5-4>`, so the
+// reverse-lookup window is the slice [3, 15). Callers (notably ws-terminal's
+// auto-respawn) pass this to db.getSessionByPrefix() to recover the
+// originating session id from a tmux pane name. Avoids a magic-number
+// `.slice(3, 15)` at the call site and gives the operation a discoverable
+// name in stack traces.
+function tmuxNamePrefix(tmuxName) {
+  return String(tmuxName).slice(3, 15);
 }
 
 function shellEscape(arg) {
@@ -151,9 +162,7 @@ async function buildResumeArgs(session, projectPath) {
     const cliSessId = session.cli_session_id;
     if (!cliSessId) return { args: ['--resume', 'latest'], missing: false };
     try {
-      const { execFile } = require('child_process');
-      const { promisify } = require('util');
-      const execFileAsync = promisify(execFile);
+      // execFileAsync is defined at module top.
       const { stdout } = await execFileAsync('gemini', ['--list-sessions'], { cwd: projectPath });
       // Line format: "  <index>. <title> (<time>) [<session-id>]"
       for (const line of stdout.split('\n')) {
@@ -177,13 +186,21 @@ async function buildResumeArgs(session, projectPath) {
   return { args: [], missing: false };
 }
 
-function tmuxCreateCLI(sessionName, cwd, cliType, args = []) {
-  const safeName = sanitizeTmuxName(sessionName);
+// #342 [A17]: pure-function tmux launch command builder. Extracted so the
+// env-injection surface (HOME, CLAUDE_HOME, WORKBENCH_SESSION_ID, per-CLI
+// API keys) is unit-testable without spawning tmux.
+function buildTmuxLaunchCmd(cwd, cliType, args = [], opts = {}) {
   const escapedCwd = shellEscape(cwd);
-
   let binary;
   let cliArgs = [...args];
-  let envParts = [`export HOME=${shellEscape(HOME)}`];
+  const envParts = [`export HOME=${shellEscape(HOME)}`];
+
+  // #342 [A17]: WORKBENCH_SESSION_ID is forward-compatible: no CLI consumes
+  // it yet, but its presence in /proc/<pid>/environ is the canonical way to
+  // map a tmux pane back to the workbench session that spawned it.
+  if (opts.workbenchSessionId) {
+    envParts.push(`export WORKBENCH_SESSION_ID=${shellEscape(opts.workbenchSessionId)}`);
+  }
 
   switch (cliType) {
     case 'claude':
@@ -211,7 +228,12 @@ function tmuxCreateCLI(sessionName, cwd, cliType, args = []) {
 
   const escapedArgs = cliArgs.map((a) => shellEscape(a)).join(' ');
   const envExports = envParts.join(' && ');
-  const cmd = `cd ${escapedCwd} && ${envExports} && exec ${binary}${escapedArgs ? ' ' + escapedArgs : ''}`;
+  return `cd ${escapedCwd} && ${envExports} && exec ${binary}${escapedArgs ? ' ' + escapedArgs : ''}`;
+}
+
+function tmuxCreateCLI(sessionName, cwd, cliType, args = [], opts = {}) {
+  const safeName = sanitizeTmuxName(sessionName);
+  const cmd = buildTmuxLaunchCmd(cwd, cliType, args, opts);
   tmuxExecSync(['new-session', '-d', '-s', safeName, '-x', '200', '-y', '50', cmd], {
     timeout: 30000,
   });
@@ -237,8 +259,8 @@ function tmuxCreateGemini(sessionName, cwd, geminiArgs = []) {
 function tmuxCreateCodex(sessionName, cwd, codexArgs = []) {
   tmuxCreateCLI(sessionName, cwd, 'codex', codexArgs);
 }
-function tmuxCreateBash(sessionName, cwd) {
-  tmuxCreateCLI(sessionName, cwd, 'bash');
+function tmuxCreateBash(sessionName, cwd, opts = {}) {
+  tmuxCreateCLI(sessionName, cwd, 'bash', [], opts);
 }
 
 async function tmuxKill(sessionName) {
@@ -342,45 +364,9 @@ async function gitCloneAsync(url, targetPath) {
   return stdout;
 }
 
-function grepSearchAsync(pattern, cwd, glob) {
-  return new Promise((resolve) => {
-    const args = ['-rn'];
-    if (glob) args.push('--include=' + glob);
-    args.push('--', pattern, '.');
-    childProcess.execFile(
-      'grep',
-      args,
-      {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 10000,
-        maxBuffer: 1024 * 1024,
-      },
-      (err, stdout) => {
-        if (err || !stdout) resolve('No matches found');
-        else resolve(stdout.split('\n').slice(0, 50).join('\n') || 'No matches found');
-      },
-    );
-  });
-}
-
-function curlFetchAsync(url) {
-  return new Promise((resolve) => {
-    childProcess.execFile(
-      'curl',
-      ['-sL', '--max-time', '10', url],
-      {
-        encoding: 'utf-8',
-        timeout: 15000,
-        maxBuffer: 1024 * 1024,
-      },
-      (err, stdout) => {
-        if (err || !stdout) resolve(`Error: failed to fetch ${url}`);
-        else resolve(stdout.substring(0, 20000));
-      },
-    );
-  });
-}
+// #349 [C8]: grepSearchAsync + curlFetchAsync deleted. They had zero product
+// call sites — only test fixtures referenced them. Tests of these functions
+// were removed in the same change.
 
 function findSessionsDir(projectPath) {
   // Claude Code's projects-subdir encoding replaces BOTH '/' AND '_' with '-'.
@@ -418,6 +404,7 @@ module.exports = {
   resolveProjectPath,
   sanitizeTmuxName,
   tmuxNameFor,
+  tmuxNamePrefix,
   shellEscape,
   sanitizeErrorForClient,
   claudeExecAsync,
@@ -425,6 +412,7 @@ module.exports = {
   tmuxCaptureScrollback,
   tmuxExists,
   buildResumeArgs,
+  buildTmuxLaunchCmd,
   tmuxCreateCLI,
   tmuxCreateClaude,
   tmuxCreateGemini,
@@ -435,7 +423,5 @@ module.exports = {
   tmuxSendTextAsync,
   tmuxSendKeyAsync,
   gitCloneAsync,
-  grepSearchAsync,
-  curlFetchAsync,
   findSessionsDir,
 };

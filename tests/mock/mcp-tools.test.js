@@ -12,8 +12,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const express = require('express');
-const { registerMcpRoutes, handlers, TOOL_NAMES } = require('../../src/mcp-tools.js');
+const { registerMcpRoutes, handlers, TOOL_NAMES, _collectGhOutput } = require('../../src/mcp-tools.js');
 const { withServer, req } = require('../helpers/with-server');
+const { EventEmitter } = require('node:events');
 
 const KNOWN_DOMAINS = ['file', 'session', 'project', 'task', 'log', 'gh'];
 
@@ -114,5 +115,116 @@ test('MCP session_wait rejects seconds <= 0', async () => {
   await withServer(startMcpApp(), async ({ port }) => {
     const r = await call(port, { tool: 'session_wait', args: { seconds: 0 } });
     assert.equal(r.status, 400);
+  });
+});
+
+// #330 [A5]: file_find argv-safety + bounds.
+test('MCP file_find rejects file_type with shell metachars', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'file_find',
+      args: { pattern: 'workbench', file_type: 'js;rm -rf /' },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /file_type/i);
+  });
+});
+
+test('MCP file_find accepts plain file_type and returns matches array', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'file_find',
+      args: { pattern: 'workbench', file_type: 'tsx' },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.result.pattern, 'workbench');
+    assert.ok(Array.isArray(r.body.result.matches), 'matches must be an array');
+  });
+});
+
+test('MCP file_find clamps oversized context_lines without error', async () => {
+  // ctx=999 would be valid for grep but the handler must clamp to 0..10 so an
+  // adversarial ask doesn't blow up the response post-slice budget. Observable
+  // effect: the call succeeds and returns the expected shape.
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'file_find',
+      args: { pattern: 'workbench', context_lines: 999 },
+    });
+    assert.equal(r.status, 200);
+    assert.ok(Array.isArray(r.body.result.matches));
+  });
+});
+
+// #331 [A6]: gh_cmd argv-shape validation + chunked output cap.
+test('MCP gh_cmd rejects string command', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'gh_cmd',
+      args: { command: 'ls -la', repo: 'rmdevpro/agentic-workbench' },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /command must be an array/i);
+  });
+});
+
+test('MCP gh_cmd rejects non-string command element', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'gh_cmd',
+      args: { command: ['log', {}], repo: 'rmdevpro/agentic-workbench' },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /every command element must be a string/i);
+  });
+});
+
+// Verify the streaming cap directly. Build a fake child-process EventEmitter
+// that emits 500 KB of stdout, then assert the collector buffer is exactly
+// 200_000 chars — the cap matters because gh's `pr list --json` against a
+// busy repo regularly emits hundreds of KB and we must not let it grow
+// unbounded.
+test('_collectGhOutput caps stdout at 200 KB', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const promise = _collectGhOutput(child);
+  // Emit 500 KB in three chunks.
+  child.stdout.emit('data', Buffer.from('a'.repeat(150_000)));
+  child.stdout.emit('data', Buffer.from('b'.repeat(150_000)));
+  child.stdout.emit('data', Buffer.from('c'.repeat(200_000)));
+  child.emit('close', 0);
+  const { stdout } = await promise;
+  assert.equal(stdout.length, 200_000);
+  // The first 200 KB of input were 150 KB 'a' + 50 KB 'b'.
+  assert.ok(stdout.startsWith('a'.repeat(10)));
+  assert.ok(stdout.endsWith('b'.repeat(10)));
+});
+
+test('_collectGhOutput caps stderr at 200 KB', async () => {
+  const child = new EventEmitter();
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  const promise = _collectGhOutput(child);
+  child.stderr.emit('data', Buffer.from('e'.repeat(300_000)));
+  child.emit('close', 1);
+  const { stderr } = await promise;
+  assert.equal(stderr.length, 200_000);
+});
+
+// #388 [Q1]: task v2 task_add does not accept folder_path. Pre-v2 the API
+// silently accepted any folder_path string, including ones not workspace-
+// rooted; those tasks became invisible to the panel. v2's project_id /
+// project_name requirement closes the symptom by construction. This test
+// pins the contract so a future regression that re-adds folder_path support
+// trips here.
+test('MCP task_add rejects without project_id or project_name (no folder_path fallback)', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'task_add',
+      args: { title: 'orphan', folder_path: '/phase-0/foo' },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /project_id or project_name required/i);
   });
 });

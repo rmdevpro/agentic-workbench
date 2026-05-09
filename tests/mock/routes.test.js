@@ -181,10 +181,15 @@ function makeApp(overrides = {}) {
     getProgramByName: () => null,
     addProgram: (name, description = '') => ({ id: 1, name, description }),
     updateProgram: (id, fields) => ({ id, ...fields }),
+    renameProgramSafe: (id, newName) => ({ id, name: newName }),
     deleteProgram: () => {},
     countProjectsInProgram: () => 0,
     setProjectProgram: () => {},
     DATA_DIR: '/tmp/bp-data',
+    // Final spread lets a caller pass `db: { getProgram: ..., ...}` overrides
+    // through the test wrapper. The comment block at line ~166 about
+    // "program-aware overrides" assumed this was wired.
+    ...(overrides.db || {}),
   };
   const existsFn = overrides.tmuxExists ?? (async () => false);
   const firedEvents = [];
@@ -192,16 +197,18 @@ function makeApp(overrides = {}) {
     db,
     safe: {
       resolveProjectPath: (n) => path.join(WORKSPACE, n),
-      findSessionsDir: () => path.join(WORKSPACE, '.sessions'),
+      findSessionsDir: (p) => path.join(WORKSPACE, '.sessions', String(p || '').replace(/[\/_]/g, '-')),
       tmuxCreateCLI() {},
       tmuxCreateClaude() {},
       tmuxCreateBash() {},
       tmuxExists: existsFn,
       tmuxExecAsync: async () => '',
       tmuxSendKeysAsync: async () => {},
+      tmuxKill: overrides.tmuxKill ?? (async () => {}),
       claudeExecAsync: overrides.claudeExecAsync ?? (async () => 'ok'),
       gitCloneAsync: async () => 'cloned',
       sanitizeErrorForClient: (msg) => msg,
+      HOME: overrides.home ?? CLAUDE_HOME,
     },
     config: {
       get: (k, fb) =>
@@ -1545,3 +1552,202 @@ test('TSK-10: POST /api/tasks rejects missing title', async () => {
   });
 });
 
+// #332 [A7]: PUT /api/programs/:id atomic rename. The race window between
+// "is the new name free?" and "rename row" is closed by db.renameProgramSafe;
+// route translates duplicate_name → 409.
+test('PRG-RN-01: PUT /api/programs/:id rename to free name returns 200', async () => {
+  let renameCalled = false;
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'PUT', '/api/programs/7', { name: 'newname' });
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.name, 'newname');
+    assert.ok(renameCalled, 'renameProgramSafe must be invoked when name changes');
+  }, {
+    db: {
+      getProgram: (id) => ({ id, name: 'oldname', description: '', status: 'active' }),
+      renameProgramSafe: (id, newName) => {
+        renameCalled = true;
+        return { id, name: newName };
+      },
+    },
+  });
+});
+
+test('PRG-RN-02: PUT /api/programs/:id rename to colliding name returns 409', async () => {
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'PUT', '/api/programs/7', { name: 'taken' });
+    assert.equal(r.status, 409);
+    const body = await r.json();
+    assert.match(body.error, /already exists/i);
+  }, {
+    db: {
+      getProgram: (id) => ({ id, name: 'oldname', description: '', status: 'active' }),
+      renameProgramSafe: () => {
+        const e = new Error('program with name already exists');
+        e.code = 'duplicate_name';
+        throw e;
+      },
+    },
+  });
+});
+
+// #333 [A8]: POST /api/auth/login must NOT invoke claudeExecAsync — that
+// burned a billable inference call per request. The new flow reads
+// ~/.claude/.credentials.json and returns 200 (valid) or 401 (invalid).
+test('AUTH-LOGIN-01: POST /api/auth/login does not invoke claudeExecAsync', async () => {
+  let claudeCalls = 0;
+  await withFullServer(async ({ port }) => {
+    // Three sequential login attempts; all must skip the subprocess entirely.
+    for (let i = 0; i < 3; i += 1) {
+      await req(port, 'POST', '/api/auth/login', {});
+    }
+    assert.equal(claudeCalls, 0, 'claudeExecAsync must never be called by /api/auth/login');
+  }, {
+    claudeExecAsync: async () => {
+      claudeCalls += 1;
+      return 'should not run';
+    },
+  });
+});
+
+test('AUTH-LOGIN-02: POST /api/auth/login returns 401 when no credentials file', async () => {
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'POST', '/api/auth/login', {});
+    assert.equal(r.status, 401);
+    const body = await r.json();
+    assert.equal(body.valid, false);
+    assert.match(body.reason, /credentials/i);
+  });
+});
+
+test('AUTH-LOGIN-03: POST /api/auth/login returns 200 when credentials are valid', async () => {
+  const fs = require('node:fs');
+  const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-auth-'));
+  fs.writeFileSync(`${claudeHome}/.credentials.json`, JSON.stringify({
+    claudeAiOauth: {
+      accessToken: 'tok',
+      refreshToken: 'ref',
+      expiresAt: Date.now() + 3600_000,
+    },
+  }));
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'POST', '/api/auth/login', {});
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.valid, true);
+  }, { claudeHome });
+});
+
+// #334 [A9]: tmpId for Claude sessions includes a 6-hex-char random suffix so
+// rapid concurrent POSTs cannot collide on Date.now() alone.
+test('TMPID-01: 5 concurrent Claude session POSTs produce 5 distinct tmpIds', async () => {
+  await withFullServer(async ({ port }) => {
+    const results = await Promise.all(
+      Array.from({ length: 5 }, (_, i) => req(port, 'POST', '/api/sessions', {
+        project: 'test-project',
+        name: `concurrent-${i}`,
+      })),
+    );
+    const ids = await Promise.all(results.map(async (r) => {
+      assert.equal(r.status, 200);
+      const body = await r.json();
+      assert.ok(body.id.startsWith('new_'), `id ${body.id} should start with new_`);
+      return body.id;
+    }));
+    assert.equal(new Set(ids).size, 5, `expected 5 distinct ids, got: ${ids.join(', ')}`);
+    // Belt and suspenders: assert the new format includes the random suffix.
+    for (const id of ids) {
+      assert.match(id, /^new_\d+_[0-9a-f]{6}$/, `id ${id} should match new_<ms>_<hex6>`);
+    }
+  });
+});
+
+// #336 [A11]: project removal cascades through tmux + Claude JSONL dir +
+// per-CLI trust/projects entries. Each cleanup is best-effort and never
+// blocks the row delete.
+test('PRJ-RM-01: POST /api/projects/:name/remove kills tmux for each session', async () => {
+  const killed = [];
+  await withFullServer(async ({ port, db }) => {
+    const proj = db.ensureProject('rm-proj-1', '/workspace/rm-proj-1');
+    db.upsertSession('s-rm-1', proj.id, 'A');
+    db.upsertSession('s-rm-2', proj.id, 'B');
+    const r = await req(port, 'POST', '/api/projects/rm-proj-1/remove', {});
+    assert.equal(r.status, 200);
+    // Two sessions → two tmuxKill calls (order-insensitive).
+    assert.equal(killed.length, 2);
+    assert.deepEqual(new Set(killed), new Set(['wb_s-rm-1', 'wb_s-rm-2']));
+    // DB row gone.
+    assert.equal(db.getProject('rm-proj-1'), undefined);
+  }, {
+    tmuxKill: async (name) => { killed.push(name); },
+  });
+});
+
+test('PRJ-RM-02: POST /api/projects/:name/remove succeeds even if tmuxKill throws', async () => {
+  await withFullServer(async ({ port, db }) => {
+    const proj = db.ensureProject('rm-proj-err', '/workspace/rm-proj-err');
+    db.upsertSession('s-err', proj.id, 'X');
+    const r = await req(port, 'POST', '/api/projects/rm-proj-err/remove', {});
+    assert.equal(r.status, 200);
+    assert.equal(db.getProject('rm-proj-err'), undefined);
+  }, {
+    tmuxKill: async () => { throw new Error('tmux down'); },
+  });
+});
+
+test('PRJ-RM-03: POST /api/projects/:name/remove strips ~/.claude.json projects entry', async () => {
+  const fs = require('node:fs');
+  const claudeHome = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-rmcl-'));
+  const projPath = path.join(claudeHome, 'workspace', 'cleanup-target');
+  fs.mkdirSync(projPath, { recursive: true });
+  const cfg = { projects: { [projPath]: { hasTrustDialogAccepted: true }, '/other': { keep: true } } };
+  fs.writeFileSync(path.join(claudeHome, '.claude.json'), JSON.stringify(cfg));
+  await withFullServer(async ({ port, db }) => {
+    db.ensureProject('cleanup-target', projPath);
+    const r = await req(port, 'POST', '/api/projects/cleanup-target/remove', {});
+    assert.equal(r.status, 200);
+    const after = JSON.parse(fs.readFileSync(path.join(claudeHome, '.claude.json'), 'utf-8'));
+    assert.equal(after.projects[projPath], undefined, 'project entry must be stripped');
+    assert.deepEqual(after.projects['/other'], { keep: true }, 'other entries must be preserved');
+  }, { claudeHome });
+});
+
+test('PRJ-RM-04: POST /api/projects/:name/remove strips Gemini trustedFolders entry', async () => {
+  const fs = require('node:fs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-rmgem-'));
+  const projPath = path.join(home, 'workspace', 'gem-target');
+  fs.mkdirSync(projPath, { recursive: true });
+  fs.mkdirSync(path.join(home, '.gemini'), { recursive: true });
+  fs.writeFileSync(path.join(home, '.gemini', 'trustedFolders.json'), JSON.stringify({
+    [projPath]: 'TRUST_FOLDER',
+    '/keep': 'TRUST_FOLDER',
+  }));
+  await withFullServer(async ({ port, db }) => {
+    db.ensureProject('gem-target', projPath);
+    const r = await req(port, 'POST', '/api/projects/gem-target/remove', {});
+    assert.equal(r.status, 200);
+    const after = JSON.parse(fs.readFileSync(path.join(home, '.gemini', 'trustedFolders.json'), 'utf-8'));
+    assert.equal(after[projPath], undefined);
+    assert.equal(after['/keep'], 'TRUST_FOLDER');
+  }, { home });
+});
+
+test('PRJ-RM-05: POST /api/projects/:name/remove strips Codex config.toml block', async () => {
+  const fs = require('node:fs');
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'bp-rmcdx-'));
+  const projPath = path.join(home, 'workspace', 'cdx-target');
+  fs.mkdirSync(projPath, { recursive: true });
+  fs.mkdirSync(path.join(home, '.codex'), { recursive: true });
+  const tomlBefore = `[some.other.block]\nkey = "value"\n\n[projects."${projPath}"]\ntrust_level = "trusted"\n\n[projects."/keep/me"]\ntrust_level = "trusted"\n`;
+  fs.writeFileSync(path.join(home, '.codex', 'config.toml'), tomlBefore);
+  await withFullServer(async ({ port, db }) => {
+    db.ensureProject('cdx-target', projPath);
+    const r = await req(port, 'POST', '/api/projects/cdx-target/remove', {});
+    assert.equal(r.status, 200);
+    const after = fs.readFileSync(path.join(home, '.codex', 'config.toml'), 'utf-8');
+    assert.ok(!after.includes(`[projects."${projPath}"]`), 'target block must be stripped');
+    assert.ok(after.includes('[projects."/keep/me"]'), 'other project block must remain');
+    assert.ok(after.includes('[some.other.block]'), 'unrelated headers must remain');
+  }, { home });
+});

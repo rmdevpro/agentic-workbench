@@ -6,6 +6,7 @@ const safe = require('./safe-exec');
 const db = require('./db');
 const config = require('./config');
 const logger = require('./logger');
+const { CODEX_ROLLOUT_UUID_RE } = require('./constants');
 
 const CLAUDE_HOME = safe.CLAUDE_HOME;
 const WORKSPACE = safe.WORKSPACE;
@@ -362,7 +363,7 @@ function _readCodexTranscript(sessionId, maxTranscriptChars, maxMessageChars) {
   if (cliSessId) {
     target = codexSessions.find(c => {
       const rolloutName = basename(c.filePath, '.jsonl');
-      const rolloutUuid = rolloutName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+      const rolloutUuid = rolloutName.match(CODEX_ROLLOUT_UUID_RE);
       const rolloutId = rolloutUuid ? rolloutUuid[1] : rolloutName;
       return rolloutId === cliSessId;
     });
@@ -558,7 +559,7 @@ function _getCodexTokenUsage(sessionId) {
   if (cliSessId) {
     target = codexSessions.find(c => {
       const rolloutName = basename(c.filePath, '.jsonl');
-      const rolloutUuid = rolloutName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+      const rolloutUuid = rolloutName.match(CODEX_ROLLOUT_UUID_RE);
       const rolloutId = rolloutUuid ? rolloutUuid[1] : rolloutName;
       return rolloutId === cliSessId;
     });
@@ -772,9 +773,20 @@ function parseGeminiChatFile(filePath) {
       if (msg.timestamp) timestamp = msg.timestamp;
     }
 
+    // #408 [Q5]: same fallback as parseCodexRolloutFile — prefer file mtime
+    // when no later message-level timestamp was found, so the sidebar can
+    // sort Gemini sessions by actual activity.
+    let activityTimestamp = timestamp;
+    try {
+      const mtimeIso = fs.statSync(filePath).mtime.toISOString();
+      if (!activityTimestamp || new Date(mtimeIso) > new Date(activityTimestamp)) {
+        activityTimestamp = mtimeIso;
+      }
+    } catch { /* file vanished — keep header timestamp */ }
+
     return {
       name: name || 'Untitled Session',
-      timestamp: timestamp || null,
+      timestamp: activityTimestamp || null,
       messageCount,
       model: model || null,
       sessionId,
@@ -828,9 +840,23 @@ function parseCodexRolloutFile(filePath) {
       } catch { /* skip malformed lines */ }
     }
 
+    // #408 [Q5]: only the session_meta header line carries a top-level
+    // `timestamp`. Subsequent response_item / turn_context entries don't, so
+    // the parsed timestamp gets stuck at session-start. Fall back to file
+    // mtime when no later entry-level timestamp was found — mtime moves on
+    // every JSONL append, which is what sidebar-by-activity actually wants.
+    let activityTimestamp = timestamp;
+    try {
+      const mtime = fs.statSync(filePath).mtime;
+      const mtimeIso = mtime.toISOString();
+      if (!activityTimestamp || new Date(mtimeIso) > new Date(activityTimestamp)) {
+        activityTimestamp = mtimeIso;
+      }
+    } catch { /* file vanished — keep header timestamp */ }
+
     return {
       name: name || 'Untitled Session',
-      timestamp: timestamp || null,
+      timestamp: activityTimestamp || null,
       messageCount,
       model: model || null,
     };
@@ -960,7 +986,7 @@ async function getSessionInfo(sessionId, opts = {}) {
       const sessions = discoverCodexSessions();
       const target = sessions.find(c => {
         const rolloutName = basename(c.filePath, '.jsonl');
-        const m = rolloutName.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+        const m = rolloutName.match(CODEX_ROLLOUT_UUID_RE);
         return (m ? m[1] : rolloutName) === dbRow.cli_session_id;
       });
       if (target) {

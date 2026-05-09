@@ -225,7 +225,44 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_logs_ts        ON logs(ts);
   CREATE INDEX IF NOT EXISTS idx_logs_level_ts  ON logs(level, ts);
   CREATE INDEX IF NOT EXISTS idx_logs_module_ts ON logs(module, ts);
+
+  -- #360 [K1]: numbered migration runner. Existing ALTER blocks above stay
+  -- as-is (idempotent, tested, in-prod). New schema changes go through
+  -- src/db/migrations/NNN-name.js — each exports up(db); the runner records
+  -- applied IDs here so a second boot is a no-op.
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    id TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
+
+// #360 [K1]: load + run any not-yet-applied migrations from src/db/migrations/.
+(function runSchemaMigrations() {
+  const fs = require('fs');
+  const path = require('path');
+  const migDir = path.join(__dirname, 'db', 'migrations');
+  let files;
+  try {
+    files = fs.readdirSync(migDir).filter(f => /^\d{3}-[\w-]+\.js$/.test(f)).sort();
+  } catch (err) {
+    if (err.code === 'ENOENT') return; // no migrations dir yet — fresh repo
+    throw err;
+  }
+  const applied = new Set(db.prepare('SELECT id FROM schema_migrations').all().map(r => r.id));
+  const recordApplied = db.prepare('INSERT INTO schema_migrations (id) VALUES (?)');
+  for (const f of files) {
+    const id = path.basename(f, '.js');
+    if (applied.has(id)) continue;
+    const mig = require(path.join(migDir, f));
+    if (typeof mig.up !== 'function') {
+      throw new Error(`migration ${id} must export up(db)`);
+    }
+    db.transaction(() => {
+      mig.up(db);
+      recordApplied.run(id);
+    })();
+  }
+})();
 
 // #303 task system v2 data migration:
 //   1. Backfill project_id, github_issue, archived for any tasks still on the
@@ -254,7 +291,11 @@ db.exec(`
   }
   // #315: rename legacy 'todo' status to 'inactive' (idempotent — only runs
   // when rows still hold the old value).
-  try { db.prepare("UPDATE tasks SET status = 'inactive' WHERE status = 'todo'").run(); } catch (_e) { /* tasks table not yet created */ }
+  // #348 [C6]: try/catch is for the brief window during a fresh-DB bootstrap
+  // when this migration runs before the tasks table exists. The catch is NOT
+  // for "tasks table not yet created" in steady state — by that point the
+  // schema CREATE block has already run.
+  try { db.prepare("UPDATE tasks SET status = 'inactive' WHERE status = 'todo'").run(); } catch (_e) { /* fresh-DB bootstrap before tasks CREATE */ }
   // Densify rank within every bucket on every boot.
   const setRank = db.prepare('UPDATE tasks SET rank = ? WHERE id = ?');
   const buckets = db.prepare("SELECT DISTINCT project_id, COALESCE(parent_task_id, 0) AS pti FROM tasks WHERE project_id IS NOT NULL").all();
@@ -343,6 +384,10 @@ const stmts = {
   shiftRanksUp: db.prepare("UPDATE tasks SET rank = rank + 1 WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ? AND rank >= ? AND rank < ? AND id != ?"),
   shiftRanksDown: db.prepare("UPDATE tasks SET rank = rank - 1 WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ? AND rank > ? AND rank <= ? AND id != ?"),
   densifyRanks: db.prepare("UPDATE tasks SET rank = rank - 1 WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ? AND rank > ?"),
+  // #327 [A2]: open a slot at targetRank in destination bucket for an incoming
+  // cross-bucket task. No `id != ?` constraint — the moving task isn't in the
+  // destination bucket yet.
+  shiftRanksUpAtAndAbove: db.prepare("UPDATE tasks SET rank = rank + 1 WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ? AND rank >= ?"),
   maxRankInBucket: db.prepare("SELECT COALESCE(MAX(rank), 0) AS m FROM tasks WHERE project_id = ? AND COALESCE(parent_task_id, 0) = ?"),
   deleteTask: db.prepare('DELETE FROM tasks WHERE id = ?'),
   addTaskHistory: db.prepare('INSERT INTO task_history (task_id, event_type, old_value, new_value, created_by) VALUES (?, ?, ?, ?, ?)'),
@@ -419,6 +464,12 @@ module.exports = {
   deleteProject(id) {
     db.prepare('DELETE FROM projects WHERE id = ?').run(id);
   },
+  // #336 [A11] (Codex Phase 1 gate fold-back): drop all per-project MCP
+  // enablement rows so a reused project path doesn't inherit stale
+  // registrations. Called from the routes-side cascadeCleanupProject.
+  clearProjectMcpEnabled(projectId) {
+    db.prepare('DELETE FROM mcp_project_enabled WHERE project_id = ?').run(projectId);
+  },
   setProjectProgram(projectId, programId) {
     stmts.setProjectProgram.run(programId == null ? null : Number(programId), projectId);
     return stmts.getProjectById.get(projectId);
@@ -442,6 +493,23 @@ module.exports = {
     if (fields.name !== undefined) stmts.renameProgram.run(fields.name, id);
     if (fields.description !== undefined) stmts.setProgramDescription.run(fields.description, id);
     if (fields.status !== undefined) stmts.setProgramStatus.run(fields.status, fields.status, id);
+    return stmts.getProgram.get(id);
+  },
+  // #332 [A7]: atomic rename — check name uniqueness and apply the UPDATE in
+  // one transaction so two concurrent PUTs targeting the same new name can't
+  // both pass the duplicate check and then both succeed. Throws { code:
+  // 'duplicate_name' } when another program already owns the target name.
+  renameProgramSafe(id, newName) {
+    const run = db.transaction(() => {
+      const dup = stmts.getProgramByName.get(newName);
+      if (dup && dup.id !== id) {
+        const e = new Error(`program with name '${newName}' already exists`);
+        e.code = 'duplicate_name';
+        throw e;
+      }
+      stmts.renameProgram.run(newName, id);
+    });
+    run();
     return stmts.getProgram.get(id);
   },
   deleteProgram(id) {
@@ -674,6 +742,94 @@ module.exports = {
       'human');
     return stmts.getTask.get(id);
   },
+  // #327 [A2]: atomic reparent + rank assignment. Replaces the buggy two-step
+  // call pattern (db.setTaskRank → db.reparentTask) which was non-atomic and
+  // produced wrong ranks: setTaskRank shifted the OLD bucket then reparentTask
+  // overrode rank to (max+1) in the NEW bucket — appended instead of inserted.
+  //
+  // moveTask handles all sub-cases in a single transaction:
+  //   - same-bucket rerank (rank only) — densify within bucket
+  //   - cross-bucket move with target rank — densify old + shift new at target + reparent
+  //   - reparent without explicit rank — appends to new bucket
+  //
+  // Returns the updated task row.
+  moveTask(id, { parentTaskId = undefined, projectId = undefined, rank = undefined } = {}) {
+    const t = stmts.getTask.get(id);
+    if (!t) { const e = new Error('task not found'); e.code = 'not_found'; throw e; }
+
+    const newProjectId = projectId == null ? t.project_id : Number(projectId);
+    const newParent = parentTaskId == null ? null : Number(parentTaskId);
+    const oldBucketParent = t.parent_task_id ?? 0;
+    const newBucketParent = newParent ?? 0;
+    const sameBucket = (t.project_id === newProjectId && oldBucketParent === newBucketParent);
+
+    // Validate cycle + parent existence + project match
+    if (newParent != null) {
+      const desc = module.exports.collectDescendants(id);
+      if (desc.has(newParent)) {
+        const e = new Error('cannot reparent: target would create a cycle');
+        e.code = 'task_validation'; throw e;
+      }
+      const parentRow = stmts.getTask.get(newParent);
+      if (!parentRow) { const e = new Error('parent task not found'); e.code = 'task_validation'; throw e; }
+      if (parentRow.project_id !== newProjectId) {
+        const e = new Error('cannot reparent across projects without project_id matching the new parent');
+        e.code = 'task_validation'; throw e;
+      }
+    }
+
+    // Determine target rank.
+    // Same-bucket cap = current max (task already counted in the max).
+    // Cross-bucket cap = current max + 1 (incoming task adds a slot).
+    const newBucketMax = stmts.maxRankInBucket.get(newProjectId, newBucketParent).m;
+    let targetRank;
+    if (rank == null) {
+      targetRank = sameBucket ? t.rank : newBucketMax + 1;
+    } else {
+      const cap = sameBucket ? Math.max(1, newBucketMax) : (newBucketMax + 1);
+      targetRank = Math.max(1, Math.min(Number(rank), cap));
+    }
+
+    // No-op fast path
+    if (sameBucket && targetRank === t.rank) return t;
+
+    const run = db.transaction(() => {
+      if (sameBucket) {
+        // Same bucket — just rerank
+        if (targetRank < t.rank) {
+          stmts.shiftRanksUp.run(t.project_id, oldBucketParent, targetRank, t.rank, id);
+        } else {
+          stmts.shiftRanksDown.run(t.project_id, oldBucketParent, t.rank, targetRank, id);
+        }
+        stmts.setTaskRank.run(targetRank, id);
+      } else {
+        // Cross-bucket move
+        // 1. Densify old bucket — close the gap left by departing task
+        stmts.densifyRanks.run(t.project_id, oldBucketParent, t.rank);
+        // 2. Shift new bucket up at and above targetRank — open a slot
+        stmts.shiftRanksUpAtAndAbove.run(newProjectId, newBucketParent, targetRank);
+        // 3. Reparent + set new rank (single UPDATE for the moving task)
+        stmts.reparentTask.run(newParent, newProjectId, targetRank, id);
+        // 4. Cascade project_id to descendants if cross-project
+        if (t.project_id !== newProjectId) {
+          const descIds = Array.from(module.exports.collectDescendants(id)).filter((d) => d !== id);
+          const setProj = db.prepare("UPDATE tasks SET project_id = ?, updated_at = datetime('now') WHERE id = ?");
+          for (const d of descIds) setProj.run(newProjectId, d);
+        }
+      }
+    });
+    run();
+
+    if (sameBucket) {
+      stmts.addTaskHistory.run(id, 'reranked', String(t.rank), String(targetRank), 'human');
+    } else {
+      stmts.addTaskHistory.run(id, 'moved',
+        JSON.stringify({ project_id: t.project_id, parent: t.parent_task_id, rank: t.rank }),
+        JSON.stringify({ project_id: newProjectId, parent: newParent, rank: targetRank }),
+        'human');
+    }
+    return stmts.getTask.get(id);
+  },
   deleteTask(id) {
     const t = stmts.getTask.get(id);
     if (!t) return;
@@ -770,6 +926,16 @@ module.exports = {
   // #181: log surfacing
   insertLog(ts, level, mod, message, context) {
     stmts.insertLog.run(ts, level, mod, message, context);
+  },
+  // #356 [D7]: batched insert wrapped in a single transaction so the disk
+  // sync cost is paid once per batch instead of once per row.
+  insertLogBatch(entries) {
+    const run = db.transaction((rows) => {
+      for (const r of rows) {
+        stmts.insertLog.run(r.timestamp, r.level, r.module, r.message, r.contextJson);
+      }
+    });
+    run(entries);
   },
   errorCountSince(sinceTs) {
     return stmts.errorCountSince.get(sinceTs).n;

@@ -10,6 +10,10 @@ coverage/
 tests/coverage-results-*.txt
 tests/runbook-results-*.md
 tests/gate-c-*results*.md
+# Per-run browser screenshots written by tests/browser/*.spec.js — transient.
+tests/browser/screenshots/
+# Per-run @playwright/test results dir — transient.
+test-results/
 # Session-scoped writing artifacts — never commit.
 3cli-sessions/
 CLAUDE_PENANCE.txt

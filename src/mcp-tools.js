@@ -2,13 +2,18 @@
 
 const crypto = require('crypto');
 const fs = require('fs');
+const path = require('path');
 const { readdir } = require('fs/promises');
 const { join, basename, resolve, dirname } = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const safe = require('./safe-exec');
 const sessionUtils = require('./session-utils');
 const logger = require('./logger');
 const db = require('./db');
+const config = require('./config');
+const qdrantSync = require('./qdrant-sync');
 
 const WORKSPACE = safe.WORKSPACE;
 const CLAUDE_HOME = safe.CLAUDE_HOME;
@@ -62,7 +67,7 @@ function resolveWorkspacePath(relPath) {
 }
 
 async function _semanticSearch(collections, query, limit) {
-  const qdrant = require('./qdrant-sync');
+  const qdrant = qdrantSync;
   if (qdrant.getEmbeddingProvider() === 'none') {
     return {
       configured: false,
@@ -88,7 +93,7 @@ async function ensureSessionTmux(session, projectPath) {
     if (missing) {
       throw new ToolError(`Cannot reattach session ${session.id} — JSONL missing at ${expectedPath}`, 410);
     }
-    safe.tmuxCreateCLI(tmux, projectPath, cliType, resumeArgs);
+    safe.tmuxCreateCLI(tmux, projectPath, cliType, resumeArgs, { workbenchSessionId: session.id });
     await new Promise(r => setTimeout(r, 1000));
   }
   return tmux;
@@ -154,26 +159,56 @@ handlers.file_delete = async (args) => {
   }
 };
 
+const FILE_TYPE_PATTERN = /^[a-zA-Z0-9_+-]+$/;
+
 handlers.file_find = async (args) => {
   require_(args, 'pattern');
-  const ctx = args.context_lines || 2;
+  // #330 [A5]: clamp context_lines to a sane integer range. Anything
+  // outside 0..10 is forced into bounds; non-numeric falls back to 2.
+  let ctx = Number(args.context_lines);
+  if (!Number.isFinite(ctx)) ctx = 2;
+  ctx = Math.max(0, Math.min(10, Math.trunc(ctx)));
+  // #330 [A5]: file_type goes verbatim into a grep --include pattern, so
+  // reject anything that isn't a plain extension token. Blocks injection
+  // like `file_type: "js;rm -rf /"` even though we now use execFile.
+  if (args.file_type !== undefined && args.file_type !== null && args.file_type !== '') {
+    if (!FILE_TYPE_PATTERN.test(String(args.file_type))) {
+      throw new ToolError('file_type must match /^[a-zA-Z0-9_+-]+$/', 400);
+    }
+  }
   // -m 50: cap matches per file. Without this a common pattern like
-  // "deployment" overflows execSync's maxBuffer in seconds on a busy
-  // workspace. We post-slice to 200 lines anyway, so matches beyond
-  // that aren't useful.
+  // "deployment" overflows the buffer in seconds on a busy workspace.
+  // We post-slice to 200 lines anyway, so matches beyond that aren't useful.
   const grepArgs = ['-rn', '--color=never', `-C${ctx}`, '-m', '50'];
   if (args.file_type) grepArgs.push(`--include=*.${args.file_type}`);
-  grepArgs.push('--', safe.shellEscape(args.pattern), safe.shellEscape(WORKSPACE));
+  grepArgs.push('--', String(args.pattern), WORKSPACE);
+  // #330 [A5] (Codex Phase 1 gate fold-back): async execFile, not
+  // execFileSync. The prior shape ran a synchronous grep inside an async
+  // MCP handler — a slow search blocked the Node event loop and stalled
+  // unrelated workbench requests / WebSocket activity. Timeout + maxBuffer
+  // sourced from defaults.json (mcp.fileFindTimeoutMs / mcp.fileFindMaxBuffer)
+  // so operators can tune without code edits (C2 #344's externalised keys).
+  const timeout = config.get('mcp.fileFindTimeoutMs', 10000);
+  const maxBuffer = config.get('mcp.fileFindMaxBuffer', 16 * 1024 * 1024);
   try {
-    const out = execSync(`grep ${grepArgs.join(' ')}`, {
-      encoding: 'utf-8', timeout: 10000, maxBuffer: 16 * 1024 * 1024,
-    }).trim();
+    const { stdout } = await execFileAsync('grep', grepArgs, {
+      encoding: 'utf-8', timeout, maxBuffer,
+    });
+    const out = stdout.trim();
     const lines = out.split('\n').slice(0, 200);
     return { pattern: args.pattern, matches: lines.map(l => l.replace(WORKSPACE + '/', '')) };
   } catch (e) {
-    if (e.status === 1) return { pattern: args.pattern, matches: [] };
+    // grep exits 1 when no matches — promisified execFile rejects with the
+    // exit code on `e.code` (numeric). Treat as empty result.
+    if (e.code === 1 || e.status === 1) return { pattern: args.pattern, matches: [] };
     if (e.code === 'ENOBUFS') {
-      throw new ToolError('find output exceeded 16 MB — narrow your pattern or use file_type filter', 413);
+      // Codex Phase 1 gate R3 fold-back: build the limit text from the
+      // configured maxBuffer so operators tuning `mcp.fileFindMaxBuffer`
+      // see the truth in the client error, not a stale literal.
+      const limitText = (maxBuffer >= 1024 * 1024)
+        ? `${(maxBuffer / 1024 / 1024).toFixed(0)} MB`
+        : `${maxBuffer} bytes`;
+      throw new ToolError(`find output exceeded ${limitText} — narrow your pattern or use file_type filter`, 413);
     }
     throw e;
   }
@@ -206,14 +241,14 @@ handlers.session_new = async (args) => {
   if (cliType === 'bash') {
     const tmpId = crypto.randomUUID();
     const tmux = safe.tmuxNameFor(tmpId);
-    safe.tmuxCreateBash(tmux, proj.path);
+    safe.tmuxCreateBash(tmux, proj.path, { workbenchSessionId: tmpId });
     return { session_id: tmpId, tmux, project: args.project, cli: 'bash' };
   }
   const tmpId = cliType === 'claude'
     ? `new_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`
     : crypto.randomUUID();
   const tmux = safe.tmuxNameFor(tmpId);
-  safe.tmuxCreateCLI(tmux, proj.path, cliType);
+  safe.tmuxCreateCLI(tmux, proj.path, cliType, [], { workbenchSessionId: tmpId });
   db.upsertSession(tmpId, proj.id, name, cliType);
   // MCP-spawned sessions default to hidden — agents creating sub-sessions
   // shouldn't clutter the human's sidebar. Pass hidden:false to override.
@@ -306,13 +341,11 @@ handlers.session_summarize = async (args) => {
 };
 
 handlers.session_prepare_pre_compact = async () => {
-  const config = require('./config');
   return config.getPrompt('session-transition', {});
 };
 
 handlers.session_resume_post_compact = async (args) => {
   requireSessionId(args);
-  const config = require('./config');
   const session = db.getSessionFull(args.session_id);
   const projectPath = session?.project_path || '';
   const sessDir = sessionUtils.sessionsDir(projectPath);
@@ -332,7 +365,21 @@ handlers.session_resume_post_compact = async (args) => {
   // Always write the tail to a file and return the path. Inline return blew
   // past the CLI's tool-result token cap on long sessions; the file path
   // pattern lets the model chunk-read with Read offset/limit at its own pace.
-  const tailPath = join('/tmp', `workbench-resume-${args.session_id}-${Date.now()}.txt`);
+  // #359 [D10]: drop the timestamp suffix so each session_id reuses a single
+  // file (overwrite-on-call). Also sweep stale resume files older than 24h on
+  // every call so an offline session that never resumes doesn't leave a
+  // permanent file on disk.
+  const tailPath = join('/tmp', `workbench-resume-${args.session_id}.txt`);
+  try {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const f of fs.readdirSync('/tmp')) {
+      if (!f.startsWith('workbench-resume-')) continue;
+      const fp = join('/tmp', f);
+      try {
+        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
   fs.writeFileSync(tailPath, tail, 'utf-8');
   const byteCount = Buffer.byteLength(tail, 'utf-8');
   return config.getPrompt('session-resume', {
@@ -601,8 +648,6 @@ function _resolveProject(args) {
 // the "tasks in repo projects must have a github_issue" rule from #304.
 function _projectHasRepo(projectPath) {
   if (!projectPath) return false;
-  const fs = require('fs');
-  const path = require('path');
   let cur = projectPath;
   while (cur && cur !== '/' && cur.length > 1) {
     try { if (fs.existsSync(path.join(cur, '.git'))) return true; } catch { /* ignore */ }
@@ -673,15 +718,23 @@ handlers.task_add = async (args) => {
 
 handlers.task_move = async (args) => {
   const id = requireTaskId(args);
-  // task_move now changes parent / project. parent_task_id is required.
-  // Use null to promote to top-level.
-  if (args.parent_task_id === undefined && args.project_id === undefined) {
-    throw new ToolError('task_move requires parent_task_id and/or project_id', 400);
+  // task_move changes parent / project, optionally with a target rank in
+  // the destination bucket. parent_task_id and/or project_id is required;
+  // rank is optional (omit → append to end of new bucket; supply → atomic
+  // insert at that rank).
+  if (args.parent_task_id === undefined && args.project_id === undefined && args.rank === undefined) {
+    throw new ToolError('task_move requires parent_task_id, project_id, or rank', 400);
   }
   try {
-    const out = db.reparentTask(id, {
+    // #327 [A2] (Codex Phase 1 gate fold-back): route through db.moveTask —
+    // same atomic transaction the HTTP PUT /api/tasks/:id path uses. The
+    // prior shape called db.reparentTask (which always appended to the
+    // destination bucket and ignored rank), so MCP cross-bucket moves with
+    // a target rank silently dropped the rank.
+    const out = db.moveTask(id, {
       parentTaskId: args.parent_task_id === undefined ? null : args.parent_task_id,
       projectId: args.project_id,
+      rank: args.rank,
     });
     return { moved: true, task: out };
   } catch (e) {
@@ -719,16 +772,15 @@ handlers.task_update = async (args) => {
       throw e;
     }
   }
-  // Rank
-  if (args.rank !== undefined) {
-    db.setTaskRank(id, Number(args.rank));
-  }
-  // Reparent
-  if (args.parent_task_id !== undefined || args.project_id !== undefined) {
+  // #327 [A2]: atomic moveTask replaces the buggy two-step
+  // setTaskRank → reparentTask which appended to the new bucket
+  // instead of inserting at the requested rank.
+  if (args.rank !== undefined || args.parent_task_id !== undefined || args.project_id !== undefined) {
     try {
-      db.reparentTask(id, {
-        parentTaskId: args.parent_task_id === undefined ? null : args.parent_task_id,
+      db.moveTask(id, {
+        parentTaskId: args.parent_task_id,
         projectId: args.project_id,
+        rank: args.rank,
       });
     } catch (e) {
       if (e.code === 'task_validation') throw new ToolError(e.message, 400);
@@ -822,8 +874,45 @@ handlers.gh_account_remove = async (args) => {
 //   host:    default 'github.com'
 // Token is injected via GH_TOKEN env (for `gh`) or via extraheader (for `git`).
 // Token never appears in args or output. Stderr/stdout are captured.
+// #331 [A6]: 200 KB cap per stream. Chunked at the data-handler so a runaway
+// subprocess can't grow our buffers unbounded — every gh_cmd response holds
+// at most 400 KB of subprocess output regardless of what the child emits.
+const GH_STDOUT_CAP = 200_000;
+const GH_STDERR_CAP = 200_000;
+
+function _collectGhOutput(child, opts = {}) {
+  const stdoutCap = opts.stdoutCap || GH_STDOUT_CAP;
+  const stderrCap = opts.stderrCap || GH_STDERR_CAP;
+  return new Promise((resolve, reject) => {
+    let stdout = '', stderr = '';
+    child.stdout.on('data', b => {
+      if (stdout.length >= stdoutCap) return;
+      const remaining = stdoutCap - stdout.length;
+      const chunk = b.toString();
+      stdout += chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+    });
+    child.stderr.on('data', b => {
+      if (stderr.length >= stderrCap) return;
+      const remaining = stderrCap - stderr.length;
+      const chunk = b.toString();
+      stderr += chunk.length > remaining ? chunk.slice(0, remaining) : chunk;
+    });
+    child.on('error', err => reject(err));
+    child.on('close', code => resolve({ code, stdout, stderr }));
+  });
+}
+
 handlers.gh_cmd = async (args) => {
   require_(args, 'command');
+  // #331 [A6]: command must be a homogeneous string array. Strings ("gh log -n 5")
+  // would invite shell parsing or argv-corruption; non-string elements would be
+  // coerced silently.
+  if (!Array.isArray(args.command)) {
+    throw new ToolError('command must be an array of strings', 400);
+  }
+  if (!args.command.every(a => typeof a === 'string')) {
+    throw new ToolError('every command element must be a string', 400);
+  }
   const cmd = args.command;
   const useGit = !!args.use_git; // when true: use 'git' instead of 'gh'
   const host = args.host || 'github.com';
@@ -842,36 +931,35 @@ handlers.gh_cmd = async (args) => {
   if (!account) {
     throw new ToolError(`no_account_for_path: ${path}`, 404);
   }
-  return new Promise((resolve, reject) => {
-    let bin, finalArgs, env;
-    if (useGit) {
-      bin = 'git';
-      finalArgs = [..._gitAuth.gitAuthArgs(account.token), ...cmd];
-      env = process.env;
-    } else {
-      bin = 'gh';
-      finalArgs = cmd;
-      env = { ...process.env, GH_TOKEN: account.token, GH_HOST: host };
-    }
-    const child = _childProcess.spawn(bin, finalArgs, {
-      env,
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '', stderr = '';
-    child.stdout.on('data', b => stdout += b.toString());
-    child.stderr.on('data', b => stderr += b.toString());
-    child.on('error', err => reject(new ToolError(`spawn failed: ${err.message}`, 500)));
-    child.on('close', code => {
-      // Distinguish auth errors from other failures.
-      if (code === 0) {
-        resolve({ ok: true, code, stdout: stdout.slice(0, 200000), stderr: stderr.slice(0, 8000), path });
-      } else if (/401|403|token_expired|Bad credentials/i.test(stderr)) {
-        reject(new ToolError(`auth_rejected for path ${path}: ${stderr.trim().slice(0, 500)}`, 401));
-      } else {
-        reject(new ToolError(`gh_cmd exit ${code}: ${stderr.trim().slice(0, 500)}`, code === 1 ? 400 : 500));
-      }
-    });
+  let bin, finalArgs, env;
+  if (useGit) {
+    bin = 'git';
+    finalArgs = [..._gitAuth.gitAuthArgs(account.token), ...cmd];
+    env = process.env;
+  } else {
+    bin = 'gh';
+    finalArgs = cmd;
+    env = { ...process.env, GH_TOKEN: account.token, GH_HOST: host };
+  }
+  const child = _childProcess.spawn(bin, finalArgs, {
+    env,
+    stdio: ['ignore', 'pipe', 'pipe'],
   });
+  let collected;
+  try {
+    collected = await _collectGhOutput(child);
+  } catch (err) {
+    throw new ToolError(`spawn failed: ${err.message}`, 500);
+  }
+  const { code, stdout, stderr } = collected;
+  // Distinguish auth errors from other failures.
+  if (code === 0) {
+    return { ok: true, code, stdout, stderr: stderr.slice(0, 8000), path };
+  }
+  if (/401|403|token_expired|Bad credentials/i.test(stderr)) {
+    throw new ToolError(`auth_rejected for path ${path}: ${stderr.trim().slice(0, 500)}`, 401);
+  }
+  throw new ToolError(`gh_cmd exit ${code}: ${stderr.trim().slice(0, 500)}`, code === 1 ? 400 : 500);
 };
 
 // ── log_* ────────────────────────────────────────────────────────────────────
@@ -945,4 +1033,12 @@ function registerMcpRoutes(app) {
   });
 }
 
-module.exports = { registerMcpRoutes, handlers, dispatch, TOOL_NAMES, ToolError };
+// #361 [L1]: re-export the shared catalog so any consumer that has
+// `require('./mcp-tools')` already sees both halves (handler + schema)
+// from one place.
+const { TOOLS, CATALOG_NAMES } = require('./mcp-catalog');
+
+module.exports = {
+  registerMcpRoutes, handlers, dispatch, TOOL_NAMES, ToolError, _collectGhOutput,
+  TOOLS, CATALOG_NAMES,
+};

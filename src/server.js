@@ -25,7 +25,12 @@ const registerCoreRoutes = require('./routes');
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.PORT, 10) || 3000;
+// #348 [C6]: 7860 default matches the Dockerfile + HF spec instead of the
+// legacy 3000 dev port. PORT=0 is preserved as the "OS-assign a port" sentinel
+// for tests, so we check for explicit-undefined rather than falsiness.
+const PORT = process.env.PORT !== undefined && process.env.PORT !== ''
+  ? parseInt(process.env.PORT, 10)
+  : 7860;
 const CLAUDE_HOME = safe.CLAUDE_HOME;
 const WORKSPACE = safe.WORKSPACE;
 // Tmux lifecycle thresholds now live in config/defaults.json under "tmux.*".
@@ -139,24 +144,66 @@ function parseCookie(req, name) {
   return match ? match[1] : null;
 }
 
+// #337 [A12]: cache the raw gate-page TEMPLATE at module load (one disk
+// read), but inject the current authMode per-request via renderGatePage().
+// Previous shape cached the rendered HTML with `mode: authMode` at boot,
+// when authMode is still the initial 'open' value — `detectAuthMode()` runs
+// later in startup, and the periodic re-detect at L306 can also flip it.
+// Caching the rendered HTML meant password/template deployments served the
+// wrong `__GATE_MODE__`. Codex Phase 1 gate review (High) flagged this.
+const { loadGatePageTemplate, renderGatePage } = require('./gate-page');
+const GATE_PAGE_TEMPLATE = loadGatePageTemplate({
+  readFileSync: fs.readFileSync,
+  gatePath: join(__dirname, '..', 'public', 'gate.html'),
+  // No logger yet at boot. Use stderr so the operator still sees it in
+  // `docker logs` if the file is missing or corrupt.
+  onError: (err) => process.stderr.write(`[server.js] gate.html read failed at boot, falling back: ${err.message}\n`),
+});
+
 function serveGatePage(res) {
-  const html = fs.readFileSync(join(__dirname, '..', 'public', 'gate.html'), 'utf-8');
-  res.type('html').send(html.replace(
-    '// __GATE_MODE_INJECT__',
-    `const __GATE_MODE__ = '${authMode}';`
-  ));
+  res.type('html').send(renderGatePage(GATE_PAGE_TEMPLATE, authMode));
+}
+
+// #351 [D2]: per-IP token bucket for /api/gate/login. 10 attempts/minute,
+// refill 1/6s. Rate-limit response is 429; failed-but-not-rate-limited gets a
+// 500 ms async pause before responding to slow brute-force loops.
+const _loginBuckets = new Map(); // ip → { tokens, lastRefill }
+function _consumeLoginBucket(ip) {
+  const now = Date.now();
+  const refillRateMs = 6000; // 1 token per 6 seconds = 10/min steady state
+  const cap = 10;
+  let b = _loginBuckets.get(ip);
+  if (!b) { b = { tokens: cap, lastRefill: now }; _loginBuckets.set(ip, b); }
+  const elapsed = now - b.lastRefill;
+  const refill = Math.floor(elapsed / refillRateMs);
+  if (refill > 0) {
+    b.tokens = Math.min(cap, b.tokens + refill);
+    b.lastRefill = b.lastRefill + refill * refillRateMs;
+  }
+  if (b.tokens <= 0) return false;
+  b.tokens -= 1;
+  return true;
 }
 
 // Login endpoint for password mode
-app.post('/api/gate/login', (req, res) => {
+app.post('/api/gate/login', async (req, res) => {
   if (authMode !== 'password') return res.status(404).json({ error: 'not found' });
+  const ip = req.ip || req.connection?.remoteAddress || 'unknown';
+  if (!_consumeLoginBucket(ip)) {
+    return res.status(429).json({ error: 'too many attempts' });
+  }
   const { username, password } = req.body;
   if (username === GATE_USER && password === GATE_PASS) {
     const token = crypto.randomBytes(32).toString('hex');
     sessionTokens.add(token);
-    res.cookie('wb_session', token, { httpOnly: true, sameSite: 'lax' });
+    // #350 [D1]: secure: true when behind HTTPS (HF Spaces forwards x-forwarded-proto)
+    // OR in production. Local docker-compose (HTTP, no gate) never reaches this path.
+    const isHttps = req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
+    res.cookie('wb_session', token, { httpOnly: true, sameSite: 'lax', secure: isHttps });
     res.json({ success: true });
   } else {
+    // #351 [D2]: 500ms async pause on failed login to slow brute-force.
+    await new Promise(r => setTimeout(r, 500));
     res.status(401).json({ error: 'Invalid credentials' });
   }
 });
@@ -371,10 +418,10 @@ if (require.main === module) {
         const { execFile } = require('child_process');
         const { promisify } = require('util');
         const execFileAsync = promisify(execFile);
-        const KB_PATH = '/data/knowledge-base';
+        const { KB_PATH, KB_UPSTREAM_URL } = require('./constants');
         const { stat: fsStat } = require('fs/promises');
         fsStat(KB_PATH).catch(async () => {
-          const rawUrl = db.getSetting('kb_repo_url', '"https://github.com/rmdevpro/workbench-kb"');
+          const rawUrl = db.getSetting('kb_repo_url', `"${KB_UPSTREAM_URL}"`);
           let kbRepoUrl;
           try { kbRepoUrl = JSON.parse(rawUrl); } catch { kbRepoUrl = rawUrl; }
           logger.info('Cloning Knowledge Base', { module: 'server', url: kbRepoUrl });
@@ -384,7 +431,7 @@ if (require.main === module) {
             // `Sync from upstream` works whether or not the user has forked.
             // After fork, /api/kb/fork rewrites `origin` and leaves `upstream`
             // unchanged.
-            await execFileAsync('git', ['-C', KB_PATH, 'remote', 'add', 'upstream', 'https://github.com/rmdevpro/workbench-kb']).catch(() => {});
+            await execFileAsync('git', ['-C', KB_PATH, 'remote', 'add', 'upstream', KB_UPSTREAM_URL]).catch(() => {});
             logger.info('Knowledge Base cloned', { module: 'server' });
           } catch (err) {
             logger.error('Knowledge Base clone failed', { module: 'server', err: err.message });

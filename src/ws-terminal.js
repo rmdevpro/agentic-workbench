@@ -27,6 +27,38 @@ module.exports = function createWsTerminal({
   const pingIntervalMs = config ? config.get('ws.pingIntervalMs', 30000) : 30000;
   const ptySpawn = spawnPty || ptyDefault.spawn;
 
+  // #355 [D6]: live PTY registry. process exit hook iterates this and kills
+  // every still-attached PTY before Node exits. Without this an unclean
+  // shutdown leaves orphaned tmux-attached PTY processes attached to the
+  // dead WS — they never reap and accumulate across restarts.
+  const _ptyRegistry = new Map(); // tmuxSession → ptyProcess
+  function _registerPty(tmuxSession, ptyProcess) {
+    _ptyRegistry.set(tmuxSession, ptyProcess);
+  }
+  function _deregisterPty(tmuxSession) {
+    _ptyRegistry.delete(tmuxSession);
+  }
+  function _cleanupAllPtys() {
+    for (const [name, p] of _ptyRegistry) {
+      try { p.kill(); } catch (_e) { /* already dead */ }
+      _ptyRegistry.delete(name);
+    }
+  }
+  // #355 [D6]: bind cleanup hooks. Codex Phase 1 gate review (High) flagged
+  // that the prior shape only called _cleanupAllPtys on SIGTERM/SIGINT
+  // without exiting — Node's default termination is overridden by adding a
+  // signal listener, so the process would hang until external SIGKILL.
+  // After cleanup the handler now explicitly exits with the conventional
+  // 128+signum code so docker / systemd / HF see a clean termination.
+  // The 'exit' hook stays as a last-resort sweep for natural exits where
+  // PTYs would otherwise outlive the parent.
+  if (!global.__wbWsTerminalCleanupBound) {
+    process.on('exit', _cleanupAllPtys);
+    process.on('SIGTERM', () => { _cleanupAllPtys(); process.exit(143); });
+    process.on('SIGINT', () => { _cleanupAllPtys(); process.exit(130); });
+    global.__wbWsTerminalCleanupBound = true;
+  }
+
   function dbgTab(event, extra) {
     if (!(config && config.get('debug.tabSwitching', false))) return;
     logger.info(`[tab-dbg] ${event}`, { module: 'ws-terminal', ...extra, mapSize: sessionWsClients.size, mapKeys: [...sessionWsClients.keys()] });
@@ -54,7 +86,8 @@ module.exports = function createWsTerminal({
         if (!inFlight) {
           inFlight = (async () => {
             try {
-              const idPrefix = tmuxSession.slice(3, 15);
+              // #346 [C4]: helper instead of magic-number slice.
+              const idPrefix = safe.tmuxNamePrefix(tmuxSession);
               const sessRow = db.getSessionByPrefix(idPrefix);
               if (!sessRow || !sessRow.project_path) return false;
               // 3-CLI review concern: validate the prefix lookup actually points
@@ -84,7 +117,7 @@ module.exports = function createWsTerminal({
                 });
                 return false;
               }
-              safe.tmuxCreateCLI(tmuxSession, sessRow.project_path, sessRow.cli_type || 'claude', resumeArgs);
+              safe.tmuxCreateCLI(tmuxSession, sessRow.project_path, sessRow.cli_type || 'claude', resumeArgs, { workbenchSessionId: sessRow.id });
               // Confirm pane is up before attaching (tmuxCreateCLI uses execFileSync
               // but tmux server may need a beat to register).
               for (let i = 0; i < 10; i++) {
@@ -156,6 +189,8 @@ module.exports = function createWsTerminal({
       ws.close();
       return;
     }
+    // #355 [D6]: register so the process-exit hook can reap on shutdown.
+    _registerPty(tmuxSession, ptyProcess);
 
     const browserCount = incrementBrowserCount();
     keepalive.onBrowserConnect();
@@ -199,6 +234,9 @@ module.exports = function createWsTerminal({
 
     ptyProcess.onExit(({ exitCode }) => {
       logger.info('PTY exited', { module: 'ws-terminal', tmuxSession, exitCode });
+      // #355 [D6]: deregister so the cleanup hook doesn't try to kill an
+      // already-exited PTY.
+      _deregisterPty(tmuxSession);
       if (ws.readyState === ws.OPEN) {
         ws.send('\r\n\x1b[33m[Session detached]\x1b[0m\r\n');
         ws.close();

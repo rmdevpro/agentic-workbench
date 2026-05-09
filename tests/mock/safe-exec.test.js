@@ -136,52 +136,7 @@ test('SAF-09: tmuxSendKeysAsync writes temp file, load-buffer, paste-buffer, sen
   }
 });
 
-test('SAF-10: grepSearchAsync caps results and returns fallback on error', async (t) => {
-  t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) =>
-    cb(null, fixtures.safeExec.grepOutput, ''),
-  );
-  const { safe, restore } = freshSafe();
-  try {
-    const r = await safe.grepSearchAsync('needle', '/tmp', '*.js');
-    assert.match(r, /a\.js:1:needle/);
-  } finally {
-    restore();
-  }
-});
-
-test('SAF-10: grepSearchAsync returns no-matches on error', async (t) => {
-  t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) => cb(new Error('fail'), '', ''));
-  const { safe, restore } = freshSafe();
-  try {
-    const r = await safe.grepSearchAsync('x', '/tmp');
-    assert.match(r, /No matches/);
-  } finally {
-    restore();
-  }
-});
-
-test('SAF-11: curlFetchAsync truncates long body and falls back on error', async (t) => {
-  t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) =>
-    cb(null, fixtures.safeExec.curlLongBody, ''),
-  );
-  const { safe, restore } = freshSafe();
-  try {
-    assert.equal((await safe.curlFetchAsync('https://x.com')).length, 20000);
-  } finally {
-    restore();
-  }
-});
-
-test('SAF-11: curlFetchAsync returns error string on failure', async (t) => {
-  t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) => cb(new Error('fail'), '', ''));
-  const { safe, restore } = freshSafe();
-  try {
-    const r = await safe.curlFetchAsync('https://fail.com');
-    assert.match(r, /Error/);
-  } finally {
-    restore();
-  }
-});
+// #349 [C8]: SAF-10/SAF-11 deleted with grepSearchAsync/curlFetchAsync.
 
 test('SAF-12: tmuxCreateBash calls tmuxExecSync for new-session, mouse, history-limit, allow-passthrough, terminal-features', (t) => {
   const calls = [];
@@ -207,6 +162,59 @@ test('SAF-12: tmuxCreateBash calls tmuxExecSync for new-session, mouse, history-
     assert.ok(calls[3].includes('allow-passthrough'));
     assert.equal(calls[4][0], 'set-option');
     assert.ok(calls[4].includes('terminal-features'));
+  } finally {
+    restore();
+  }
+});
+
+// #342 [A17]: WORKBENCH_SESSION_ID env injection. The pure cmd-builder is
+// the testable unit; the spawn-side test verifies it lands in the new-session
+// command argv passed to tmux.
+test('SAF-13: buildTmuxLaunchCmd includes WORKBENCH_SESSION_ID export when opts.workbenchSessionId is set', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    const cmd = safe.buildTmuxLaunchCmd('/some/cwd', 'claude', [], { workbenchSessionId: 'abc-123' });
+    assert.match(cmd, /export WORKBENCH_SESSION_ID='abc-123'/);
+  } finally {
+    restore();
+  }
+});
+
+test('SAF-14: buildTmuxLaunchCmd omits WORKBENCH_SESSION_ID when not provided', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    const cmd = safe.buildTmuxLaunchCmd('/some/cwd', 'claude', []);
+    assert.ok(!cmd.includes('WORKBENCH_SESSION_ID'), `cmd should not contain the var: ${cmd}`);
+  } finally {
+    restore();
+  }
+});
+
+test('SAF-15: buildTmuxLaunchCmd shell-escapes a session id with single quotes', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    // shellEscape wraps the value in single quotes and escapes embedded ones.
+    const cmd = safe.buildTmuxLaunchCmd('/some/cwd', 'claude', [], { workbenchSessionId: "id'with'quotes" });
+    // Must not produce an unbalanced or injectable shell string.
+    assert.match(cmd, /WORKBENCH_SESSION_ID='id'\\''with'\\''quotes'/);
+  } finally {
+    restore();
+  }
+});
+
+test('SAF-16: tmuxCreateCLI passes WORKBENCH_SESSION_ID through to tmux new-session command', (t) => {
+  const calls = [];
+  t.mock.method(childProcess, 'execFileSync', (_c, args, _o) => {
+    calls.push(args.slice());
+    return '';
+  });
+  const { safe, restore } = freshSafe();
+  try {
+    safe.tmuxCreateCLI('wb_test', '/some/cwd', 'claude', [], { workbenchSessionId: 'sess-xyz' });
+    const newSessionCall = calls[0];
+    assert.equal(newSessionCall[0], 'new-session');
+    const cmd = newSessionCall[newSessionCall.length - 1];
+    assert.match(cmd, /export WORKBENCH_SESSION_ID='sess-xyz'/);
   } finally {
     restore();
   }
@@ -259,6 +267,33 @@ test('SAF-15: tmuxSendKeyAsync sends named key to tmux session', async (t) => {
     assert.ok(calls[0].includes('-t'));
     assert.ok(calls[0].includes('my_session'));
     assert.ok(calls[0].includes('Escape'));
+  } finally {
+    restore();
+  }
+});
+
+// #346 [C4]: tmuxNamePrefix is the documented inverse of tmuxNameFor's
+// 12-char id window. ws-terminal's auto-respawn relies on this round-trip
+// for db.getSessionByPrefix() lookups.
+test('SAF-NP-01: tmuxNamePrefix returns the same window as the magic-number slice', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    const name = safe.tmuxNameFor('abc-123-some-long-session-id');
+    assert.equal(safe.tmuxNamePrefix(name), name.slice(3, 15));
+  } finally {
+    restore();
+  }
+});
+
+test('SAF-NP-02: tmuxNamePrefix recovers the truncated session id', () => {
+  const { safe, restore } = freshSafe();
+  try {
+    const sessionId = 'session-1234567890-extra';
+    const name = safe.tmuxNameFor(sessionId);
+    // tmuxNameFor uses sessionId.substring(0, 12); sanitizeTmuxName keeps
+    // alphanumerics, `_`, and `-`, so for an all-printable ASCII id the
+    // prefix is just the first-12-chars window unchanged.
+    assert.equal(safe.tmuxNamePrefix(name), sessionId.substring(0, 12));
   } finally {
     restore();
   }

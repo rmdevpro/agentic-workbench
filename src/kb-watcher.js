@@ -21,9 +21,7 @@ const simpleGit = require('simple-git');
 const { join } = require('path');
 const { stat } = require('fs/promises');
 const gitAuth = require('./git-auth');
-
-const KB_PATH = '/data/knowledge-base';
-const KB_UPSTREAM_URL = 'https://github.com/rmdevpro/workbench-kb';
+const { KB_PATH, KB_UPSTREAM_URL } = require('./constants');
 
 module.exports = function createKbWatcher({ db, logger, config }) {
   // #317: KB ops authenticate via http.extraheader — token never embedded in
@@ -43,7 +41,11 @@ module.exports = function createKbWatcher({ db, logger, config }) {
   let pendingPaths = new Set();
   let pendingTimer = null;
   let pullTimer = null;
-  let busy = false;
+  // #357 [D8]: split single `busy` into separate push/pull mutexes.
+  // Previously a periodic-pull would skip if a commit was in-flight (and
+  // vice-versa), starving the pull. Now each waits only on its own lock.
+  let pushBusy = false;
+  let pullBusy = false;
   let lastStatus = {
     initialized: false,
     ahead: 0,                    // commits ahead of origin/main (pushable)
@@ -140,8 +142,8 @@ module.exports = function createKbWatcher({ db, logger, config }) {
   }
 
   async function _commitAndPush() {
-    if (busy) return;
-    busy = true;
+    if (pushBusy) return;
+    pushBusy = true;
     const paths = [...pendingPaths];
     pendingPaths.clear();
     try {
@@ -178,7 +180,7 @@ module.exports = function createKbWatcher({ db, logger, config }) {
       setStatus({ lastError: `Commit failed: ${errMsg}` });
       logger.error('kb-watcher: commit/push failed', { err: errMsg });
     } finally {
-      busy = false;
+      pushBusy = false;
       // If more events accumulated while we were committing, schedule a
       // follow-up pass.
       if (pendingPaths.size > 0) {
@@ -196,9 +198,9 @@ module.exports = function createKbWatcher({ db, logger, config }) {
   }
 
   async function _periodicPull() {
-    if (busy) return;
+    if (pullBusy) return;
     if (!await _kbExists()) return;
-    busy = true;
+    pullBusy = true;
     try {
       const g = await _git();
       const remotes = await g.getRemotes(true);
@@ -245,14 +247,14 @@ module.exports = function createKbWatcher({ db, logger, config }) {
         }
       }
     } finally {
-      busy = false;
+      pullBusy = false;
     }
   }
 
   async function start() {
     if (watcher) return; // idempotent
     if (!await _kbExists()) {
-      logger.info('kb-watcher: not starting — /data/knowledge-base is not a git repo yet');
+      logger.info(`kb-watcher: not starting — ${KB_PATH} is not a git repo yet`);
       return;
     }
     await _ensureGitIdentity();

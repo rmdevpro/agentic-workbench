@@ -172,3 +172,114 @@ test('DB-12: concurrent upsertSession calls do not corrupt', async () => {
     assert.equal(s.name, 'First');
   });
 });
+
+// #332 [A7]: renameProgramSafe atomically validates uniqueness and renames.
+test('DB-PRG-01: renameProgramSafe renames a program when target name is free', async () => {
+  await withDb(async (db) => {
+    const a = db.addProgram('alpha');
+    const out = db.renameProgramSafe(a.id, 'gamma');
+    assert.equal(out.name, 'gamma');
+    assert.equal(db.getProgram(a.id).name, 'gamma');
+    assert.equal(db.getProgramByName('alpha'), undefined);
+  });
+});
+
+test('DB-PRG-02: renameProgramSafe throws duplicate_name when another row owns the name', async () => {
+  await withDb(async (db) => {
+    const a = db.addProgram('alpha');
+    db.addProgram('beta');
+    let caught = null;
+    try {
+      db.renameProgramSafe(a.id, 'beta');
+    } catch (e) {
+      caught = e;
+    }
+    assert.ok(caught, 'expected throw');
+    assert.equal(caught.code, 'duplicate_name');
+    // Ensure the rename did NOT take effect — transaction rolled back.
+    assert.equal(db.getProgram(a.id).name, 'alpha');
+  });
+});
+
+test('DB-PRG-03: renameProgramSafe is a no-op when newName equals current', async () => {
+  await withDb(async (db) => {
+    const a = db.addProgram('alpha');
+    const out = db.renameProgramSafe(a.id, 'alpha');
+    assert.equal(out.name, 'alpha');
+  });
+});
+
+test('DB-MOVE-01 [A2 #327]: moveTask cross-bucket inserts at target rank, [1,2,moved,3,4]', async () => {
+  await withDb(async (db) => {
+    const projA = db.ensureProject('A', '/workspace/A');
+    const projB = db.ensureProject('B', '/workspace/B');
+    // Seed bucket B with 4 tasks at ranks 1..4
+    const b1 = db.addTask({ projectId: projB.id, title: 'b1' });
+    const b2 = db.addTask({ projectId: projB.id, title: 'b2' });
+    const b3 = db.addTask({ projectId: projB.id, title: 'b3' });
+    const b4 = db.addTask({ projectId: projB.id, title: 'b4' });
+    assert.deepEqual([b1.rank, b2.rank, b3.rank, b4.rank], [1, 2, 3, 4]);
+
+    // Source task in bucket A
+    const moving = db.addTask({ projectId: projA.id, title: 'moving' });
+
+    // Move into bucket B at rank 3 — between b2 and b3
+    const moved = db.moveTask(moving.id, { projectId: projB.id, rank: 3 });
+    assert.equal(moved.project_id, projB.id);
+    assert.equal(moved.rank, 3);
+
+    // Assert final ordering in bucket B is [b1, b2, moved, b3, b4]
+    const final = db.db
+      .prepare('SELECT id, title, rank FROM tasks WHERE project_id = ? AND parent_task_id IS NULL ORDER BY rank ASC')
+      .all(projB.id);
+    assert.deepEqual(
+      final.map((t) => t.title),
+      ['b1', 'b2', 'moving', 'b3', 'b4'],
+      `expected [b1,b2,moving,b3,b4], got ${JSON.stringify(final.map((t) => t.title))}`,
+    );
+    assert.deepEqual(
+      final.map((t) => t.rank),
+      [1, 2, 3, 4, 5],
+      `ranks must densify to 1..5 after move`,
+    );
+
+    // Source bucket A must be empty (densified)
+    const aFinal = db.db
+      .prepare('SELECT COUNT(*) AS c FROM tasks WHERE project_id = ? AND parent_task_id IS NULL').get(projA.id);
+    assert.equal(aFinal.c, 0);
+  });
+});
+
+test('DB-MOVE-02 [A2 #327]: moveTask same-bucket rerank densifies without shifting other buckets', async () => {
+  await withDb(async (db) => {
+    const proj = db.ensureProject('P', '/workspace/P');
+    const t1 = db.addTask({ projectId: proj.id, title: 't1' });
+    const t2 = db.addTask({ projectId: proj.id, title: 't2' });
+    const t3 = db.addTask({ projectId: proj.id, title: 't3' });
+    const t4 = db.addTask({ projectId: proj.id, title: 't4' });
+
+    // Move t4 to rank 1 — should produce [t4, t1, t2, t3]
+    db.moveTask(t4.id, { rank: 1 });
+    const order = db.db
+      .prepare('SELECT title FROM tasks WHERE project_id = ? AND parent_task_id IS NULL ORDER BY rank ASC')
+      .all(proj.id)
+      .map((t) => t.title);
+    assert.deepEqual(order, ['t4', 't1', 't2', 't3']);
+  });
+});
+
+test('DB-MOVE-03 [A2 #327]: moveTask atomic — failure does not leave partial state', async () => {
+  await withDb(async (db) => {
+    const projA = db.ensureProject('A', '/workspace/A');
+    const t1 = db.addTask({ projectId: projA.id, title: 't1' });
+    const t2 = db.addTask({ projectId: projA.id, title: 't2', parentTaskId: t1.id });
+    // Attempting to reparent t1 under its own descendant t2 must throw cycle error.
+    assert.throws(() => db.moveTask(t1.id, { parentTaskId: t2.id }), /cycle/);
+    // State unchanged
+    const state = db.db.prepare('SELECT id, parent_task_id, rank FROM tasks WHERE project_id = ? ORDER BY id').all(projA.id);
+    assert.deepEqual(state, [
+      { id: t1.id, parent_task_id: null, rank: 1 },
+      { id: t2.id, parent_task_id: t1.id, rank: 1 },
+    ]);
+  });
+});

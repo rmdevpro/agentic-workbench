@@ -10,15 +10,24 @@ const {
   appendFile,
   access,
 } = require('fs/promises');
-const { join, basename, resolve: pathResolve } = require('path');
+const { join, basename, dirname, resolve: pathResolve } = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const crypto = require('crypto');
 
 const express = require('express');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const { rename, rm } = require('fs/promises');
+const safeExec = require('./safe-exec');
 const { registerMcpRoutes } = require('./mcp-tools');
 const { registerWebhookRoutes } = require('./webhooks');
+const { KB_PATH, KB_UPSTREAM_URL, KB_UPSTREAM_OWNER_REPO, CODEX_ROLLOUT_UUID_RE } = require('./constants');
+const gitAuth = require('./git-auth');
+const qdrantSync = require('./qdrant-sync');
+const sessionUtilsMod = require('./session-utils');
+const { discoverGeminiSessions, discoverCodexSessions } = sessionUtilsMod;
 // File-tree directory listing endpoint. Returns folder-first sorted JSON
 // for the vanilla-JS tree component in public/index.html.
 
@@ -63,15 +72,15 @@ function _parseSince(input) {
 //
 // The role file content is INLINED into the prompt rather than asking the CLI
 // to read it from disk. Gemini's workspace sandbox refuses reads outside the
-// project's cwd (the role lives in /data/knowledge-base/roles/, well outside
+// project's cwd (the role lives in KB_PATH/roles/, well outside
 // /data/workspace/<project>), and Codex has the same scoping. Inlining works
 // for all three CLIs uniformly.
 async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger) {
-  const { execFile } = require('child_process');
-  const { promisify } = require('util');
-  const execFileAsync = promisify(execFile);
-  const { readdir: readdirFs, readFile: readFileFs } = require('fs/promises');
-  const { basename: basenameFs } = require('path');
+  // #347 [C5]: requires hoisted to module top — execFile/promisify/path/fs
+  // are all module-level imports. Use the top-level aliases here.
+  const readdirFs = readdir;
+  const readFileFs = readFile;
+  const basenameFs = basename;
 
   // Read the role content up-front; bail to caller's catch if missing.
   const roleContent = await readFileFs(rolePath, 'utf-8');
@@ -106,7 +115,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     const resumeArgs = phase1Id
       ? ['--resume', phase1Id, '--dangerously-skip-permissions', ...cliArgs]
       : ['--dangerously-skip-permissions', ...cliArgs];
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'claude', resumeArgs);
+    safeExec.tmuxCreateCLI(tmux, projectPath, 'claude', resumeArgs, { workbenchSessionId: tmpId });
     if (phase1Id) {
       // Register the real session ID so the resolver maps it correctly
       db.upsertSession(phase1Id, proj.id, null, 'claude');
@@ -116,7 +125,6 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     // Snapshot existing chat files BEFORE Phase 1 so we can identify the
     // new one (Phase 1 creates exactly one chat file). Sort-by-timestamp
     // picked stale files when many old chats existed in unrelated projects.
-    const { discoverGeminiSessions } = require('./session-utils');
     const beforeGemini = new Set(discoverGeminiSessions().map(s => s.filePath));
     // Phase 1: non-interactive plan mode
     await seedExec('gemini', [
@@ -124,7 +132,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       '-p', rolePrompt,
     ], projectPath);
     // Phase 2: resume latest interactively (no yolo)
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'gemini', ['--resume', 'latest']);
+    safeExec.tmuxCreateCLI(tmux, projectPath, 'gemini', ['--resume', 'latest'], { workbenchSessionId: tmpId });
     // Find the new chat file produced by Phase 1 — diff against snapshot.
     try {
       const after = discoverGeminiSessions();
@@ -134,7 +142,6 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
 
   } else if (cliType === 'codex') {
     // Snapshot existing rollouts BEFORE Phase 1 — same reasoning as Gemini.
-    const { discoverCodexSessions } = require('./session-utils');
     const beforeCodex = new Set((discoverCodexSessions ? discoverCodexSessions() : []).map(s => s.filePath));
     // Single non-interactive step — role seeded as initial context.
     // --skip-git-repo-check: Codex refuses to run outside a git repo by
@@ -146,10 +153,10 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     const after = discoverCodexSessions ? discoverCodexSessions() : [];
     const created = after.find(s => !beforeCodex.has(s.filePath));
     const rolloutId = created?.filePath
-      ? (() => { const m = basenameFs(created.filePath, '.jsonl').match(/([0-9a-f-]{36})$/i); return m ? m[1] : null; })()
+      ? (() => { const m = basenameFs(created.filePath, '.jsonl').match(CODEX_ROLLOUT_UUID_RE); return m ? m[1] : null; })()
       : null;
     const resumeArgs = rolloutId ? ['resume', rolloutId] : [];
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'codex', resumeArgs);
+    safeExec.tmuxCreateCLI(tmux, projectPath, 'codex', resumeArgs, { workbenchSessionId: tmpId });
     if (rolloutId) db.setCliSessionId(tmpId, rolloutId);
   }
 }
@@ -437,12 +444,12 @@ function registerCoreRoutes(
           // Codex files: /sessions/YYYY/MM/DD/rollout-{timestamp}-{uuid}.jsonl
           // Extract the UUID from the filename for resume
           const name = basename(d.filePath, '.jsonl');
-          const uuidMatch = name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+          const uuidMatch = name.match(CODEX_ROLLOUT_UUID_RE);
           return uuidMatch ? uuidMatch[1] : name;
         },
         (sess, match) => {
           const name = basename(match.filePath, '.jsonl');
-          const uuidMatch = name.match(/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i);
+          const uuidMatch = name.match(CODEX_ROLLOUT_UUID_RE);
           const rolloutId = uuidMatch ? uuidMatch[1] : name;
           if (rolloutId && rolloutId !== 'sessions') {
             try { db.setCliSessionId(sess.id, rolloutId); } catch { /* race ok */ }
@@ -497,8 +504,7 @@ function registerCoreRoutes(
     // Always include the workspace
     const workspace = safe.WORKSPACE;
     mounts.push({ path: workspace });
-    // Knowledge Base at /data/knowledge-base (auto-cloned on startup if absent)
-    const KB_PATH = '/data/knowledge-base';
+    // Knowledge Base at KB_PATH (auto-cloned on startup if absent)
     try {
       await stat(KB_PATH);
       mounts.push({ path: KB_PATH, label: 'Knowledge Base' });
@@ -520,7 +526,6 @@ function registerCoreRoutes(
   // ── POST /api/kb/init ─────────────────────────────────────────────────────
 
   app.post('/api/kb/init', async (req, res) => {
-    const KB_PATH = '/data/knowledge-base';
     // Check if already initialized
     try {
       await stat(join(KB_PATH, '.git'));
@@ -531,7 +536,7 @@ function registerCoreRoutes(
       await stat(KB_PATH);
       return res.status(409).json({ error: 'Path exists but is not a git repository' });
     } catch (_err) { /* path does not exist, safe to clone */ }
-    const kbRepoUrl = db.getSetting('kb_repo_url', '"https://github.com/rmdevpro/workbench-kb"');
+    const kbRepoUrl = db.getSetting('kb_repo_url', `"${KB_UPSTREAM_URL}"`);
     try {
       await execFileAsync('git', ['clone', kbRepoUrl, KB_PATH]);
       res.json({ ok: true });
@@ -541,14 +546,13 @@ function registerCoreRoutes(
   });
 
   // ── KB helpers ───────────────────────────────────────────────────────────────
-
-  const KB_PATH = '/data/knowledge-base';
-  const KB_UPSTREAM = 'https://github.com/rmdevpro/workbench-kb';
+  // KB_PATH and KB_UPSTREAM_URL imported from ./constants at the top.
+  const KB_UPSTREAM = KB_UPSTREAM_URL;
 
   // #317: KB account is just a row in git_accounts with isKB=true. Lookup by
   // path prefix (e.g., 'github.com/jmdrumsgarrison-ux'). The token stays in
   // DB; URLs do NOT carry it. Auth happens per-call via http.extraheader.
-  const gitAuth = require('./git-auth');
+  // gitAuth is imported at module top.
   function getKbAccount() { return gitAuth.kbAccount(db); }
   // Plain origin URL — token NOT embedded. Auth flows through extraheader at
   // git invocation time.
@@ -613,7 +617,7 @@ function registerCoreRoutes(
     const username = kbAccountUsername(account);
     if (!host || !username) return res.status(500).json({ error: `KB account has invalid path: ${account.path}` });
     try {
-      const forkRes = await fetch(`https://api.${host}/repos/rmdevpro/workbench-kb/forks`, {
+      const forkRes = await fetch(`https://api.${host}/repos/${KB_UPSTREAM_OWNER_REPO}/forks`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${account.token}`,
@@ -687,15 +691,33 @@ function registerCoreRoutes(
   const _issuesCache = new Map(); // key: repo+state → { fetchedAt, items }
   const _ISSUES_TTL_MS = 60 * 1000;
   app.get('/api/issues', async (req, res) => {
-    const repo = String(req.query.repo || '');  // 'owner/name'
+    const repo = String(req.query.repo || '');  // 'owner/name' (defaults to github.com) or 'host/owner/name' (explicit host)
     const state = String(req.query.state || 'open').toLowerCase();
     const q = String(req.query.q || '').toLowerCase();
-    const m = /^([^/]+)\/([^/]+)$/.exec(repo);
-    if (!m) return res.status(400).json({ error: 'repo must be owner/name' });
-    const [, owner, name] = m;
-    const path = `github.com/${owner}`;
+
+    // #328 [A3]: accept extended 3-part form for GitHub Enterprise repos.
+    //   owner/name             → host = github.com (back-compat)
+    //   host/owner/name        → explicit host (e.g. enterprise.example.com/owner/repo)
+    const repoParts = repo.split('/').filter(Boolean);
+    let ghHost, owner, name;
+    if (repoParts.length === 2) {
+      ghHost = 'github.com';
+      [owner, name] = repoParts;
+    } else if (repoParts.length === 3) {
+      [ghHost, owner, name] = repoParts;
+    } else {
+      return res.status(400).json({ error: 'repo must be owner/name or host/owner/name' });
+    }
+    const path = `${ghHost}/${owner}`;
     const account = gitAuth.accountForPath(db, path);
     if (!account) return res.status(404).json({ error: `no_account_for_path: ${path}` });
+
+    // #328 [A3]: derive the GraphQL API URL from the host. github.com uses
+    // a separate api.* hostname; GitHub Enterprise serves GraphQL at the
+    // same host under /api/graphql.
+    const apiUrl = ghHost === 'github.com'
+      ? 'https://api.github.com/graphql'
+      : `https://${ghHost}/api/graphql`;
 
     const cacheKey = `${repo}\x00${state}`;
     const cached = _issuesCache.get(cacheKey);
@@ -704,13 +726,20 @@ function registerCoreRoutes(
       items = cached.items;
     } else {
       const stateFilter = state === 'all' ? '[OPEN, CLOSED]' : state === 'closed' ? '[CLOSED]' : '[OPEN]';
-      const query = `query { repository(owner: "${owner}", name: "${name}") {
-        issues(states: ${stateFilter}, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
-          nodes { number title state labels(first: 5) { nodes { name color } } updatedAt }
+      // #328 [A3]: GraphQL variables for owner/name. Previous code used
+      // string interpolation — a repo or owner with a `"` in its name
+      // broke the query (and would also be an injection vector if repo
+      // input weren't already path-validated upstream).
+      const query = `query($o: String!, $n: String!) {
+        repository(owner: $o, name: $n) {
+          issues(states: ${stateFilter}, first: 100, orderBy: {field: UPDATED_AT, direction: DESC}) {
+            nodes { number title state labels(first: 5) { nodes { name color } } updatedAt }
+          }
         }
-      } }`;
+      }`;
+      const variables = { o: owner, n: name };
       try {
-        const ghRes = await fetch(`https://api.github.com/graphql`, {
+        const ghRes = await fetch(apiUrl, {
           method: 'POST',
           headers: {
             'Authorization': `Bearer ${account.token}`,
@@ -718,7 +747,7 @@ function registerCoreRoutes(
             'Content-Type': 'application/json',
             'User-Agent': 'workbench/issues-picker',
           },
-          body: JSON.stringify({ query }),
+          body: JSON.stringify({ query, variables }),
         });
         if (ghRes.status === 401 || ghRes.status === 403) {
           return res.status(401).json({ error: 'auth_rejected', path, status: ghRes.status });
@@ -737,11 +766,42 @@ function registerCoreRoutes(
         }));
         _issuesCache.set(cacheKey, { fetchedAt: Date.now(), items });
       } catch (err) {
-        return res.status(502).json({ error: `GitHub API request failed: ${err.message}` });
+        // #328 [A3]: include the API host in the error so GHES routing
+        // bugs are visible (Node's fetch wraps the underlying network
+        // error in a `cause` chain that doesn't surface in err.message).
+        const causeMsg = err.cause && err.cause.message ? `: ${err.cause.message}` : '';
+        return res.status(502).json({ error: `GitHub API request to ${apiUrl} failed: ${err.message}${causeMsg}` });
       }
     }
     if (q) items = items.filter(i => i.title.toLowerCase().includes(q));
     res.json({ repo, owner, name, count: items.length, items });
+  });
+
+  // ── GET /api/projects/:name/git-remote ────────────────────────────────────
+  // #329 [A4]: derive {host, owner, name, repo} from `git remote get-url origin`
+  // for the named project. Used by the frontend issue picker so it stops
+  // hardcoding `rmdevpro/<repo>`. The returned `repo` is in the 3-part form
+  // `host/owner/name` consumable by /api/issues directly.
+  app.get('/api/projects/:name/git-remote', async (req, res) => {
+    try {
+      const projectName = req.params.name;
+      const project = db.getProject(projectName);
+      if (!project) return res.status(404).json({ error: 'project not found' });
+      let remoteUrl;
+      try {
+        const { stdout } = await execFileAsync('git', ['-C', project.path, 'remote', 'get-url', 'origin'], { timeout: 5000 });
+        remoteUrl = stdout.trim();
+      } catch (err) {
+        return res.status(404).json({ error: 'no_git_remote', detail: err.message.slice(0, 200) });
+      }
+      const parts = gitAuth.repoPartsFromUrl(remoteUrl);
+      if (!parts) return res.status(422).json({ error: 'unparseable_remote_url', remote: remoteUrl });
+      const repo = `${parts.host}/${parts.owner}/${parts.name}`;
+      res.json({ host: parts.host, owner: parts.owner, name: parts.name, repo, remote: remoteUrl });
+    } catch (err) {
+      logger.error('git-remote endpoint error', { module: 'routes', err: err.message });
+      res.status(500).json({ error: err.message });
+    }
   });
 
   // ── GET /api/git-accounts ─────────────────────────────────────────────────
@@ -867,7 +927,6 @@ function registerCoreRoutes(
     try {
       const filePath = req.body.path;
       if (!filePath) return res.status(400).json({ error: 'path required' });
-      const { access } = require('fs/promises');
       try { await access(filePath); return res.status(409).json({ error: 'file already exists' }); } catch {}
       await writeFile(filePath, '');
       res.json({ ok: true, path: filePath });
@@ -880,7 +939,6 @@ function registerCoreRoutes(
     try {
       const { oldPath, newPath } = req.body;
       if (!oldPath || !newPath) return res.status(400).json({ error: 'oldPath and newPath required' });
-      const { rename } = require('fs/promises');
       await rename(oldPath, newPath);
       res.json({ ok: true });
     } catch (err) {
@@ -892,7 +950,6 @@ function registerCoreRoutes(
     try {
       const filePath = req.query.path;
       if (!filePath) return res.status(400).json({ error: 'path required' });
-      const { rm } = require('fs/promises');
       await rm(filePath, { recursive: true });
       res.json({ ok: true });
     } catch (err) {
@@ -904,8 +961,6 @@ function registerCoreRoutes(
     try {
       const { source, destination } = req.body;
       if (!source || !destination) return res.status(400).json({ error: 'source and destination required' });
-      const { rename } = require('fs/promises');
-      const { basename, join } = require('path');
       const destPath = join(destination, basename(source));
       await rename(source, destPath);
       res.json({ ok: true, path: destPath });
@@ -922,7 +977,6 @@ function registerCoreRoutes(
   app.post('/api/files/list', async (req, res) => {
     const dirPath = req.body.path;
     if (!dirPath) return res.status(400).json({ error: 'path required' });
-    const fsp = require('fs/promises');
     try {
       const dirents = await fsp.readdir(dirPath, { withFileTypes: true });
       const cmp = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
@@ -998,10 +1052,130 @@ function registerCoreRoutes(
     }
   });
 
-  app.post('/api/projects/:name/remove', (req, res) => {
+  // #336 [A11]: project removal cascades through every artifact the project
+  // touched — tmux processes, Claude session JSONLs on disk, and the per-CLI
+  // trust/projects entries in ~/.claude.json, ~/.gemini/trustedFolders.json,
+  // and ~/.codex/config.toml. Each cleanup is best-effort: a failure on any
+  // single step is logged and skipped so DB state stays consistent (the row
+  // still gets removed). Cascade rows in mcp_project_enabled drop via the
+  // FK ON DELETE CASCADE on db.deleteProject.
+  async function cascadeCleanupProject(project) {
+    const HOME = safe.HOME;
+    // 1. Kill any running tmux sessions for this project.
+    try {
+      const sessions = db.getSessionsForProject(project.id) || [];
+      for (const s of sessions) {
+        try {
+          await safe.tmuxKill(tmuxName(s.id));
+        } catch (err) {
+          logger.warn('tmuxKill failed during project cascade', {
+            module: 'routes', op: 'cascadeCleanupProject',
+            project: project.name, session: s.id, err: err.message,
+          });
+        }
+      }
+    } catch (err) {
+      logger.warn('Failed to enumerate sessions for cascade', {
+        module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+      });
+    }
+    // 2. Delete Claude JSONL session dir.
+    try {
+      const sessDir = safe.findSessionsDir(project.path);
+      await rm(sessDir, { recursive: true, force: true });
+    } catch (err) {
+      logger.warn('Failed to delete Claude sessions dir', {
+        module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+      });
+    }
+    // 3. Remove project from ~/.claude.json projects[].
+    try {
+      const configFile = join(CLAUDE_HOME, '.claude.json');
+      const cfg = JSON.parse(await readFile(configFile, 'utf-8'));
+      if (cfg.projects && cfg.projects[project.path]) {
+        delete cfg.projects[project.path];
+        await writeFile(configFile, JSON.stringify(cfg, null, 2));
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        logger.warn('Failed to clean .claude.json projects entry', {
+          module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+        });
+      }
+    }
+    // 4. Remove project from ~/.gemini/trustedFolders.json.
+    try {
+      const trustFile = join(HOME, '.gemini', 'trustedFolders.json');
+      const cfg = JSON.parse(await readFile(trustFile, 'utf-8'));
+      if (cfg[project.path] !== undefined) {
+        delete cfg[project.path];
+        await writeFile(trustFile, JSON.stringify(cfg, null, 2));
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        logger.warn('Failed to clean Gemini trustedFolders entry', {
+          module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+        });
+      }
+    }
+    // 5. Remove [projects."<path>"] block from ~/.codex/config.toml.
+    try {
+      const codexConfigFile = join(HOME, '.codex', 'config.toml');
+      const content = await readFile(codexConfigFile, 'utf-8');
+      const escapeTomlBasicString = (s) => s.replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      const blockMarker = `[projects."${escapeTomlBasicString(project.path)}"]`;
+      if (content.includes(blockMarker)) {
+        // Strip the block + its body (everything until the next [...] header
+        // or end-of-file). TOML key blocks are flat, so this is greedy across
+        // the immediate trust_level / etc. lines belonging to this header.
+        const lines = content.split('\n');
+        const out = [];
+        let skipping = false;
+        for (const line of lines) {
+          if (line.trim() === blockMarker) { skipping = true; continue; }
+          if (skipping && /^\s*\[/.test(line)) { skipping = false; }
+          if (!skipping) out.push(line);
+        }
+        await writeFile(codexConfigFile, out.join('\n'));
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        logger.warn('Failed to clean Codex config.toml block', {
+          module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+        });
+      }
+    }
+    // 6. #336 [A11] (Codex Phase 1 gate fold-back): remove the project's
+    // own .mcp.json so reusing the path later doesn't preserve stale
+    // project-scoped MCP server registrations from the old project. Also
+    // strip the project from the workbench's mcp_project_enabled DB table
+    // so the registry doesn't hold a stale reference.
+    try {
+      const projectMcpFile = join(project.path, '.mcp.json');
+      await rm(projectMcpFile, { force: true });
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        logger.warn('Failed to remove project .mcp.json', {
+          module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+        });
+      }
+    }
+    try {
+      if (typeof db.clearProjectMcpEnabled === 'function') {
+        db.clearProjectMcpEnabled(project.id);
+      }
+    } catch (err) {
+      logger.warn('Failed to clear mcp_project_enabled rows', {
+        module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+      });
+    }
+  }
+
+  app.post('/api/projects/:name/remove', async (req, res) => {
     try {
       const project = db.getProject(req.params.name);
       if (!project) return res.status(404).json({ error: 'project not found' });
+      await cascadeCleanupProject(project);
       db.deleteProject(project.id);
       res.json({ removed: req.params.name });
     } catch (err) {
@@ -1043,23 +1217,33 @@ function registerCoreRoutes(
     const program = db.getProgram(id);
     if (!program) return res.status(404).json({ error: 'program not found' });
     const { name, description, status } = req.body || {};
-    const fields = {};
+    let cleanName = null;
     if (name !== undefined) {
-      const clean = String(name).trim();
-      if (!clean) return res.status(400).json({ error: 'name cannot be empty' });
-      if (clean !== program.name) {
-        const dup = db.getProgramByName(clean);
-        if (dup && dup.id !== id) return res.status(409).json({ error: 'program with that name already exists' });
+      cleanName = String(name).trim();
+      if (!cleanName) return res.status(400).json({ error: 'name cannot be empty' });
+    }
+    if (status !== undefined && !['active', 'archived'].includes(status)) {
+      return res.status(400).json({ error: 'invalid status' });
+    }
+    // #332 [A7]: atomic rename — db.renameProgramSafe wraps the dup check and
+    // UPDATE in one SQLite transaction so concurrent PUTs can't both win.
+    let updated = program;
+    if (cleanName !== null && cleanName !== program.name) {
+      try {
+        updated = db.renameProgramSafe(id, cleanName);
+      } catch (e) {
+        if (e.code === 'duplicate_name') {
+          return res.status(409).json({ error: 'program with that name already exists' });
+        }
+        throw e;
       }
-      fields.name = clean;
     }
-    if (description !== undefined) fields.description = String(description);
-    if (status !== undefined) {
-      if (!['active', 'archived'].includes(status))
-        return res.status(400).json({ error: 'invalid status' });
-      fields.status = status;
+    const otherFields = {};
+    if (description !== undefined) otherFields.description = String(description);
+    if (status !== undefined) otherFields.status = status;
+    if (Object.keys(otherFields).length) {
+      updated = db.updateProgram(id, otherFields);
     }
-    const updated = db.updateProgram(id, fields);
     res.json(updated);
   });
 
@@ -1098,12 +1282,18 @@ function registerCoreRoutes(
     }
   });
 
+  // #333 [A8]: stop burning Claude tokens to verify login state. Reads
+  // ~/.claude/.credentials.json instead of running `claude --print`, which
+  // consumed an inference call (and a billable token) on every check.
+  // Returns 200 when the cached creds are valid, 401 otherwise — same body
+  // shape as before so existing UI code keeps working.
   app.post('/api/auth/login', async (req, res) => {
     try {
-      await safe.claudeExecAsync(['--print', 'test'], { timeout: 10000 });
-      res.json({ valid: true });
+      const status = await checkAuthStatus();
+      if (status.valid) return res.json(status);
+      return res.status(401).json(status);
     } catch (err) {
-      res.json({ valid: false, reason: err.message });
+      return res.status(401).json({ valid: false, reason: err.message });
     }
   });
 
@@ -1222,7 +1412,7 @@ function registerCoreRoutes(
   // ── GET /api/kb/roles ─────────────────────────────────────────────────────
 
   app.get('/api/kb/roles', async (req, res) => {
-    const rolesDir = '/data/knowledge-base/roles';
+    const rolesDir = join(KB_PATH, 'roles');
     try {
       const files = await readdir(rolesDir);
       const roles = files
@@ -1282,9 +1472,11 @@ function registerCoreRoutes(
 
       // Claude sessions get a temp ID that resolves to a real UUID when the JSONL appears.
       // Non-Claude CLIs don't create JSONLs, so give them a permanent UUID up front.
+      // #334 [A9]: append a 6-hex-char random suffix so two POSTs landing in
+      // the same millisecond can't collide on tmpId. Parity with mcp-tools.js:213.
       const tmpId = cliType === 'claude'
-        ? `new_${Date.now()}`
-        : require('crypto').randomUUID();
+        ? `new_${Date.now()}_${crypto.randomBytes(3).toString('hex')}`
+        : crypto.randomUUID();
       const tmux = tmuxName(tmpId);
 
       await ensureSettings();
@@ -1318,16 +1510,16 @@ function registerCoreRoutes(
 
       // Role seeding — two-phase launch when a role is selected
       if (role) {
-        const rolePath = `/data/knowledge-base/roles/${role}.md`;
+        const rolePath = join(KB_PATH, 'roles', `${role}.md`);
         try {
           await stat(rolePath);
           await _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger);
         } catch (roleErr) {
           logger.warn('Role seeding failed — launching without role', { module: 'routes', role, err: roleErr.message });
-          safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs);
+          safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
         }
       } else {
-        safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs);
+        safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
       }
 
       if (cliType === 'claude') {
@@ -1387,7 +1579,7 @@ function registerCoreRoutes(
       const termId = `t_${Date.now()}`;
       const tmux = tmuxName(termId);
       await enforceTmuxLimit();
-      safe.tmuxCreateCLI(tmux, projectPath, 'bash');
+      safe.tmuxCreateCLI(tmux, projectPath, 'bash', [], { workbenchSessionId: termId });
       res.json({ id: termId, tmux, project, name: 'Terminal' });
     } catch (err) {
       logger.error('Error creating terminal', { module: 'routes', err: err.message });
@@ -1426,7 +1618,7 @@ function registerCoreRoutes(
             error: `Session file missing on disk (expected ${expectedPath}). Recover the file or recreate the session.`,
           });
         }
-        safe.tmuxCreateCLI(tmux, projectPath, session.cli_type || 'claude', resumeArgs);
+        safe.tmuxCreateCLI(tmux, projectPath, session.cli_type || 'claude', resumeArgs, { workbenchSessionId: session.id });
         // Wait for CLI to start — resume with JSONL loading takes longer than fresh start
         await sleep(3000);
         // Verify tmux actually started
@@ -1571,12 +1763,10 @@ function registerCoreRoutes(
 
   function _projectHasRepoPath(projectPath) {
     if (!projectPath) return false;
-    const fs = require('fs');
-    const path = require('path');
     let cur = projectPath;
     while (cur && cur !== '/' && cur.length > 1) {
-      try { if (fs.existsSync(path.join(cur, '.git'))) return true; } catch { /* ignore */ }
-      cur = path.dirname(cur);
+      try { if (fs.existsSync(join(cur, '.git'))) return true; } catch { /* ignore */ }
+      cur = dirname(cur);
     }
     return false;
   }
@@ -1713,11 +1903,15 @@ function registerCoreRoutes(
       }
       if (status !== undefined) db.setTaskStatus(id, status);
       if (archived !== undefined) db.setTaskArchived(id, !!archived);
-      if (rank !== undefined) db.setTaskRank(id, Number(rank));
-      if (parent_task_id !== undefined || project_id !== undefined) {
-        db.reparentTask(id, {
-          parentTaskId: parent_task_id === undefined ? null : parent_task_id,
+      // #327 [A2]: atomic moveTask replaces the buggy two-step
+      // setTaskRank → reparentTask which appended to the new bucket
+      // instead of inserting at the requested rank. moveTask handles
+      // all combinations (rank-only, parent-only, both) in one transaction.
+      if (rank !== undefined || parent_task_id !== undefined || project_id !== undefined) {
+        db.moveTask(id, {
+          parentTaskId: parent_task_id,
           projectId: project_id,
+          rank,
         });
       }
       res.json(db.getTask(id));
@@ -1771,7 +1965,7 @@ function registerCoreRoutes(
       vector_collection_codex: { enabled: true, dims: 384 },
       vector_ignore_patterns: 'node_modules/**\n.git/**\n*.lock\n*.min.js\ndist/**\nbuild/**',
       vector_additional_paths: [],
-      kb_repo_url: 'https://github.com/rmdevpro/workbench-kb',
+      kb_repo_url: KB_UPSTREAM_URL,
       kb_repo_name: 'blueprint_workbench_kb',
       kb_sync_interval_minutes: 5,
     };
@@ -1820,7 +2014,7 @@ function registerCoreRoutes(
       // 'none' means "disable embeddings entirely" — no live config to validate
       const skipValidation = key === 'vector_embedding_provider' && value === 'none';
       if (!skipValidation) {
-        const qdrant = require('./qdrant-sync');
+        const qdrant = qdrantSync;
         const cfg = qdrant.buildCandidateConfig(key, value);
         const result = await qdrant.validateProviderConfig(cfg);
         if (!result.ok) {
@@ -1891,7 +2085,7 @@ function registerCoreRoutes(
       'vector_custom_url', 'vector_custom_key',
       'gemini_api_key', 'codex_api_key', 'huggingface_api_key',
     ].includes(key)) {
-      const qdrant = require('./qdrant-sync');
+      const qdrant = qdrantSync;
       qdrant.reapplyConfig({ dropCollections: key === 'vector_embedding_provider' })
         .catch(err =>
           logger.warn('qdrant.reapplyConfig after settings change failed', { module: 'routes', settingKey: key, err: err.message })
@@ -1903,8 +2097,6 @@ function registerCoreRoutes(
   // ── CLI Credentials Check ─────────────────────────────────────────────────
 
   app.get('/api/cli-credentials', async (req, res) => {
-    const fsp = require('fs/promises');
-    const { join } = require('path');
     const home = safe.HOME;
 
     // Gemini: check for credentials file OR GOOGLE_API_KEY in env OR key in DB settings
@@ -1957,7 +2149,6 @@ function registerCoreRoutes(
 
   app.get('/api/qdrant/status', async (req, res) => {
     try {
-      const qdrantSync = require('./qdrant-sync');
       const statusData = await qdrantSync.status();
       res.json(statusData);
     } catch (err) {
@@ -1969,7 +2160,6 @@ function registerCoreRoutes(
     const { collection } = req.body;
     if (!collection) return res.status(400).json({ error: 'collection required' });
     try {
-      const qdrantSync = require('./qdrant-sync');
       qdrantSync.reindexCollection(collection).catch(err =>
         logger.error('Reindex error', { module: 'routes', collection, err: err.message })
       );
@@ -2158,10 +2348,21 @@ function registerCoreRoutes(
     try {
       const { sessionId } = req.params;
       const { mode = 'info', tailLines = 60 } = req.body;
+      // #326 [A1]: Resolve the project's actual path (not name) so the
+      // canonical findSessionsDir encoder sees the real on-disk path. The
+      // sessions row only carries project_id; look the project up to get
+      // its path. Falls back to req.body.project (treated as a name) only
+      // when the session row is absent — matches the legacy client contract.
       const entry = db.getSession(sessionId);
-      const project = entry ? entry.project_name : (req.body.project || '');
-      const projectHash = (project ? safe.resolveProjectPath(project) : '').replace(/[^a-zA-Z0-9]/g, '-');
-      const sessionFile = join(CLAUDE_HOME, 'projects', projectHash, `${sessionId}.jsonl`);
+      let projectPath = '';
+      if (entry && entry.project_id) {
+        const proj = db.getProjectById(entry.project_id);
+        if (proj && proj.path) projectPath = proj.path;
+      } else if (req.body.project) {
+        const proj = db.getProject(req.body.project);
+        projectPath = proj && proj.path ? proj.path : safe.resolveProjectPath(req.body.project);
+      }
+      const sessionFile = join(safe.findSessionsDir(projectPath), `${sessionId}.jsonl`);
 
       if (mode === 'info') {
         let exists = false;
@@ -2212,7 +2413,7 @@ function registerCoreRoutes(
       const cwd = session.project_path || WORKSPACE;
       const cliType = session.cli_type || 'claude';
       const { args: restartArgs } = await safe.buildResumeArgs(session, cwd);
-      safe.tmuxCreateCLI(tmux, cwd, cliType, restartArgs || []);
+      safe.tmuxCreateCLI(tmux, cwd, cliType, restartArgs || [], { workbenchSessionId: sessionId });
       res.json({ ok: true, sessionId, tmux });
     } catch (err) {
       res.status(500).json({ error: err.message });

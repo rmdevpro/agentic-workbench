@@ -25,7 +25,14 @@ RUN curl -fsSL https://github.com/qdrant/qdrant/releases/download/v1.17.1/qdrant
     | tar xz -C /usr/local/bin && chmod +x /usr/local/bin/qdrant
 
 # Install AI CLIs
-RUN npm install -g @anthropic-ai/claude-code @google/gemini-cli @openai/codex
+# #353 [D4]: pin CLI versions to known-good releases. Upgrade procedure:
+#   1. Test on M5 dev with the new tag (one CLI at a time)
+#   2. Run the OAuth flow per CLI to confirm the gate-modal still triggers
+#   3. Bump here + in `package.json` if applicable, redeploy
+RUN npm install -g \
+    @anthropic-ai/claude-code@2.1.137 \
+    @google/gemini-cli@0.41.2 \
+    @openai/codex@0.130.0
 
 # Reuse the existing 'node' user (UID 1000) — rename to workbench, home at /data
 # Also hand ownership of the CLI packages to workbench so npm auto-updates work.

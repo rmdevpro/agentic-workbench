@@ -5833,6 +5833,62 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 1. \`POST /api/mcp/call\` with \`{tool:'file_search_code', args:{query:'uniqueMarkerForIssue291', limit:20}}\`.
 **Verify:** Response includes a result whose \`file_path\` ends in \`test-vec-291/marker.js\` AND whose \`text\` contains the marker token. Pre-fix this returned zero matches because scanCode hardcoded \`[WORKSPACE]\`.
 
+### SWITCHTAB-A18-01: switchTab uses CSS visibility, not display:none + 300ms timeout (#343)
+**Issue:** #343 [A18].
+**Setup:** Workbench loaded in browser (M5).
+**Steps (browser):**
+1. `browser_evaluate` `window.switchTab.toString()` — assert the function body contains no `setTimeout(..., 300)` call.
+2. `browser_evaluate` walk `document.styleSheets[*].cssRules` for selectors matching `.terminal-pane` / `.terminal-pane.active`. Count rules with `display: none` vs `position: absolute` vs `visibility: hidden`.
+**Verify:** `.terminal-pane` rule sets `position: absolute; visibility: hidden; z-index: 0;` (and `inset: 0 0 28px` to preserve the bounding box without `top: -9999px`). `.terminal-pane.active` overrides to `visibility: visible; z-index: 1;`. There must be zero `display: none` rules under `.terminal-pane*` and zero `setTimeout(..., 300)` calls in `switchTab` body. xterm.js can measure dimensions immediately because the pane bounding box is preserved at all times — no layout thrash on switch. Pre-fix the inactive panes were `display: none`, xterm.js measured 0×0 on activation, and the code papered over with `requestAnimationFrame` + `setTimeout(..., 300)` double-fit. Both hacks are gone.
+
+### ESCAPE-A16-01: escapeHtml + escapeAttr escape all five HTML-sensitive chars (#341)
+**Issue:** #341 [A16].
+**Setup:** Workbench loaded in browser (M5). `/js/util.js` exports `escapeHtml`, `escapeAttr`, and aliases `window.escHtml` to delegate to `escapeHtml`.
+**Steps (browser):**
+1. `browser_evaluate` `window.escHtml('<&>"')` → assert `&lt;&amp;&gt;&quot;`.
+2. `browser_evaluate` `window.escHtml("It's")` → assert `It&#39;s`.
+3. `browser_evaluate` `window.escapeAttr('<&>"')` → assert `&lt;&amp;&gt;&quot;`.
+4. `browser_evaluate` `window.escHtml === window.escapeHtml` (or that both produce identical output) → assert true.
+5. `browser_evaluate` round-trip: `div.innerHTML = escapeHtml('<bad>&"\'name'); div.textContent` → assert `<bad>&"'name` (data preserved through escape + render).
+**Verify:** All five HTML-sensitive characters (`< > & " '`) are escaped. The pre-existing in-page `escHtml` (DOM textContent round-trip) was missing `"` and `'` escapes; after consolidation it delegates to the canonical implementation. 46 call sites of `escHtml(...)` remain intact and now produce attribute-safe output. Pre-fix any session name containing `"` rendered into an attribute context broke out of the attribute (XSS via crafted name).
+
+### MODAL-A15-01: showInputModal + showConfirmModal render workbench modals, not native dialogs (#340)
+**Issue:** #340 [A15].
+**Setup:** Workbench loaded in browser (M5).
+**Steps (browser):**
+1. Save originals; stub `window.prompt = () => { nativePromptCalled = true; return null; }` and `window.confirm = () => { nativeConfirmCalled = true; return false; }`.
+2. `browser_evaluate` `window.showInputModal({ title:'A15-test', label:'Enter value', defaultValue:'hello' })` and capture the returned promise.
+3. After 200 ms wait, read `document.getElementById('input-modal').classList.contains('visible')`, the rendered title/field value, then call `window.submitInputModal()` and await the promise.
+4. `browser_evaluate` `window.showConfirmModal({ title:'A15-confirm', message:'really?', confirmLabel:'Yes', danger:true })`, wait, read DOM, call `window.dismissConfirmModal()` and await.
+**Verify:** `#input-modal.visible` is true while open; `#input-modal-title` text equals the supplied title; `#input-modal-field.value` equals the `defaultValue`; submitting resolves the promise with that value. `#confirm-modal.visible` is true while open; title and message render; dismiss resolves to `false`. Across both flows `nativePromptCalled === false` and `nativeConfirmCalled === false` — i.e., workbench modals supplant native prompt/confirm for primary CRUD. Pre-fix `window.prompt` was called in 6+ sites and broke silently in embed contexts that block native dialogs.
+
+### OAUTH-DETECTOR-A14-01: oauth-detector.js loads in browser and parses real fixtures (#339)
+**Issue:** #339 [A14].
+**Setup:** Workbench loaded in browser (M5). No CLI session needed — this entry verifies the extracted module's behavior in the page context, decoupled from a live OAuth flow.
+**Steps (browser):**
+1. `browser_evaluate` `await fetch('/js/oauth-detector.js').then(r => r.status)` — must be 200.
+2. `browser_evaluate` `typeof window.OAuthDetector` — must be `'object'` with keys `OAUTH_URL_PATTERNS, AUTH_ERROR_PATTERN, cleanAnsi, parseOAuthBuffer, createOAuthDetector`.
+3. `browser_evaluate` `window.OAuthDetector.parseOAuthBuffer(claudeFixture)` — must return `{ url: '...', cli: 'claude' }`. Repeat for Gemini fixture and Codex fixture.
+**Verify:** `OAUTH_URL_PATTERNS.length === 3` (claude / gemini / codex). For a Claude fixture matching `https://claude.com/cai/oauth/authorize?...` followed by `Paste`, `parseOAuthBuffer` returns the full URL with `cli: 'claude'`. Gemini fixture extracts the `accounts.google.com/o/oauth2/...` URL with `cli: 'gemini'`. Pre-extraction this logic was buried in `public/index.html:4800-4820` and could not be unit-tested. Full OAuth-modal verification with a live CLI requires Hymie per `feedback_oauth_modal_hymie_only.md`; this entry verifies the parser is correctly modularized + loaded into the page.
+
+### PHASE-1-GATE-01: Phase 1 cumulative regression gate (#390)
+**Issue:** #390 (Phase 1 Gate).
+**Setup:** `phase-1-verify` branch deployed to M5/dev. Run from inside the M5 workbench container (`docker exec workbench`).
+**Steps:**
+1. Mock regression: `cd /app && npm test`. Record `# tests / # pass / # fail`.
+2. Live regression per file: `for f in /app/tests/live/*.test.js; do TEST_URL=http://localhost:7860 node --test "$f" | tail -8; done`. Sum totals.
+3. Cleanup verification on the verify branch: `git status --short` from the working copy on M5; clean working tree (no stray planning artifacts, /tmp scratch, uncommitted state).
+**Verify:** Mock totals = 336 pass / 5 fail (5 fails are O3 #377 task-v2 baseline — confirmed by inspecting `--- Subtest:` lines all under `tests/mock/routes-tasks.*` shape). Live totals = 114 pass / 15 fail (14 from `routes-tasks.test.js` + 1 from `mcp-tools.test.js` MCP-06 — same O3 baseline). Zero new Phase 1 regressions. `git status --short` returns no unexpected entries (only branch-private notes if any).
+
+### TASK-DRAG-A2-01: Cross-bucket drag lands at requested rank, not appended (#327)
+**Issue:** #327 [A2].
+**Setup:** Two projects exist (`a2_drag_a` and `a2_drag_b`). Project A has 1 task `A2-DRAG-moving`. Project B has 4 tasks `A2-DRAG-b1..b4` at ranks 1..4. All tasks at status `inactive` (so they appear under the default `Active` filter). Open right panel → Tasks. Expand both A2 project rows.
+**Steps (browser):**
+1. Identify the moving task row by `[data-task-id="<MOV_ID>"]` and the target task row (b3) by `[data-task-id="<B3_ID>"]`.
+2. Dispatch a synthetic `dragstart` DragEvent on the moving row, set `application/x-task-id` on the DataTransfer, then dispatch `dragover` and `drop` on b3 with `clientY` in the top 10% of b3's bounding rect (the UI's "drag-over-above" zone — produces a PUT with `rank: <b3.rank>`).
+3. Wait ~2s for the PUT round-trip and tree reload.
+**Verify:** The rendered DOM under project B's task list shows **exactly** `[A2-DRAG-b1, A2-DRAG-b2, A2-DRAG-moving, A2-DRAG-b3, A2-DRAG-b4]` in that order. The moving task row's `data-project-id` is now project B's id. Server DB (`SELECT title, rank FROM tasks WHERE project_id=B.id AND parent_task_id IS NULL ORDER BY rank`) returns the same order with ranks `[1, 2, 3, 4, 5]`. Project A's bucket is densified (no rank gap left behind). Pre-fix the moving task appeared at rank 5 (appended) because PATCH split into two non-atomic calls; post-fix `db.moveTask` runs in one transaction and respects the requested rank.
+
 ### TASK-DRAG-PROJ-HL-01: Drop-on-project shows accent highlight (parity with drop-on-task)
 **Issue:** #312.
 **Setup:** Open right panel → Tasks. Expand at least one project that has tasks (e.g., \`Workbench\`). Have at least one task row visible.
@@ -5888,6 +5944,23 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 1. Click "Sync from upstream" button.
 2. Read `#kb-status-line` text after a few seconds.
 **Verify:** No 401 / "could not connect" / "auth" errors in the status line. Status either shows `lastPullAt` updated, or a content-level error like "Pull (ff-only) failed: Diverging branches" — both confirm auth completed. The KB clone's `.git/config` `[remote "origin"]` URL should be plain `https://github.com/<account>/<repo>` with no embedded credentials (verify via `docker exec workbench cat /data/knowledge-base/.git/config` if needed).
+
+### PICKER-A4-01: Picker derives repo from actual git remote, not hardcoded org (#329)
+**Issue:** #329 [A4].
+**Setup:** Plant a project on M5 whose `origin` remote is `https://github.com/different-org/picker-test-repo.git` (NOT under `rmdevpro/`). Add a task in that project. No `git_account` row for `github.com/different-org` (so the picker will surface `no_account_for_path` rather than rendering issues — that's fine; we verify the **repo string the picker resolved**, not the issue list).
+**Steps (browser):**
+1. Open the right panel → Tasks. Expand the project. `browser_evaluate` `openTaskDetail(<task_id>)` to open the task detail modal.
+2. `browser_evaluate` `openIssuePicker(<task_id>, <project_id>)` directly (the picker button is otherwise hidden behind the task-detail modal interaction).
+3. Wait for the picker modal to render.
+**Verify:** The element `#issue-picker-repo` text is `github.com/different-org/picker-test-repo` — i.e., the host/owner/name derived from the actual `git remote get-url origin`, NOT `rmdevpro/<anything>`. The picker error (if any) reports `no_account_for_path: github.com/different-org` — proving the routing reached the correct upstream. Pre-fix the picker hardcoded `rmdevpro/<last-path-segment>` and would have shown `github.com/rmdevpro/picker-test-repo` regardless of the project's actual remote, so any non-rmdevpro repo's issues were unreachable.
+
+### PICKER-A3-01: GHES repo routes to enterprise host (#328)
+**Issue:** #328 [A3].
+**Setup:** Plant a `git_accounts` entry for `enterprise.example.com/test-owner` with a dummy token (sqlite settings table). No real network access to `enterprise.example.com` required.
+**Steps (browser, observable):**
+1. From the task Edit modal, select the Issue picker. Set the repo string to `enterprise.example.com/test-owner/test-repo` (or trigger `GET /api/issues?repo=enterprise.example.com/test-owner/test-repo&state=open` directly via `browser_evaluate` calling `fetch`).
+2. Read the response.
+**Verify:** Response status is 502 (network can't reach the enterprise host) AND the error body contains the literal substring `enterprise.example.com/api/graphql`. The error body must NOT contain `api.github.com/graphql`. This proves the route used the GHES host derivation, not the legacy `api.github.com` fallback. Pre-fix, the URL was hard-coded to `api.github.com` and any GHES repo was unreachable; post-fix, the route resolves the host from `git_account.path` and constructs `https://<host>/api/graphql`. Successful github.com flow remains covered by PICKER-02 (legacy 2-part `owner/repo` form).
 
 ### PICKER-01: Issue picker opens from task Edit modal and surfaces no_account_for_path
 **Issue:** #314.

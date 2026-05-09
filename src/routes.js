@@ -1567,7 +1567,7 @@ function registerCoreRoutes(
       const termId = `t_${Date.now()}`;
       const tmux = tmuxName(termId);
       await enforceTmuxLimit();
-      safe.tmuxCreateCLI(tmux, projectPath, 'bash', [], { workbenchSessionId: termId });
+      await safe.tmuxCreateCLIAsync(tmux, projectPath, 'bash', [], { workbenchSessionId: termId });
       res.json({ id: termId, tmux, project, name: 'Terminal' });
     } catch (err) {
       logger.error('Error creating terminal', { module: 'routes', err: err.message });
@@ -1606,7 +1606,7 @@ function registerCoreRoutes(
             error: `Session file missing on disk (expected ${expectedPath}). Recover the file or recreate the session.`,
           });
         }
-        safe.tmuxCreateCLI(tmux, projectPath, session.cli_type || 'claude', resumeArgs, { workbenchSessionId: session.id });
+        await safe.tmuxCreateCLIAsync(tmux, projectPath, session.cli_type || 'claude', resumeArgs, { workbenchSessionId: session.id });
         // Wait for CLI to start — resume with JSONL loading takes longer than fresh start
         await sleep(3000);
         // Verify tmux actually started
@@ -2434,7 +2434,7 @@ function registerCoreRoutes(
       const cwd = session.project_path || WORKSPACE;
       const cliType = session.cli_type || 'claude';
       const { args: restartArgs } = await safe.buildResumeArgs(session, cwd);
-      safe.tmuxCreateCLI(tmux, cwd, cliType, restartArgs || [], { workbenchSessionId: sessionId });
+      await safe.tmuxCreateCLIAsync(tmux, cwd, cliType, restartArgs || [], { workbenchSessionId: sessionId });
       res.json({ ok: true, sessionId, tmux });
     } catch (err) {
       res.status(500).json({ error: err.message });

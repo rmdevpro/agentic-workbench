@@ -5871,6 +5871,15 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 3. `browser_evaluate` `window.OAuthDetector.parseOAuthBuffer(claudeFixture)` — must return `{ url: '...', cli: 'claude' }`. Repeat for Gemini fixture and Codex fixture.
 **Verify:** `OAUTH_URL_PATTERNS.length === 3` (claude / gemini / codex). For a Claude fixture matching `https://claude.com/cai/oauth/authorize?...` followed by `Paste`, `parseOAuthBuffer` returns the full URL with `cli: 'claude'`. Gemini fixture extracts the `accounts.google.com/o/oauth2/...` URL with `cli: 'gemini'`. Pre-extraction this logic was buried in `public/index.html:4800-4820` and could not be unit-tested. Full OAuth-modal verification with a live CLI requires Hymie per `feedback_oauth_modal_hymie_only.md`; this entry verifies the parser is correctly modularized + loaded into the page.
 
+### PHASE-1-GATE-01: Phase 1 cumulative regression gate (#390)
+**Issue:** #390 (Phase 1 Gate).
+**Setup:** `phase-1-verify` branch deployed to M5/dev. Run from inside the M5 workbench container (`docker exec workbench`).
+**Steps:**
+1. Mock regression: `cd /app && npm test`. Record `# tests / # pass / # fail`.
+2. Live regression per file: `for f in /app/tests/live/*.test.js; do TEST_URL=http://localhost:7860 node --test "$f" | tail -8; done`. Sum totals.
+3. Cleanup verification on the verify branch: `git status --short` from the working copy on M5; clean working tree (no stray planning artifacts, /tmp scratch, uncommitted state).
+**Verify:** Mock totals = 336 pass / 5 fail (5 fails are O3 #377 task-v2 baseline — confirmed by inspecting `--- Subtest:` lines all under `tests/mock/routes-tasks.*` shape). Live totals = 114 pass / 15 fail (14 from `routes-tasks.test.js` + 1 from `mcp-tools.test.js` MCP-06 — same O3 baseline). Zero new Phase 1 regressions. `git status --short` returns no unexpected entries (only branch-private notes if any).
+
 ### TASK-DRAG-A2-01: Cross-bucket drag lands at requested rank, not appended (#327)
 **Issue:** #327 [A2].
 **Setup:** Two projects exist (`a2_drag_a` and `a2_drag_b`). Project A has 1 task `A2-DRAG-moving`. Project B has 4 tasks `A2-DRAG-b1..b4` at ranks 1..4. All tasks at status `inactive` (so they appear under the default `Active` filter). Open right panel → Tasks. Expand both A2 project rows.

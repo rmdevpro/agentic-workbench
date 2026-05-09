@@ -22,6 +22,13 @@ services:
       - MAX_TMUX_SESSIONS=10
       - TMUX_CLEANUP_MINUTES=2
       - LOG_LEVEL=DEBUG
+      # R3-N1 (Codex BLOCKER): resetBaseline in tests/helpers/reset-state.js
+      # refuses to run unless WORKBENCH_TEST_SANDBOX=1 is set (safety guard
+      # added in commit 2d6a67d to prevent accidental wipes of production
+      # /data on M5/dev or hf-prod). Setting it here means any operator
+      # running the documented test compose picks it up automatically;
+      # manual runs against shared deployments still fail loud.
+      - WORKBENCH_TEST_SANDBOX=1
     networks:
       - workbench-test
     dns:

@@ -7,7 +7,8 @@
     "start": "node src/server.js",
     "test": "node --test tests/mock/*.test.js",
     "test:coverage": "c8 --reporter=text --reporter=lcov --lines 80 --branches 70 --include='src/**/*.js' --exclude='tests/**' --exclude='scripts/**' --exclude='public/**' --exclude='node_modules/**' node --test tests/mock/*.test.js",
-    "test:live": "MAX_TMUX_SESSIONS=50 node --test --test-concurrency=1 tests/live/*.test.js",
+    "test:live": "WORKBENCH_TEST_SANDBOX=1 MAX_TMUX_SESSIONS=50 node --test --test-concurrency=1 tests/live/*.test.js",
+    "test:browser": "WORKBENCH_TEST_SANDBOX=1 node --test --test-concurrency=1 tests/browser/*.spec.js",
     "lint": "eslint .",
     "lint:format": "prettier --check .",
     "lint:all": "npm run lint && npm run lint:format"

@@ -4675,10 +4675,13 @@ build/**</textarea>
       return `${Math.floor(seconds / 86400)}d ago`;
     }
 
+    // #341 [A16]: delegate to the canonical escapeHtml in /js/util.js so a
+    // single implementation governs all 46 call sites here. The previous
+    // textContent/innerHTML round-trip escaped <, >, & but NOT " or ' — so
+    // values rendered into a context that later flowed into an attribute or
+    // a JSON-in-script payload were vulnerable. escapeHtml escapes all five.
     function escHtml(str) {
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
+      return window.escapeHtml(str);
     }
 
     // ── File drag-and-drop onto terminal (#288: side-panel parity) ──

@@ -5833,6 +5833,14 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 1. \`POST /api/mcp/call\` with \`{tool:'file_search_code', args:{query:'uniqueMarkerForIssue291', limit:20}}\`.
 **Verify:** Response includes a result whose \`file_path\` ends in \`test-vec-291/marker.js\` AND whose \`text\` contains the marker token. Pre-fix this returned zero matches because scanCode hardcoded \`[WORKSPACE]\`.
 
+### SWITCHTAB-A18-01: switchTab uses CSS visibility, not display:none + 300ms timeout (#343)
+**Issue:** #343 [A18].
+**Setup:** Workbench loaded in browser (M5).
+**Steps (browser):**
+1. `browser_evaluate` `window.switchTab.toString()` — assert the function body contains no `setTimeout(..., 300)` call.
+2. `browser_evaluate` walk `document.styleSheets[*].cssRules` for selectors matching `.terminal-pane` / `.terminal-pane.active`. Count rules with `display: none` vs `position: absolute` vs `visibility: hidden`.
+**Verify:** `.terminal-pane` rule sets `position: absolute; visibility: hidden; z-index: 0;` (and `inset: 0 0 28px` to preserve the bounding box without `top: -9999px`). `.terminal-pane.active` overrides to `visibility: visible; z-index: 1;`. There must be zero `display: none` rules under `.terminal-pane*` and zero `setTimeout(..., 300)` calls in `switchTab` body. xterm.js can measure dimensions immediately because the pane bounding box is preserved at all times — no layout thrash on switch. Pre-fix the inactive panes were `display: none`, xterm.js measured 0×0 on activation, and the code papered over with `requestAnimationFrame` + `setTimeout(..., 300)` double-fit. Both hacks are gone.
+
 ### ESCAPE-A16-01: escapeHtml + escapeAttr escape all five HTML-sensitive chars (#341)
 **Issue:** #341 [A16].
 **Setup:** Workbench loaded in browser (M5). `/js/util.js` exports `escapeHtml`, `escapeAttr`, and aliases `window.escHtml` to delegate to `escapeHtml`.

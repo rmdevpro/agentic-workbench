@@ -220,6 +220,39 @@ test('SAF-16: tmuxCreateCLI passes WORKBENCH_SESSION_ID through to tmux new-sess
   }
 });
 
+// #444 [G1.1]: async variant of tmuxCreateCLI for use inside async HTTP
+// handlers. Must use execFile (not execFileSync) and issue the same five
+// tmux commands so the resulting tmux state is identical to the sync path.
+test('SAF-17: tmuxCreateCLIAsync uses execFile (not execFileSync) and issues 5 tmux commands', async (t) => {
+  const syncCalls = [];
+  const asyncCalls = [];
+  t.mock.method(childProcess, 'execFileSync', (_c, args, _o) => { syncCalls.push(args.slice()); return ''; });
+  t.mock.method(childProcess, 'execFile', (_c, args, _o, cb) => {
+    asyncCalls.push(args.slice());
+    if (cb) cb(null, '', '');
+    return { stdout: '', stderr: '' };
+  });
+  const { safe, restore } = freshSafe();
+  try {
+    await safe.tmuxCreateCLIAsync('wb_test', '/some/cwd', 'claude', [], { workbenchSessionId: 'sess-async' });
+    assert.equal(syncCalls.length, 0, 'must not use execFileSync — that would block the event loop');
+    assert.equal(asyncCalls.length, 5, 'must issue all 5 tmux commands: new-session + 4 set-option');
+    assert.equal(asyncCalls[0][0], 'new-session');
+    const cmd = asyncCalls[0][asyncCalls[0].length - 1];
+    assert.match(cmd, /export WORKBENCH_SESSION_ID='sess-async'/);
+    assert.equal(asyncCalls[1][0], 'set-option');
+    assert.ok(asyncCalls[1].includes('mouse'));
+    assert.equal(asyncCalls[2][0], 'set-option');
+    assert.ok(asyncCalls[2].includes('history-limit'));
+    assert.equal(asyncCalls[3][0], 'set-option');
+    assert.ok(asyncCalls[3].includes('allow-passthrough'));
+    assert.equal(asyncCalls[4][0], 'set-option');
+    assert.ok(asyncCalls[4].includes('terminal-features'));
+  } finally {
+    restore();
+  }
+});
+
 test('SAF-13: tmuxKill logs debug on unexpected error', async (t) => {
   t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) => cb(new Error('permission denied')));
   const { safe, restore } = freshSafe();

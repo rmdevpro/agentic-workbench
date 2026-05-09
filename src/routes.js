@@ -115,7 +115,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     const resumeArgs = phase1Id
       ? ['--resume', phase1Id, '--dangerously-skip-permissions', ...cliArgs]
       : ['--dangerously-skip-permissions', ...cliArgs];
-    safeExec.tmuxCreateCLI(tmux, projectPath, 'claude', resumeArgs, { workbenchSessionId: tmpId });
+    await safeExec.tmuxCreateCLIAsync(tmux, projectPath, 'claude', resumeArgs, { workbenchSessionId: tmpId });
     if (phase1Id) {
       // Register the real session ID so the resolver maps it correctly
       db.upsertSession(phase1Id, proj.id, null, 'claude');
@@ -132,7 +132,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       '-p', rolePrompt,
     ], projectPath);
     // Phase 2: resume latest interactively (no yolo)
-    safeExec.tmuxCreateCLI(tmux, projectPath, 'gemini', ['--resume', 'latest'], { workbenchSessionId: tmpId });
+    await safeExec.tmuxCreateCLIAsync(tmux, projectPath, 'gemini', ['--resume', 'latest'], { workbenchSessionId: tmpId });
     // Find the new chat file produced by Phase 1 — diff against snapshot.
     try {
       const after = discoverGeminiSessions();
@@ -156,7 +156,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       ? (() => { const m = basenameFs(created.filePath, '.jsonl').match(CODEX_ROLLOUT_UUID_RE); return m ? m[1] : null; })()
       : null;
     const resumeArgs = rolloutId ? ['resume', rolloutId] : [];
-    safeExec.tmuxCreateCLI(tmux, projectPath, 'codex', resumeArgs, { workbenchSessionId: tmpId });
+    await safeExec.tmuxCreateCLIAsync(tmux, projectPath, 'codex', resumeArgs, { workbenchSessionId: tmpId });
     if (rolloutId) db.setCliSessionId(tmpId, rolloutId);
   }
 }
@@ -1516,10 +1516,10 @@ function registerCoreRoutes(
           await _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger);
         } catch (roleErr) {
           logger.warn('Role seeding failed — launching without role', { module: 'routes', role, err: roleErr.message });
-          safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
+          await safe.tmuxCreateCLIAsync(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
         }
       } else {
-        safe.tmuxCreateCLI(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
+        await safe.tmuxCreateCLIAsync(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });
       }
 
       if (cliType === 'claude') {

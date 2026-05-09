@@ -249,6 +249,24 @@ function tmuxCreateCLI(sessionName, cwd, cliType, args = [], opts = {}) {
   tmuxExecSync(['set-option', '-t', safeName, '-as', 'terminal-features', ',*:hyperlinks']);
 }
 
+// #444 [G1.1]: async-execFile variant for use inside async HTTP handlers.
+// Calling tmuxExecSync from /api/sessions POST blocks the event loop while
+// tmux spawns the new session — under rapid burst this stalls /api/state
+// polls (REQ-001 §4.1). All five tmux commands are awaited sequentially
+// because tmux is single-threaded per-server and the set-option commands
+// require the session row created by new-session to exist.
+async function tmuxCreateCLIAsync(sessionName, cwd, cliType, args = [], opts = {}) {
+  const safeName = sanitizeTmuxName(sessionName);
+  const cmd = buildTmuxLaunchCmd(cwd, cliType, args, opts);
+  await tmuxExecAsync(['new-session', '-d', '-s', safeName, '-x', '200', '-y', '50', cmd], {
+    timeout: 30000,
+  });
+  await tmuxExecAsync(['set-option', '-t', safeName, 'mouse', 'off']);
+  await tmuxExecAsync(['set-option', '-t', safeName, 'history-limit', '10000']);
+  await tmuxExecAsync(['set-option', '-t', safeName, 'allow-passthrough', 'on']);
+  await tmuxExecAsync(['set-option', '-t', safeName, '-as', 'terminal-features', ',*:hyperlinks']);
+}
+
 // Backward-compatible wrappers
 function tmuxCreateClaude(sessionName, cwd, claudeArgs = []) {
   tmuxCreateCLI(sessionName, cwd, 'claude', claudeArgs);
@@ -414,6 +432,7 @@ module.exports = {
   buildResumeArgs,
   buildTmuxLaunchCmd,
   tmuxCreateCLI,
+  tmuxCreateCLIAsync,
   tmuxCreateClaude,
   tmuxCreateGemini,
   tmuxCreateCodex,

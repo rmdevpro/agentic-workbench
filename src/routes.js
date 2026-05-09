@@ -10,15 +10,23 @@ const {
   appendFile,
   access,
 } = require('fs/promises');
-const { join, basename, resolve: pathResolve } = require('path');
+const { join, basename, dirname, resolve: pathResolve } = require('path');
 const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 const crypto = require('crypto');
 
 const express = require('express');
+const fs = require('fs');
+const fsp = require('fs/promises');
+const { rename, rm } = require('fs/promises');
+const safeExec = require('./safe-exec');
 const { registerMcpRoutes } = require('./mcp-tools');
 const { registerWebhookRoutes } = require('./webhooks');
+const gitAuth = require('./git-auth');
+const qdrantSync = require('./qdrant-sync');
+const sessionUtilsMod = require('./session-utils');
+const { discoverGeminiSessions, discoverCodexSessions } = sessionUtilsMod;
 // File-tree directory listing endpoint. Returns folder-first sorted JSON
 // for the vanilla-JS tree component in public/index.html.
 
@@ -67,11 +75,11 @@ function _parseSince(input) {
 // /data/workspace/<project>), and Codex has the same scoping. Inlining works
 // for all three CLIs uniformly.
 async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger) {
-  const { execFile } = require('child_process');
-  const { promisify } = require('util');
-  const execFileAsync = promisify(execFile);
-  const { readdir: readdirFs, readFile: readFileFs } = require('fs/promises');
-  const { basename: basenameFs } = require('path');
+  // #347 [C5]: requires hoisted to module top — execFile/promisify/path/fs
+  // are all module-level imports. Use the top-level aliases here.
+  const readdirFs = readdir;
+  const readFileFs = readFile;
+  const basenameFs = basename;
 
   // Read the role content up-front; bail to caller's catch if missing.
   const roleContent = await readFileFs(rolePath, 'utf-8');
@@ -106,7 +114,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     const resumeArgs = phase1Id
       ? ['--resume', phase1Id, '--dangerously-skip-permissions', ...cliArgs]
       : ['--dangerously-skip-permissions', ...cliArgs];
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'claude', resumeArgs);
+    safeExec.tmuxCreateCLI(tmux, projectPath, 'claude', resumeArgs);
     if (phase1Id) {
       // Register the real session ID so the resolver maps it correctly
       db.upsertSession(phase1Id, proj.id, null, 'claude');
@@ -116,7 +124,6 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     // Snapshot existing chat files BEFORE Phase 1 so we can identify the
     // new one (Phase 1 creates exactly one chat file). Sort-by-timestamp
     // picked stale files when many old chats existed in unrelated projects.
-    const { discoverGeminiSessions } = require('./session-utils');
     const beforeGemini = new Set(discoverGeminiSessions().map(s => s.filePath));
     // Phase 1: non-interactive plan mode
     await seedExec('gemini', [
@@ -124,7 +131,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       '-p', rolePrompt,
     ], projectPath);
     // Phase 2: resume latest interactively (no yolo)
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'gemini', ['--resume', 'latest']);
+    safeExec.tmuxCreateCLI(tmux, projectPath, 'gemini', ['--resume', 'latest']);
     // Find the new chat file produced by Phase 1 — diff against snapshot.
     try {
       const after = discoverGeminiSessions();
@@ -134,7 +141,6 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
 
   } else if (cliType === 'codex') {
     // Snapshot existing rollouts BEFORE Phase 1 — same reasoning as Gemini.
-    const { discoverCodexSessions } = require('./session-utils');
     const beforeCodex = new Set((discoverCodexSessions ? discoverCodexSessions() : []).map(s => s.filePath));
     // Single non-interactive step — role seeded as initial context.
     // --skip-git-repo-check: Codex refuses to run outside a git repo by
@@ -149,7 +155,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       ? (() => { const m = basenameFs(created.filePath, '.jsonl').match(/([0-9a-f-]{36})$/i); return m ? m[1] : null; })()
       : null;
     const resumeArgs = rolloutId ? ['resume', rolloutId] : [];
-    require('./safe-exec').tmuxCreateCLI(tmux, projectPath, 'codex', resumeArgs);
+    safeExec.tmuxCreateCLI(tmux, projectPath, 'codex', resumeArgs);
     if (rolloutId) db.setCliSessionId(tmpId, rolloutId);
   }
 }
@@ -548,7 +554,7 @@ function registerCoreRoutes(
   // #317: KB account is just a row in git_accounts with isKB=true. Lookup by
   // path prefix (e.g., 'github.com/jmdrumsgarrison-ux'). The token stays in
   // DB; URLs do NOT carry it. Auth happens per-call via http.extraheader.
-  const gitAuth = require('./git-auth');
+  // gitAuth is imported at module top.
   function getKbAccount() { return gitAuth.kbAccount(db); }
   // Plain origin URL — token NOT embedded. Auth flows through extraheader at
   // git invocation time.
@@ -867,7 +873,6 @@ function registerCoreRoutes(
     try {
       const filePath = req.body.path;
       if (!filePath) return res.status(400).json({ error: 'path required' });
-      const { access } = require('fs/promises');
       try { await access(filePath); return res.status(409).json({ error: 'file already exists' }); } catch {}
       await writeFile(filePath, '');
       res.json({ ok: true, path: filePath });
@@ -880,7 +885,6 @@ function registerCoreRoutes(
     try {
       const { oldPath, newPath } = req.body;
       if (!oldPath || !newPath) return res.status(400).json({ error: 'oldPath and newPath required' });
-      const { rename } = require('fs/promises');
       await rename(oldPath, newPath);
       res.json({ ok: true });
     } catch (err) {
@@ -892,7 +896,6 @@ function registerCoreRoutes(
     try {
       const filePath = req.query.path;
       if (!filePath) return res.status(400).json({ error: 'path required' });
-      const { rm } = require('fs/promises');
       await rm(filePath, { recursive: true });
       res.json({ ok: true });
     } catch (err) {
@@ -904,8 +907,6 @@ function registerCoreRoutes(
     try {
       const { source, destination } = req.body;
       if (!source || !destination) return res.status(400).json({ error: 'source and destination required' });
-      const { rename } = require('fs/promises');
-      const { basename, join } = require('path');
       const destPath = join(destination, basename(source));
       await rename(source, destPath);
       res.json({ ok: true, path: destPath });
@@ -922,7 +923,6 @@ function registerCoreRoutes(
   app.post('/api/files/list', async (req, res) => {
     const dirPath = req.body.path;
     if (!dirPath) return res.status(400).json({ error: 'path required' });
-    const fsp = require('fs/promises');
     try {
       const dirents = await fsp.readdir(dirPath, { withFileTypes: true });
       const cmp = (a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' });
@@ -1284,7 +1284,7 @@ function registerCoreRoutes(
       // Non-Claude CLIs don't create JSONLs, so give them a permanent UUID up front.
       const tmpId = cliType === 'claude'
         ? `new_${Date.now()}`
-        : require('crypto').randomUUID();
+        : crypto.randomUUID();
       const tmux = tmuxName(tmpId);
 
       await ensureSettings();
@@ -1571,12 +1571,10 @@ function registerCoreRoutes(
 
   function _projectHasRepoPath(projectPath) {
     if (!projectPath) return false;
-    const fs = require('fs');
-    const path = require('path');
     let cur = projectPath;
     while (cur && cur !== '/' && cur.length > 1) {
-      try { if (fs.existsSync(path.join(cur, '.git'))) return true; } catch { /* ignore */ }
-      cur = path.dirname(cur);
+      try { if (fs.existsSync(join(cur, '.git'))) return true; } catch { /* ignore */ }
+      cur = dirname(cur);
     }
     return false;
   }
@@ -1820,7 +1818,7 @@ function registerCoreRoutes(
       // 'none' means "disable embeddings entirely" — no live config to validate
       const skipValidation = key === 'vector_embedding_provider' && value === 'none';
       if (!skipValidation) {
-        const qdrant = require('./qdrant-sync');
+        const qdrant = qdrantSync;
         const cfg = qdrant.buildCandidateConfig(key, value);
         const result = await qdrant.validateProviderConfig(cfg);
         if (!result.ok) {
@@ -1891,7 +1889,7 @@ function registerCoreRoutes(
       'vector_custom_url', 'vector_custom_key',
       'gemini_api_key', 'codex_api_key', 'huggingface_api_key',
     ].includes(key)) {
-      const qdrant = require('./qdrant-sync');
+      const qdrant = qdrantSync;
       qdrant.reapplyConfig({ dropCollections: key === 'vector_embedding_provider' })
         .catch(err =>
           logger.warn('qdrant.reapplyConfig after settings change failed', { module: 'routes', settingKey: key, err: err.message })
@@ -1903,8 +1901,6 @@ function registerCoreRoutes(
   // ── CLI Credentials Check ─────────────────────────────────────────────────
 
   app.get('/api/cli-credentials', async (req, res) => {
-    const fsp = require('fs/promises');
-    const { join } = require('path');
     const home = safe.HOME;
 
     // Gemini: check for credentials file OR GOOGLE_API_KEY in env OR key in DB settings
@@ -1957,7 +1953,6 @@ function registerCoreRoutes(
 
   app.get('/api/qdrant/status', async (req, res) => {
     try {
-      const qdrantSync = require('./qdrant-sync');
       const statusData = await qdrantSync.status();
       res.json(statusData);
     } catch (err) {
@@ -1969,7 +1964,6 @@ function registerCoreRoutes(
     const { collection } = req.body;
     if (!collection) return res.status(400).json({ error: 'collection required' });
     try {
-      const qdrantSync = require('./qdrant-sync');
       qdrantSync.reindexCollection(collection).catch(err =>
         logger.error('Reindex error', { module: 'routes', collection, err: err.message })
       );

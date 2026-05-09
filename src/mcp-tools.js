@@ -2,6 +2,7 @@
 
 const crypto = require('crypto');
 const fs = require('fs');
+const path = require('path');
 const { readdir } = require('fs/promises');
 const { join, basename, resolve, dirname } = require('path');
 const { execSync } = require('child_process');
@@ -9,6 +10,8 @@ const safe = require('./safe-exec');
 const sessionUtils = require('./session-utils');
 const logger = require('./logger');
 const db = require('./db');
+const config = require('./config');
+const qdrantSync = require('./qdrant-sync');
 
 const WORKSPACE = safe.WORKSPACE;
 const CLAUDE_HOME = safe.CLAUDE_HOME;
@@ -62,7 +65,7 @@ function resolveWorkspacePath(relPath) {
 }
 
 async function _semanticSearch(collections, query, limit) {
-  const qdrant = require('./qdrant-sync');
+  const qdrant = qdrantSync;
   if (qdrant.getEmbeddingProvider() === 'none') {
     return {
       configured: false,
@@ -306,13 +309,11 @@ handlers.session_summarize = async (args) => {
 };
 
 handlers.session_prepare_pre_compact = async () => {
-  const config = require('./config');
   return config.getPrompt('session-transition', {});
 };
 
 handlers.session_resume_post_compact = async (args) => {
   requireSessionId(args);
-  const config = require('./config');
   const session = db.getSessionFull(args.session_id);
   const projectPath = session?.project_path || '';
   const sessDir = sessionUtils.sessionsDir(projectPath);
@@ -601,8 +602,6 @@ function _resolveProject(args) {
 // the "tasks in repo projects must have a github_issue" rule from #304.
 function _projectHasRepo(projectPath) {
   if (!projectPath) return false;
-  const fs = require('fs');
-  const path = require('path');
   let cur = projectPath;
   while (cur && cur !== '/' && cur.length > 1) {
     try { if (fs.existsSync(path.join(cur, '.git'))) return true; } catch { /* ignore */ }

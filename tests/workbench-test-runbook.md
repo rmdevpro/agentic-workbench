@@ -5898,6 +5898,14 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 2. Read `#kb-status-line` text after a few seconds.
 **Verify:** No 401 / "could not connect" / "auth" errors in the status line. Status either shows `lastPullAt` updated, or a content-level error like "Pull (ff-only) failed: Diverging branches" — both confirm auth completed. The KB clone's `.git/config` `[remote "origin"]` URL should be plain `https://github.com/<account>/<repo>` with no embedded credentials (verify via `docker exec workbench cat /data/knowledge-base/.git/config` if needed).
 
+### PICKER-A3-01: GHES repo routes to enterprise host (#328)
+**Issue:** #328 [A3].
+**Setup:** Plant a `git_accounts` entry for `enterprise.example.com/test-owner` with a dummy token (sqlite settings table). No real network access to `enterprise.example.com` required.
+**Steps (browser, observable):**
+1. From the task Edit modal, select the Issue picker. Set the repo string to `enterprise.example.com/test-owner/test-repo` (or trigger `GET /api/issues?repo=enterprise.example.com/test-owner/test-repo&state=open` directly via `browser_evaluate` calling `fetch`).
+2. Read the response.
+**Verify:** Response status is 502 (network can't reach the enterprise host) AND the error body contains the literal substring `enterprise.example.com/api/graphql`. The error body must NOT contain `api.github.com/graphql`. This proves the route used the GHES host derivation, not the legacy `api.github.com` fallback. Pre-fix, the URL was hard-coded to `api.github.com` and any GHES repo was unreachable; post-fix, the route resolves the host from `git_account.path` and constructs `https://<host>/api/graphql`. Successful github.com flow remains covered by PICKER-02 (legacy 2-part `owner/repo` form).
+
 ### PICKER-01: Issue picker opens from task Edit modal and surfaces no_account_for_path
 **Issue:** #314.
 **Setup:** A task in a repo-backed project where no `git_accounts` row exists for the repo's account path.

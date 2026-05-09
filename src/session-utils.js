@@ -865,10 +865,20 @@ function parseCodexRolloutFile(filePath) {
   }
 }
 
-/**
- * Find all Gemini chat files and return a map of sessionId → { filePath, meta }.
- */
-function discoverGeminiSessions() {
+// #372 [E2]: unified per-CLI discovery cache. Single source of truth across
+// every caller (routes.js _getNonClaudeMetadata, session-utils internal
+// helpers like searchSessions/parseSessionFile, qdrant-sync indexing). TTL
+// 10s — long enough to dedupe parallel polls (sidebar + status-bar) but
+// short enough that fresh Gemini/Codex sessions appear without explicit
+// invalidation. invalidateDiscoveryCache() exposed for callers that know a
+// CLI session was just created or destroyed and want immediate visibility.
+const _DISCOVERY_CACHE_TTL_MS = 10000;
+let _geminiDiscoveryCache = null;
+let _geminiDiscoveryCacheTime = 0;
+let _codexDiscoveryCache = null;
+let _codexDiscoveryCacheTime = 0;
+
+function _discoverGeminiSessionsRaw() {
   const fs = require('fs');
   const home = safe.HOME;
   const results = [];
@@ -892,10 +902,7 @@ function discoverGeminiSessions() {
   return results;
 }
 
-/**
- * Find all Codex rollout files and return a list of { filePath, meta }.
- */
-function discoverCodexSessions() {
+function _discoverCodexSessionsRaw() {
   const fs = require('fs');
   const home = safe.HOME;
   const results = [];
@@ -916,6 +923,53 @@ function discoverCodexSessions() {
     walk(sessBase);
   } catch { /* no codex sessions */ }
   return results;
+}
+
+/**
+ * Find all Gemini chat files and return a map of sessionId → { filePath, meta }.
+ * #372 [E2]: TTL-cached (10s) — shared by all callers across the workbench
+ * process. Three different callers within the TTL window cause exactly one
+ * underlying disk read.
+ */
+function discoverGeminiSessions() {
+  const now = Date.now();
+  if (_geminiDiscoveryCache && (now - _geminiDiscoveryCacheTime) < _DISCOVERY_CACHE_TTL_MS) {
+    return _geminiDiscoveryCache;
+  }
+  _geminiDiscoveryCache = _discoverGeminiSessionsRaw();
+  _geminiDiscoveryCacheTime = now;
+  return _geminiDiscoveryCache;
+}
+
+/**
+ * Find all Codex rollout files and return a list of { filePath, meta }.
+ * #372 [E2]: TTL-cached (10s) — shared by all callers.
+ */
+function discoverCodexSessions() {
+  const now = Date.now();
+  if (_codexDiscoveryCache && (now - _codexDiscoveryCacheTime) < _DISCOVERY_CACHE_TTL_MS) {
+    return _codexDiscoveryCache;
+  }
+  _codexDiscoveryCache = _discoverCodexSessionsRaw();
+  _codexDiscoveryCacheTime = now;
+  return _codexDiscoveryCache;
+}
+
+/**
+ * #372 [E2]: invalidate the discovery cache. Callers that know a CLI session
+ * was just created or destroyed (e.g., POST /api/sessions handler after
+ * spawning a new Gemini session) call this so the next discovery sees the
+ * change without waiting for the TTL to expire.
+ */
+function invalidateDiscoveryCache(cliType) {
+  if (!cliType || cliType === 'gemini') {
+    _geminiDiscoveryCache = null;
+    _geminiDiscoveryCacheTime = 0;
+  }
+  if (!cliType || cliType === 'codex') {
+    _codexDiscoveryCache = null;
+    _codexDiscoveryCacheTime = 0;
+  }
 }
 
 // ── #156: Unified single-session metadata read ─────────────────────────────
@@ -1077,6 +1131,7 @@ module.exports = {
   parseCodexRolloutFile,
   discoverGeminiSessions,
   discoverCodexSessions,
+  invalidateDiscoveryCache,
   extractMessageText,
   searchSessions,
   summarizeSession,

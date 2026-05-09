@@ -341,28 +341,10 @@ function registerCoreRoutes(
     }
   }
 
-  // Caches to avoid re-reading session files on every /api/state call
-  let _geminiSessionsCache = null;
-  let _geminiCacheTime = 0;
-  let _codexSessionsCache = null;
-  let _codexCacheTime = 0;
-  const NONCLAUD_CACHE_TTL = 10000; // 10s
-
-  function _getGeminiSessions() {
-    const now = Date.now();
-    if (_geminiSessionsCache && (now - _geminiCacheTime) < NONCLAUD_CACHE_TTL) return _geminiSessionsCache;
-    _geminiSessionsCache = sessionUtils.discoverGeminiSessions();
-    _geminiCacheTime = now;
-    return _geminiSessionsCache;
-  }
-
-  function _getCodexSessions() {
-    const now = Date.now();
-    if (_codexSessionsCache && (now - _codexCacheTime) < NONCLAUD_CACHE_TTL) return _codexSessionsCache;
-    _codexSessionsCache = sessionUtils.discoverCodexSessions();
-    _codexCacheTime = now;
-    return _codexSessionsCache;
-  }
+  // #372 [E2]: per-CLI discovery cache lives in session-utils now (10s TTL,
+  // shared across all callers). Routes calls discoverGeminiSessions /
+  // discoverCodexSessions directly; the cache dedupes parallel polls.
+  const NONCLAUD_CACHE_TTL = 10000; // claim-reset window only
 
   // Track which disk sessions have been claimed so we don't double-assign
   const _claimedGemini = new Set();
@@ -418,7 +400,7 @@ function registerCoreRoutes(
     _resetClaims();
 
     if (cliType === 'gemini') {
-      const sorted = _getGeminiSessions().sort((a, b) => {
+      const sorted = sessionUtils.discoverGeminiSessions().sort((a, b) => {
         const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
         const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return ta - tb;
@@ -434,7 +416,7 @@ function registerCoreRoutes(
     }
 
     if (cliType === 'codex') {
-      const sorted = _getCodexSessions().sort((a, b) => {
+      const sorted = sessionUtils.discoverCodexSessions().sort((a, b) => {
         const ta = a.timestamp ? new Date(a.timestamp).getTime() : 0;
         const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return ta - tb;

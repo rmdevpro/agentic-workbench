@@ -5833,6 +5833,17 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 1. \`POST /api/mcp/call\` with \`{tool:'file_search_code', args:{query:'uniqueMarkerForIssue291', limit:20}}\`.
 **Verify:** Response includes a result whose \`file_path\` ends in \`test-vec-291/marker.js\` AND whose \`text\` contains the marker token. Pre-fix this returned zero matches because scanCode hardcoded \`[WORKSPACE]\`.
 
+### ESCAPE-A16-01: escapeHtml + escapeAttr escape all five HTML-sensitive chars (#341)
+**Issue:** #341 [A16].
+**Setup:** Workbench loaded in browser (M5). `/js/util.js` exports `escapeHtml`, `escapeAttr`, and aliases `window.escHtml` to delegate to `escapeHtml`.
+**Steps (browser):**
+1. `browser_evaluate` `window.escHtml('<&>"')` → assert `&lt;&amp;&gt;&quot;`.
+2. `browser_evaluate` `window.escHtml("It's")` → assert `It&#39;s`.
+3. `browser_evaluate` `window.escapeAttr('<&>"')` → assert `&lt;&amp;&gt;&quot;`.
+4. `browser_evaluate` `window.escHtml === window.escapeHtml` (or that both produce identical output) → assert true.
+5. `browser_evaluate` round-trip: `div.innerHTML = escapeHtml('<bad>&"\'name'); div.textContent` → assert `<bad>&"'name` (data preserved through escape + render).
+**Verify:** All five HTML-sensitive characters (`< > & " '`) are escaped. The pre-existing in-page `escHtml` (DOM textContent round-trip) was missing `"` and `'` escapes; after consolidation it delegates to the canonical implementation. 46 call sites of `escHtml(...)` remain intact and now produce attribute-safe output. Pre-fix any session name containing `"` rendered into an attribute context broke out of the attribute (XSS via crafted name).
+
 ### MODAL-A15-01: showInputModal + showConfirmModal render workbench modals, not native dialogs (#340)
 **Issue:** #340 [A15].
 **Setup:** Workbench loaded in browser (M5).

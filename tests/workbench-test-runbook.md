@@ -5833,6 +5833,15 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 1. \`POST /api/mcp/call\` with \`{tool:'file_search_code', args:{query:'uniqueMarkerForIssue291', limit:20}}\`.
 **Verify:** Response includes a result whose \`file_path\` ends in \`test-vec-291/marker.js\` AND whose \`text\` contains the marker token. Pre-fix this returned zero matches because scanCode hardcoded \`[WORKSPACE]\`.
 
+### OAUTH-DETECTOR-A14-01: oauth-detector.js loads in browser and parses real fixtures (#339)
+**Issue:** #339 [A14].
+**Setup:** Workbench loaded in browser (M5). No CLI session needed — this entry verifies the extracted module's behavior in the page context, decoupled from a live OAuth flow.
+**Steps (browser):**
+1. `browser_evaluate` `await fetch('/js/oauth-detector.js').then(r => r.status)` — must be 200.
+2. `browser_evaluate` `typeof window.OAuthDetector` — must be `'object'` with keys `OAUTH_URL_PATTERNS, AUTH_ERROR_PATTERN, cleanAnsi, parseOAuthBuffer, createOAuthDetector`.
+3. `browser_evaluate` `window.OAuthDetector.parseOAuthBuffer(claudeFixture)` — must return `{ url: '...', cli: 'claude' }`. Repeat for Gemini fixture and Codex fixture.
+**Verify:** `OAUTH_URL_PATTERNS.length === 3` (claude / gemini / codex). For a Claude fixture matching `https://claude.com/cai/oauth/authorize?...` followed by `Paste`, `parseOAuthBuffer` returns the full URL with `cli: 'claude'`. Gemini fixture extracts the `accounts.google.com/o/oauth2/...` URL with `cli: 'gemini'`. Pre-extraction this logic was buried in `public/index.html:4800-4820` and could not be unit-tested. Full OAuth-modal verification with a live CLI requires Hymie per `feedback_oauth_modal_hymie_only.md`; this entry verifies the parser is correctly modularized + loaded into the page.
+
 ### TASK-DRAG-A2-01: Cross-bucket drag lands at requested rank, not appended (#327)
 **Issue:** #327 [A2].
 **Setup:** Two projects exist (`a2_drag_a` and `a2_drag_b`). Project A has 1 task `A2-DRAG-moving`. Project B has 4 tasks `A2-DRAG-b1..b4` at ranks 1..4. All tasks at status `inactive` (so they appear under the default `Active` filter). Open right panel → Tasks. Expand both A2 project rows.

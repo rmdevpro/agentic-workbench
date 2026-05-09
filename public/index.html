@@ -1741,12 +1741,16 @@ build/**</textarea>
     // #287: optimistic mutations for sidebar entities. Each Map tracks
     // in-flight changes so loadState doesn't overwrite freshly-mutated
     // entities with a stale /api/state snapshot (multi-second on slow
-    // hosts). After a PUT succeeds we hold the lock for ~7s past the
-    // worst-case /api/state latency, then release.
+    // hosts).
+    // #369 [E3]: lock lifetime = duration of the PUT request, not a fixed
+    // 7-second window. The pending entry is set BEFORE the fetch, then
+    // cleared in the success handler (or rollback handler on failure).
+    // The previous PENDING_LOCK_MS=7000 timeout was wrong both ways: too
+    // short when /api/state ran longer than 7s, and unnecessarily held the
+    // lock for new clean state. The in-flight signal IS the lock.
     const _pendingProgramAssignments = new Map(); // projName → expected program_id
     const _pendingProjectEdits = new Map();       // projName → { name?, state?, notes? }
     const _pendingSessionEdits = new Map();       // sessionId → { name?, state?, notes?, archived? }
-    const PENDING_LOCK_MS = 7000;
     async function _assignProjectToProgram(projName, newProgramId) {
       const proj = projectState.find(p => p.name === projName);
       if (!proj) return;
@@ -1770,14 +1774,13 @@ build/**</textarea>
           stillProj.program_id = newProgramId;
           renderSidebar();
         }
-        // Hold the lock for /api/state's worst-case latency on this host.
-        // 7s covers M5/irina and is short enough that real subsequent
-        // loadStates after the grace period reflect server truth.
-        setTimeout(() => {
-          if (_pendingProgramAssignments.get(projName) === newProgramId) {
-            _pendingProgramAssignments.delete(projName);
-          }
-        }, 7000);
+        // #369 [E3]: clear on PUT-success (in-flight signal IS the lock).
+        // Guard preserves any later mutation's pending entry that overwrote
+        // ours mid-flight — the later mutation's own completion handler
+        // will clear that one.
+        if (_pendingProgramAssignments.get(projName) === newProgramId) {
+          _pendingProgramAssignments.delete(projName);
+        }
       } catch (err) {
         // Roll back the optimistic change
         const stillProj = projectState.find(p => p.name === projName);
@@ -2818,12 +2821,11 @@ build/**</textarea>
           body: JSON.stringify(config),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setTimeout(() => {
-          const cur = _pendingSessionEdits.get(sessionId);
-          if (cur && cur.name === config.name && cur.state === config.state) {
-            _pendingSessionEdits.delete(sessionId);
-          }
-        }, PENDING_LOCK_MS);
+        // #369 [E3]: clear on PUT-success (in-flight signal IS the lock).
+        const cur = _pendingSessionEdits.get(sessionId);
+        if (cur && cur.name === config.name && cur.state === config.state) {
+          _pendingSessionEdits.delete(sessionId);
+        }
       } catch (err) {
         // Rollback
         if (foundSession && before) {
@@ -2943,10 +2945,9 @@ build/**</textarea>
           body: JSON.stringify(config),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setTimeout(() => {
-          _pendingProjectEdits.delete(projectName);
-          if (config.name && config.name !== projectName) _pendingProjectEdits.delete(config.name);
-        }, PENDING_LOCK_MS);
+        // #369 [E3]: clear on PUT-success (in-flight signal IS the lock).
+        _pendingProjectEdits.delete(projectName);
+        if (config.name && config.name !== projectName) _pendingProjectEdits.delete(config.name);
       } catch (err) {
         if (proj && before) {
           proj.name = before.name;
@@ -2985,7 +2986,8 @@ build/**</textarea>
           body: JSON.stringify({ archived }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        setTimeout(() => _pendingSessionEdits.delete(sessionId), PENDING_LOCK_MS);
+        // #369 [E3]: clear on PUT-success (in-flight signal IS the lock).
+        _pendingSessionEdits.delete(sessionId);
       } catch (err) {
         if (foundSession && before) {
           foundSession.state = before.state;

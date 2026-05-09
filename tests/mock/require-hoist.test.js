@@ -15,7 +15,16 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const acorn = require('acorn');
+
+// acorn is a devDependency. Production containers run `npm ci --omit=dev`
+// and don't ship it; skip the structural check there.
+let acorn;
+try { acorn = require('acorn'); }
+catch { /* devDep missing — skip */ }
+if (!acorn) {
+  test('HOIST: skipped (acorn devDep not installed)', { skip: true }, () => {});
+  return;
+}
 
 const FILES = [
   path.join(__dirname, '..', '..', 'src', 'routes.js'),

@@ -11,7 +11,10 @@ tests/coverage-results-*.txt
 tests/runbook-results-*.md
 tests/gate-c-*results*.md
 # Per-run browser screenshots written by tests/browser/*.spec.js — transient.
-tests/browser/screenshots/
+# (Trailing /* not / so git can traverse into the directory and honour the negation below.)
+tests/browser/screenshots/*
+# Verification-evidence subdirectories ARE durable per STD-003 §12.6 — keep these.
+!tests/browser/screenshots/phase1-reverify/
 # Per-run @playwright/test results dir — transient.
 test-results/
 # Session-scoped writing artifacts — never commit.

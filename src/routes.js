@@ -446,8 +446,7 @@ function registerCoreRoutes(
   async function buildSessionList(dbSessions, _sessDir) {
     // #156: disambiguation pre-pass — for non-Claude sessions whose cli_session_id
     // hasn't been stored yet, run the claim algorithm so the DB has the right
-    // pointer before getSessionInfo() fetches per-session metadata. Claude sessions
-    // don't need this (file naming = session id directly).
+    // pointer before any per-session lazy /info fetch resolves the file by ID.
     for (const s of dbSessions) {
       const cliType = s.cli_type || 'claude';
       if (cliType !== 'claude' && !s.cli_session_id) {
@@ -455,26 +454,20 @@ function registerCoreRoutes(
       }
     }
 
-    const sessions = [];
-    for (const s of dbSessions) {
-      // includeTokens=false: sidebar list doesn't show per-session token counts;
-      // only the active-session status bar polls /tokens which uses includeTokens=true.
-      // Avoids N JSONL re-reads per /api/state poll.
-      const info = await sessionUtils.getSessionInfo(s.id, { includeTokens: false });
-      if (!info) continue;
-      sessions.push({
-        id: info.id,
-        name: info.name,
-        timestamp: info.timestamp,
-        messageCount: info.message_count,
-        model: info.model || '',
-        tmux: info.tmux,
-        active: info.active,
-        state: info.state,
-        cli_type: info.cli_type,
-        archived: info.archived,
-      });
-    }
+    // #371 [E1]: minimal sidebar payload — id, name, timestamp, cli_type,
+    // archived, state. NO messageCount / model / tmux / active in this list:
+    // those required N JSONL parses per /api/state poll (5-7s p95 on M5).
+    // Heavy fields move to GET /api/sessions/:sessionId/info, called only for
+    // the active session + visible sessions (project expanded). Sort by
+    // db updated_at (the timestamp we have without parsing JSONLs).
+    const sessions = dbSessions.map(s => ({
+      id: s.id,
+      name: s.name,
+      timestamp: s.updated_at || s.created_at,
+      cli_type: s.cli_type || 'claude',
+      archived: s.state === 'archived',
+      state: s.state,
+    }));
     sessions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     return sessions;
   }
@@ -2302,6 +2295,39 @@ function registerCoreRoutes(
       res.json({ summary: result.summary, recentMessages: result.recentMessages });
     } catch (err) {
       logger.error('Error generating summary', { module: 'routes', err: err.message });
+      res.status(500).json({ error: safe.sanitizeErrorForClient(err.message) });
+    }
+  });
+
+  // ── #371 [E1] Per-session info (heavy payload — JSONL parse) ──────────────
+  // Sidebar /api/state returns only the minimal id/name/timestamp/cli_type/
+  // archived/state shape. The heavy fields (message_count, model, tmux,
+  // active, input_tokens, max_tokens) live here. Frontend fetches per
+  // visible/active session.
+
+  app.get('/api/sessions/:sessionId/info', async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      if (!validateSessionId(sessionId))
+        return res.status(400).json({ error: 'invalid session ID format' });
+      const info = await sessionUtils.getSessionInfo(sessionId, { includeTokens: true });
+      if (!info) return res.status(404).json({ error: 'session not found' });
+      res.json({
+        id: info.id,
+        name: info.name,
+        timestamp: info.timestamp,
+        message_count: info.message_count,
+        model: info.model || '',
+        tmux: info.tmux,
+        active: info.active,
+        state: info.state,
+        cli_type: info.cli_type,
+        archived: info.archived,
+        input_tokens: info.input_tokens,
+        max_tokens: info.max_tokens,
+      });
+    } catch (err) {
+      logger.error('Error getting session info', { module: 'routes', err: err.message });
       res.status(500).json({ error: safe.sanitizeErrorForClient(err.message) });
     }
   });

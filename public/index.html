@@ -1387,9 +1387,71 @@ build/**</textarea>
         // Start collapsed on first load — user expands what they need
 
         renderSidebar();
+        // #371 [E1]: hydrate the heavy fields (messageCount, model, active,
+        // tmux) for sessions that need them via lazy GET /api/sessions/:id/info.
+        // /api/state now returns a minimal payload (no JSONL parses), so the
+        // sidebar's per-session details come from this fetch. Cached client-
+        // side with 30s TTL to dedupe within a polling cycle.
+        _hydrateVisibleSessionInfo();
       } catch (err) {
         console.error('Failed to load state:', err);
       }
+    }
+
+    // #371 [E1]: client-side TTL cache for /api/sessions/:id/info results.
+    // 30s TTL is conservative — the fields are status-bar-relevant (token
+    // counts, active state, model) and the source-of-truth is the JSONL
+    // file itself, which the periodic poll re-reads anyway. After hydrate,
+    // the heavy fields are mutated onto the session row in projectState
+    // and a re-render is triggered.
+    const _sessionInfoClientCache = new Map(); // sid → { fetchedAt, info }
+    const _SESSION_INFO_CLIENT_TTL_MS = 30000;
+    let _hydrateInFlight = new Set();
+
+    async function _hydrateVisibleSessionInfo() {
+      // Collect candidate session ids: every session in projectState whose
+      // project is in an expanded program (or is the active tab). We fetch
+      // for all sessions, since collapsed-project rows are still needed
+      // for the cumulative project counts visible in the sidebar.
+      const now = Date.now();
+      const fetches = [];
+      for (const p of projectState || []) {
+        for (const s of (p.sessions || [])) {
+          // Already-hydrated sessions skip if within TTL
+          const cached = _sessionInfoClientCache.get(s.id);
+          if (cached && (now - cached.fetchedAt) < _SESSION_INFO_CLIENT_TTL_MS) continue;
+          if (_hydrateInFlight.has(s.id)) continue;
+          // Skip tmpId (new_*) sessions — they have no JSONL yet
+          if (s.id.startsWith('new_')) continue;
+          _hydrateInFlight.add(s.id);
+          fetches.push(
+            fetch(`/api/sessions/${encodeURIComponent(s.id)}/info`)
+              .then(r => r.ok ? r.json() : null)
+              .then(info => {
+                _hydrateInFlight.delete(s.id);
+                if (!info) return;
+                _sessionInfoClientCache.set(s.id, { fetchedAt: Date.now(), info });
+                // Mutate the session row in-place so renderSidebar picks up the
+                // heavy fields on the next render pass.
+                for (const proj of projectState || []) {
+                  const row = (proj.sessions || []).find(x => x.id === s.id);
+                  if (row) {
+                    row.messageCount = info.message_count;
+                    row.model = info.model;
+                    row.tmux = info.tmux;
+                    row.active = info.active;
+                    break;
+                  }
+                }
+              })
+              .catch(() => { _hydrateInFlight.delete(s.id); })
+          );
+        }
+      }
+      if (fetches.length === 0) return;
+      await Promise.allSettled(fetches);
+      renderSidebar._lastHash = '';
+      renderSidebar();
     }
 
     function renderSidebar() {
@@ -1577,7 +1639,7 @@ build/**</textarea>
                 return `<span style="font-size:13px;color:${color};line-height:1" title="${cli}">${icons[cli] || '?'}</span>`;
               })()}
               <span>${timeAgo(session.timestamp)}</span>
-              <span class="msg-count">${session.messageCount}</span>
+              <span class="msg-count">${session.messageCount != null ? session.messageCount : ''}</span>
               <span style="font-size:9px;color:var(--text-muted);margin-left:2px">${escHtml(session.model || '')}</span>
             </div>
           `;

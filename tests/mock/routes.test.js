@@ -461,6 +461,67 @@ test('/api/state returns projects array with workspace', async () => {
   });
 });
 
+// #371 [E1]: /api/state returns the minimal sidebar shape — no JSONL parsing.
+// Heavy fields (message_count, model, tmux, active, input_tokens) move to
+// GET /api/sessions/:id/info; the sidebar list must NOT include them.
+test('E1-STATE-01: /api/state session payload contains only minimal fields (no message_count/model/tmux/active)', async () => {
+  await withFullServer(async ({ port, db }) => {
+    const p = db.ensureProject('e1_min_proj', '/workspace/e1_min_proj');
+    db.upsertSession('e1_min_sess_1', p.id, 'minimal-1');
+    db.upsertSession('e1_min_sess_2', p.id, 'minimal-2');
+    const r = await req(port, 'GET', '/api/state');
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    const proj = body.projects.find(p => p.name === 'e1_min_proj');
+    assert.ok(proj, 'project must be present in /api/state');
+    assert.equal(proj.sessions.length, 2);
+    for (const s of proj.sessions) {
+      // MUST be present (minimal shape)
+      assert.ok(typeof s.id === 'string', 'session.id required');
+      assert.ok(typeof s.name === 'string', 'session.name required');
+      assert.ok('timestamp' in s, 'session.timestamp required');
+      assert.ok('cli_type' in s, 'session.cli_type required');
+      assert.ok('archived' in s, 'session.archived required');
+      assert.ok('state' in s, 'session.state required');
+      // MUST NOT be present (moved to /info endpoint)
+      assert.equal(s.message_count, undefined, 'message_count must NOT be in /api/state');
+      assert.equal(s.messageCount, undefined, 'messageCount must NOT be in /api/state');
+      assert.equal(s.model, undefined, 'model must NOT be in /api/state');
+      assert.equal(s.tmux, undefined, 'tmux must NOT be in /api/state');
+      assert.equal(s.active, undefined, 'active must NOT be in /api/state');
+      assert.equal(s.input_tokens, undefined, 'input_tokens must NOT be in /api/state');
+    }
+  });
+});
+
+// #371 [E1]: GET /api/sessions/:id/info returns the heavy payload that the
+// sidebar list omits. Sidebar fetches this lazily for visible/active sessions.
+test('E1-INFO-01: GET /api/sessions/:id/info returns the heavy session-info payload', async () => {
+  await withFullServer(async ({ port, db }) => {
+    const p = db.ensureProject('e1_info_proj', '/workspace/e1_info_proj');
+    db.upsertSession('e1_info_sess', p.id, 'info-test');
+    const r = await req(port, 'GET', '/api/sessions/e1_info_sess/info');
+    assert.equal(r.status, 200);
+    const body = await r.json();
+    assert.equal(body.id, 'e1_info_sess');
+    // Heavy fields present (mock getSessionInfo returns 50000 input_tokens)
+    assert.equal(body.input_tokens, 50000);
+    assert.equal(body.max_tokens, 200000);
+    // model + cli_type from mock
+    assert.ok('model' in body);
+    assert.ok('cli_type' in body);
+    assert.ok('active' in body);
+    assert.ok('message_count' in body);
+  });
+});
+
+test('E1-INFO-02: GET /api/sessions/:id/info rejects invalid session ID with 400', async () => {
+  await withFullServer(async ({ port }) => {
+    const r = await req(port, 'GET', '/api/sessions/not%20a%20valid%20id/info');
+    assert.equal(r.status, 400);
+  });
+});
+
 test('session creation success path with webhook event', async () => {
   await withFullServer(async ({ port, db, firedEvents }) => {
     const r = await req(port, 'POST', '/api/sessions', {

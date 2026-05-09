@@ -875,7 +875,7 @@
         </div>
       </div>
 
-      <div class="settings-group">
+      <form class="settings-group" autocomplete="off" onsubmit="event.preventDefault()">
         <h3>Embedding Provider</h3>
         <div class="setting-row">
           <label>Provider</label>
@@ -895,14 +895,11 @@
           </div>
           <div class="setting-row">
             <label>API Key</label>
-            <!-- #403 [Q3]: autocomplete=new-password silences the Chrome
-                 "password field is not contained in a form" warning when
-                 the input is rendered inside the dynamic vector-custom row. -->
             <input id="setting-vector-custom-key" type="password" autocomplete="new-password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
               onchange="saveSetting('vector_custom_key', this.value, this)">
           </div>
         </div>
-      </div>
+      </form>
 
       <div class="settings-group">
         <h3>Collections</h3>
@@ -4757,6 +4754,13 @@ build/**</textarea>
       if (model === 'unknown') {
         const sessData = projectState.flatMap(p => p.sessions).find(s => s.id === tab.id);
         if (sessData?.model) model = sessData.model;
+      }
+      // Q6 followup: tmpId tab (id starts with new_/t_) has no resolved JSONL
+      // yet, so the sidebar has no model and the /api/sessions/:id/tokens fetch
+      // is short-circuited. Show a cli_type-aware default instead of "unknown"
+      // so the bar renders meaningfully while the session is starting up.
+      if (model === 'unknown' && (tab.id.startsWith('new_') || tab.id.startsWith('t_'))) {
+        model = cliType === 'gemini' ? 'gemini' : cliType === 'codex' ? 'gpt' : 'sonnet';
       }
 
       const inputTokens = statusData.input_tokens || 0;

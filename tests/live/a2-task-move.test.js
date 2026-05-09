@@ -28,23 +28,12 @@ async function addTask(projectId, title) {
   return r.data;
 }
 
-async function getTopLevelTasksForProject(projectId) {
-  const r = await get('/api/tasks/tree?filter=open&show_archived=1');
-  assert.equal(r.status, 200);
-  // tree is an array of project nodes; find ours
-  const proj = r.data.find((p) => p.id === projectId || p.project_id === projectId);
-  if (!proj) {
-    // Fallback: query each task individually via /api/tasks/:id is not feasible without ids;
-    // use the response shape variation by walking the tree
-    for (const node of r.data) {
-      if (node.tasks) {
-        const fil = node.tasks.filter((t) => t.project_id === projectId && (t.parent_task_id == null || t.parent_task_id === 0));
-        if (fil.length) return fil.sort((a, b) => a.rank - b.rank);
-      }
-    }
-    return [];
-  }
-  return (proj.tasks || []).filter((t) => t.parent_task_id == null || t.parent_task_id === 0).sort((a, b) => a.rank - b.rank);
+function getTopLevelTasksForProject(projectId) {
+  // Query DB directly — /api/tasks/tree shape is { programs:[{ projects:[{ tasks:[] }] }] }
+  // and tree-walking is brittle. We want the canonical bucket order anyway.
+  return queryJson(
+    `SELECT id, title, rank, parent_task_id FROM tasks WHERE project_id = ${Number(projectId)} AND parent_task_id IS NULL ORDER BY rank ASC`,
+  );
 }
 
 test('A2-LIVE-01: PUT /api/tasks/:id cross-bucket move lands at requested rank, not appended', async () => {

@@ -1367,4 +1367,8 @@ module.exports = {
   // #212: exported so the retry behavior can be exercised by fault-injection
   // tests without setting up a full reindex pipeline.
   upsertPoints, deletePointsByFilter, retryTransient,
+  // #443 [E4]: exported so the streaming heap-budget test can exercise
+  // the actual production helper rather than a test-local reimplementation
+  // (Codex R2 finding — STD-005 §4 real-code-import rule).
+  _streamHashAndChunk, _streamReadAsString,
 };

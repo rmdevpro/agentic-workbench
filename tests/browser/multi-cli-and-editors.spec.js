@@ -260,15 +260,17 @@ describe('Multi-CLI sessions, editors, and task panel (browser)', () => {
     assert.ok(menuText.includes('New Folder'), 'New Folder in context menu');
   });
 
-  it('TASK-03: adding task via context menu creates it in the DB', async () => {
-    // Add via API to avoid prompt() dialog in headless
+  it('TASK-03: adding task via context menu creates it in the DB (v2 contract)', async () => {
+    // Add via API to avoid prompt() dialog in headless. Per #388 v2
+    // contract: task_add now requires project_id / project_name /
+    // parent_task_id (folder_path no longer accepted).
     const result = await apiPost('/api/mcp/call', {
       tool: 'task_add',
-      args: { folder_path: '/data/workspace/wb-seed', title: 'TASK-03 test task' },
+      args: { project_name: 'wb-seed', title: 'TASK-03 test task' },
     });
     assert.ok(result.result.id, 'task created with ID');
     assert.equal(result.result.title, 'TASK-03 test task');
-    assert.equal(result.result.folder_path, '/data/workspace/wb-seed');
+    assert.ok(result.result.project_id, 'task carries project_id (v2 schema)');
   });
 
   // ── #98: Session Connect / Restart ─────────────────────────
@@ -331,8 +333,9 @@ describe('Multi-CLI sessions, editors, and task panel (browser)', () => {
   });
 
   it('MCP-04: task lifecycle via task_add + task_update (status: done/todo/archived)', async () => {
+    // #388 v2 contract: project_name required (folder_path no longer accepted).
     const add = await apiPost('/api/mcp/call', {
-      tool: 'task_add', args: { folder_path: '/', title: 'lifecycle test' },
+      tool: 'task_add', args: { project_name: 'wb-seed', title: 'lifecycle test' },
     });
     const id = Number(add.result.id);
     const comp = await apiPost('/api/mcp/call', {
@@ -494,9 +497,9 @@ describe('Multi-CLI sessions, editors, and task panel (browser)', () => {
   });
 
   it('TASKUX-02: checkbox complete updates inline without losing expand state', async () => {
-    // Create a task
+    // Create a task — #388 v2 contract: project_name required.
     await apiPost('/api/mcp/call', {
-      tool: 'task_add', args: { folder_path: '/data/workspace/wb-seed', title: 'inline-test' },
+      tool: 'task_add', args: { project_name: 'wb-seed', title: 'inline-test' },
     });
     await page.evaluate(() => { switchPanel('tasks'); expandedTaskFolders.add('/data/workspace'); expandedTaskFolders.add('/data/workspace/wb-seed'); loadTaskTree(); });
     await new Promise(r => setTimeout(r, 2000));
@@ -518,8 +521,9 @@ describe('Multi-CLI sessions, editors, and task panel (browser)', () => {
 
   it('TASKUX-03: task filter buttons show correct tasks per filter', async () => {
     // Create tasks in different states
-    const t1 = await apiPost('/api/mcp/call', { tool: 'task_add', args: { folder_path: '/data/workspace/wb-seed', title: 'filter-todo' } });
-    const t2 = await apiPost('/api/mcp/call', { tool: 'task_add', args: { folder_path: '/data/workspace/wb-seed', title: 'filter-done' } });
+    // #388 v2 contract: project_name required (folder_path no longer accepted).
+    const t1 = await apiPost('/api/mcp/call', { tool: 'task_add', args: { project_name: 'wb-seed', title: 'filter-todo' } });
+    const t2 = await apiPost('/api/mcp/call', { tool: 'task_add', args: { project_name: 'wb-seed', title: 'filter-done' } });
     await apiPost('/api/mcp/call', { tool: 'task_update', args: { task_id: Number(t2.result.id), status: 'done' } });
     await page.evaluate(() => { expandedTaskFolders.add('/data/workspace'); expandedTaskFolders.add('/data/workspace/wb-seed'); });
 

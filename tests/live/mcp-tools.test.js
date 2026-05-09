@@ -18,27 +18,38 @@ test('MCP-01: GET /api/mcp/tools lists the flat tool catalog', async () => {
   }
 });
 
-test('MCP-06: task_add increments DB row count and task_list surfaces it', async () => {
+test('MCP-06: task_add increments DB row count and task_find surfaces it (v2 contract)', async () => {
   await resetBaseline();
-  const countBefore = queryCount('tasks', "folder_path = '/'");
+  // #388 v2 contract: task_add now requires project_id / project_name / parent_task_id;
+  // folder_path is no longer accepted. Create a project first to scope the task to.
+  await post('/api/projects', { path: '/data/workspace/wb-seed', name: 'wb-seed' });
+  const countBefore = queryCount('tasks', "project_id = (SELECT id FROM projects WHERE name = 'wb-seed')");
 
   const addResult = await post('/api/mcp/call', {
     tool: 'task_add',
-    args: { folder_path: '/', title: 'mcp-task-test' },
+    args: { project_name: 'wb-seed', title: 'mcp-task-test' },
   });
   assert.ok(addResult.data.result, `task_add returned no result: ${JSON.stringify(addResult.data)}`);
+  // v2 task_add returns the inserted row including project_id
+  assert.ok(addResult.data.result.project_id, `task_add result must include project_id: ${JSON.stringify(addResult.data.result)}`);
 
-  const countAfter = queryCount('tasks', "folder_path = '/'");
+  const countAfter = queryCount('tasks', "project_id = (SELECT id FROM projects WHERE name = 'wb-seed')");
   assert.equal(
     countAfter,
     countBefore + 1,
     `DB task count must increment by 1 after task_add (before: ${countBefore}, after: ${countAfter})`,
   );
 
-  // task_list was consolidated into task_find in 980bb6c
+  // task_list was consolidated into task_find in 980bb6c; v2 contract uses project_id
+  const projectIdRow = await post('/api/mcp/call', {
+    tool: 'project_find',
+    args: { name: 'wb-seed' },
+  });
+  const projectId = projectIdRow.data.result.projects?.[0]?.id;
+  assert.ok(projectId, `project_find for wb-seed must return id: ${JSON.stringify(projectIdRow.data)}`);
   const listed = await post('/api/mcp/call', {
     tool: 'task_find',
-    args: { folder_path: '/' },
+    args: { project_id: projectId },
   });
   assert.ok(listed.data.result.tasks.some((t) => t.title === 'mcp-task-test'));
 });

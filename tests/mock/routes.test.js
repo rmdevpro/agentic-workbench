@@ -266,6 +266,7 @@ function makeApp(overrides = {}) {
       invalidateSessionInfoCache: () => {},
       discoverGeminiSessions: () => [],
       discoverCodexSessions: () => [],
+      invalidateDiscoveryCache: () => {},
     },
     keepalive: {
       getStatus: async () => ({
@@ -1489,6 +1490,7 @@ test('SRCH-02: GET /api/search returns 500 when searchSessions throws', async ()
       invalidateSessionInfoCache: () => {},
       discoverGeminiSessions: () => [],
       discoverCodexSessions: () => [],
+      invalidateDiscoveryCache: () => {},
     },
     keepalive: {
       getStatus: async () => ({ running: false, mode: 'always' }),

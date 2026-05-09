@@ -155,6 +155,27 @@ Plan file operations (`workbench_read_plan`, `workbench_update_plan`) do enforce
 - **WPR-104**: Complete runnable artifact with no stubs. All functionality fully implemented.
 - **Security**: Input length limits, model parameter sanitization, state enum validation, settings key validation, no hardcoded credentials. Full filesystem access per AD-001 design intent.
 
+## Upgrading CLI versions (#353 [D4])
+
+CLI versions in the Dockerfile are pinned for reproducible builds:
+
+- `@anthropic-ai/claude-code@2.1.137`
+- `@google/gemini-cli@0.41.2`
+- `@openai/codex@0.130.0`
+
+To upgrade one:
+
+1. Edit the version in `Dockerfile` next to the `npm install -g` line.
+2. Build a tagged image and deploy to **M5/dev** via `RUN-001-deployment.md` — never directly to prod.
+3. Smoke the OAuth flow for the bumped CLI:
+   - Open a new session in M5 with that CLI.
+   - Run `/login` (Claude) or the equivalent.
+   - Confirm the OAuth modal still triggers with the URL extracted (per `OAUTH-DETECTOR-A14-01` in the runbook). For Gemini/Codex follow the same OAuth flow per their respective `/login` invocation.
+4. Run the full mock + live suites against M5; assert zero new regressions vs. the prior pin.
+5. Only after M5 dev validation, build a prod image with the new pin and deploy to HF / production.
+
+Rollback: revert the Dockerfile commit and rebuild — the prior pinned version is the only versioned source of truth (no global "latest" tag is used at any point).
+
 ## Known Limitations
 
 - `node-pty.spawn()` is synchronous by design (native C++ addon). This is standard across all Node.js terminal emulators including VS Code. Documented with ERQ-001 §4.1 TODO. PTY spawn is injectable via `spawnPty` parameter for testability.

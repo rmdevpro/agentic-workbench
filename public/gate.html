@@ -243,6 +243,14 @@
         if (res.ok) {
           window.location.reload();
         } else {
+          // #351 [D2]: differentiate rate-limit (429) from invalid-creds (401)
+          // so the user can tell when they're being throttled vs. typing the
+          // wrong password.
+          if (res.status === 429) {
+            errorEl.textContent = 'Too many attempts; please wait a moment and try again.';
+          } else {
+            errorEl.textContent = 'Invalid username or password';
+          }
           errorEl.style.display = 'block';
         }
       } catch {

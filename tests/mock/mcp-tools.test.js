@@ -211,3 +211,20 @@ test('_collectGhOutput caps stderr at 200 KB', async () => {
   const { stderr } = await promise;
   assert.equal(stderr.length, 200_000);
 });
+
+// #388 [Q1]: task v2 task_add does not accept folder_path. Pre-v2 the API
+// silently accepted any folder_path string, including ones not workspace-
+// rooted; those tasks became invisible to the panel. v2's project_id /
+// project_name requirement closes the symptom by construction. This test
+// pins the contract so a future regression that re-adds folder_path support
+// trips here.
+test('MCP task_add rejects without project_id or project_name (no folder_path fallback)', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'task_add',
+      args: { title: 'orphan', folder_path: '/phase-0/foo' },
+    });
+    assert.equal(r.status, 400);
+    assert.match(r.body.error, /project_id or project_name required/i);
+  });
+});

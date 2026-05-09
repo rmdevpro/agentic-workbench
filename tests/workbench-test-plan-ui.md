@@ -500,7 +500,7 @@ Every DOM element with an `id`, semantic role, or interactive behavior. Each map
 | UI-E132 | `#summary-content` | Container | SUM-02 |
 | UI-E133 | Summary overlay close button (X) | Button | SUM-05 |
 | UI-E134 | Add project overlay | Modal | AP-01..10 |
-| UI-E135 | `#jqft-tree` | Container | AP-02 |
+| UI-E135 | `#picker-tree` | Container | AP-02 |
 | UI-E136 | `#picker-path` | Input | AP-03 |
 | UI-E137 | `#picker-name` | Input | AP-03 |
 | UI-E138 | Picker Add button | Button | AP-04 |
@@ -1106,7 +1106,7 @@ Coverage for UI-visible fixes shipped in the canonical branch on or after the MC
 |----|----------|-------|-------|------------------|
 | UI-REG-220 | Auto-respawn keeps the same session_id; status bar tracks the live JSONL after kill+reattach | Live | #220 | Token count and message count update on the original session row, never silently re-key to a new UUID |
 | UI-REG-223 | Primary action buttons readable in dark theme (Start Session / Add Project / Authenticate) | Visual | #223 | Background is `var(--btn-primary)` (#1f6feb), legible against `--bg-secondary`. No washed-out near-white blue. |
-| UI-REG-224 | Click on folder icon area expands the directory | Live | #224 | `elementFromPoint(li.left + 8, mid)` returns `<a>`. Clicking the icon toggles `expanded` class on the LI. Same for the project picker (`#jqft-tree`). |
+| UI-REG-224 | Click on folder icon area expands the directory | Live | #224 | `elementFromPoint(li.left + 8, mid)` returns `<a>`. Clicking the icon toggles `expanded` class on the LI. Same for the project picker (`#picker-tree`). |
 | UI-REG-225 | Default-model dropdown uses CLI aliases | Live | #225 | `#setting-model` options are `Opus`/`Sonnet`/`Haiku` only. No version numbers. Legacy DB values (`claude-sonnet-4-6`) display as the matching alias on load. |
 | UI-REG-226 | Saved indicator flashes on each successful save | Live | #226 | After any successful `saveSetting()`, `#settings-saved-indicator` appears top-right of modal with `✓ Saved`, fades after ~1.5s. Failure path still surfaces via the error banner (no overlap). |
 | UI-REG-227 | Session-name field replaces free-form prompt textarea | Live | #227 | New-session modal has single-line `#new-session-name` (label "Session name", maxlength 60). Submit body uses `name`, not `prompt`. Sidebar shows the typed name verbatim. |

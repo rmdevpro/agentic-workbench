@@ -142,6 +142,63 @@ test('SU-11: getTokenUsage reports model from JSONL; max_tokens null (sourced fr
   assert.equal(r.max_tokens, null);
 });
 
+// #411 [Q6]: getSessionInfo overlays plan-effective max_tokens + input_tokens
+// from the live statusLine state file (~/.claude/statusline-state-<id>.json)
+// onto the JSONL-parsed token usage. Cover both shapes of `current_usage`:
+// numeric (early docs) and object (observed in practice).
+test('SU-12: getSessionInfo statusLine overlay — numeric current_usage', async (t) => {
+  const { db, safe, su } = await setupEnv(t);
+  const p = db.ensureProject('proj-su12n', '/virtual/proj-su12n');
+  const sd = safe.findSessionsDir(p.path);
+  await fsp.mkdir(sd, { recursive: true });
+  const sessId = 'su12-num';
+  await fsp.writeFile(path.join(sd, `${sessId}.jsonl`),
+    fixtures.makeJsonlLine(fixtures.makeAssistantEntry({ model: 'claude-sonnet-4-6', inputTokens: 1234 })) + '\n');
+  db.upsertSession(sessId, p.id, 'su12 numeric', 'claude');
+
+  // statusLine state file: numeric current_usage shape.
+  const statePath = path.join(process.env.CLAUDE_HOME, `statusline-state-${sessId}.json`);
+  await fsp.writeFile(statePath, JSON.stringify({
+    context_window: { context_window_size: 200000, current_usage: 75000 },
+    model: { id: 'claude-sonnet-4-6' },
+  }));
+
+  const info = await su.getSessionInfo(sessId);
+  assert.equal(info.max_tokens, 200000, 'plan-effective max_tokens from statusLine');
+  assert.equal(info.input_tokens, 75000, 'numeric current_usage applies as input_tokens');
+});
+
+test('SU-12: getSessionInfo statusLine overlay — object current_usage (in-practice shape)', async (t) => {
+  const { db, safe, su } = await setupEnv(t);
+  const p = db.ensureProject('proj-su12o', '/virtual/proj-su12o');
+  const sd = safe.findSessionsDir(p.path);
+  await fsp.mkdir(sd, { recursive: true });
+  const sessId = 'su12-obj';
+  await fsp.writeFile(path.join(sd, `${sessId}.jsonl`),
+    fixtures.makeJsonlLine(fixtures.makeAssistantEntry({ model: 'claude-opus-4-7', inputTokens: 1000 })) + '\n');
+  db.upsertSession(sessId, p.id, 'su12 object', 'claude');
+
+  // statusLine state file: object current_usage with input + cache breakdown.
+  const statePath = path.join(process.env.CLAUDE_HOME, `statusline-state-${sessId}.json`);
+  await fsp.writeFile(statePath, JSON.stringify({
+    context_window: {
+      context_window_size: 1000000,
+      current_usage: {
+        input_tokens: 500,
+        cache_creation_input_tokens: 1500,
+        cache_read_input_tokens: 8000,
+        output_tokens: 4242,
+      },
+    },
+    model: { id: 'claude-opus-4-7' },
+  }));
+
+  const info = await su.getSessionInfo(sessId);
+  assert.equal(info.max_tokens, 1000000, 'plan-effective max_tokens from statusLine');
+  // sum of input + cache_creation + cache_read; output is excluded by design
+  assert.equal(info.input_tokens, 10000, 'object current_usage sums to input + cache_creation + cache_read');
+});
+
 test('SU-08: summarizeSession falls back on Claude failure', async (t) => {
   const { db, safe, su } = await setupEnv(t);
   const p = db.ensureProject('proj', '/virtual/proj');

@@ -1006,4 +1006,12 @@ function registerMcpRoutes(app) {
   });
 }
 
-module.exports = { registerMcpRoutes, handlers, dispatch, TOOL_NAMES, ToolError, _collectGhOutput };
+// #361 [L1]: re-export the shared catalog so any consumer that has
+// `require('./mcp-tools')` already sees both halves (handler + schema)
+// from one place.
+const { TOOLS, CATALOG_NAMES } = require('./mcp-catalog');
+
+module.exports = {
+  registerMcpRoutes, handlers, dispatch, TOOL_NAMES, ToolError, _collectGhOutput,
+  TOOLS, CATALOG_NAMES,
+};

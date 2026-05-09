@@ -9,7 +9,9 @@
     "test:coverage": "c8 --reporter=text --reporter=lcov --lines 80 --branches 70 --include='src/**/*.js' --exclude='tests/**' --exclude='scripts/**' --exclude='public/**' --exclude='node_modules/**' node --test tests/mock/*.test.js",
     "test:live": "MAX_TMUX_SESSIONS=50 node --test --test-concurrency=1 tests/live/*.test.js",
     "test:browser": "node --test-timeout 600000 --test tests/browser/*.test.js",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "lint:format": "prettier --check .",
+    "lint:all": "npm run lint && npm run lint:format"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

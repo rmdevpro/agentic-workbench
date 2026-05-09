@@ -729,39 +729,44 @@
         </div>
       </div>
 
-      <div class="settings-group">
+      <!-- #403 [Q3]: password fields wrapped in <form autocomplete="off"> to
+           silence Chrome "password field is not contained in a form" DOM
+           warning. onsubmit prevented so this stays the existing
+           onchange-on-each-input save flow. -->
+      <form class="settings-group" autocomplete="off" onsubmit="event.preventDefault()">
         <h3>API Keys</h3>
         <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px">API keys for Gemini, Codex, and HuggingFace. Claude uses OAuth (<code>/login</code> in a session). Keys are passed to CLI sessions automatically; HuggingFace is used for the embeddings provider.</p>
         <div class="setting-row">
           <label>Gemini API Key</label>
-          <input id="setting-gemini-key" type="password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
+          <input id="setting-gemini-key" type="password" autocomplete="new-password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
             onchange="saveSetting('gemini_api_key', this.value, this)">
         </div>
         <div class="setting-row">
           <label>OpenAI / Codex API Key</label>
-          <input id="setting-codex-key" type="password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
+          <input id="setting-codex-key" type="password" autocomplete="new-password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
             onchange="saveSetting('codex_api_key', this.value, this)">
         </div>
         <div class="setting-row">
           <label>HuggingFace API Key</label>
-          <input id="setting-huggingface-key" type="password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
+          <input id="setting-huggingface-key" type="password" autocomplete="new-password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
             onchange="saveSetting('huggingface_api_key', this.value, this)">
         </div>
-      </div>
+      </form>
 
       </div><!-- /settings-general (Knowledge Base + Git Accounts moved to Git tab) -->
 
       <div id="settings-git" style="display:none">
-      <div class="settings-group">
+      <!-- #403 [Q3]: form wrapper for the password input below. -->
+      <form class="settings-group" autocomplete="off" onsubmit="event.preventDefault()">
         <h3>Git Accounts</h3>
         <p style="font-size:11px;color:var(--text-muted);margin:0 0 8px">Personal access tokens for all GitHub-touching operations: KB sync, issue picker, gh CLI calls. One row per <code>host/account</code> path. Tokens are kept in the workbench DB and never exposed to AI tool calls. <a href="https://github.com/settings/tokens" target="_blank" rel="noopener" style="color:var(--accent)">Generate a PAT →</a></p>
         <div id="git-accounts-list"></div>
         <div style="display:flex;gap:6px;margin-top:8px;flex-wrap:wrap;align-items:center">
           <input type="text" id="git-account-path" placeholder="github.com/yourname" style="flex:1;min-width:160px;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace">
-          <input type="password" id="git-account-token" placeholder="Personal access token" style="flex:2;min-width:140px;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace">
+          <input type="password" id="git-account-token" autocomplete="new-password" placeholder="Personal access token" style="flex:2;min-width:140px;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace">
           <button onclick="addGitAccount()" style="padding:4px 10px;background:var(--bg-tertiary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;cursor:pointer">Add</button>
         </div>
-      </div>
+      </form>
 
       <div class="settings-group">
         <h3>Knowledge Base</h3>
@@ -890,7 +895,10 @@
           </div>
           <div class="setting-row">
             <label>API Key</label>
-            <input id="setting-vector-custom-key" type="password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
+            <!-- #403 [Q3]: autocomplete=new-password silences the Chrome
+                 "password field is not contained in a form" warning when
+                 the input is rendered inside the dynamic vector-custom row. -->
+            <input id="setting-vector-custom-key" type="password" autocomplete="new-password" placeholder="Enter key..." style="flex:1;padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace"
               onchange="saveSetting('vector_custom_key', this.value, this)">
           </div>
         </div>
@@ -3992,7 +4000,7 @@ build/**</textarea>
 
     // ── FileTree component ──────────────────────────────────────────────────
     // Vanilla-JS file tree.
-    // Used by both #file-browser-tree (right panel) and #jqft-tree (project picker).
+    // Used by both #file-browser-tree (right panel) and #picker-tree (project picker).
     //
     // opts:
     //   el                    — container element
@@ -5097,7 +5105,7 @@ build/**</textarea>
             <h3 style="font-size:14px;margin:0">Add Project</h3>
             <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:18px" title="Close" onclick="document.getElementById('${overlayId}').remove()">&#10005;</button>
           </div>
-          <div id="jqft-tree" style="overflow-y:auto;min-height:300px;max-height:50vh;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:4px"></div>
+          <div id="picker-tree" style="overflow-y:auto;min-height:300px;max-height:50vh;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;padding:4px"></div>
           <div style="display:flex;gap:8px;margin-top:12px;align-items:center">
             <input id="picker-path" type="text" readonly placeholder="Click a folder above" style="flex:1;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px;font-family:monospace">
             <input id="picker-name" type="text" placeholder="Name" style="width:120px;padding:6px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:4px;color:var(--text-primary);font-size:12px">
@@ -5116,7 +5124,7 @@ build/**</textarea>
       } catch {}
       if (mounts.length === 0) mounts = [{ path: window._workspace || '/data/workspace' }];
 
-      const treeEl = document.getElementById('jqft-tree');
+      const treeEl = document.getElementById('picker-tree');
       treeEl.innerHTML = '';
       function selectPath(path) {
         document.getElementById('picker-path').value = path;
@@ -5866,7 +5874,16 @@ build/**</textarea>
           padding: 10px 16px; font-size: 13px; color: var(--warning);
           display: flex; align-items: center; gap: 8px;
         `;
-        document.getElementById('main').insertBefore(banner, document.getElementById('tab-bar'));
+        // #402 [Q2]: tab-bar is nested inside #primary-panel, not a direct
+        // child of #main, so the original insertBefore(banner, #tab-bar)
+        // threw NotFoundError every 60s. Insert before #primary-panel
+        // instead — banner sits at the top of #main, above the tab area.
+        (() => {
+          const main = document.getElementById('main');
+          const primaryPanel = document.getElementById('primary-panel');
+          if (main && primaryPanel) main.insertBefore(banner, primaryPanel);
+          else if (main) main.prepend(banner);
+        })();
       }
       banner.innerHTML = `
         <span style="font-size:16px">&#9888;</span>
@@ -5920,7 +5937,16 @@ build/**</textarea>
           padding: 10px 16px; font-size: 13px; color: var(--error, #d32f2f);
           display: flex; align-items: center; gap: 8px;
         `;
-        document.getElementById('main').insertBefore(banner, document.getElementById('tab-bar'));
+        // #402 [Q2]: tab-bar is nested inside #primary-panel, not a direct
+        // child of #main, so the original insertBefore(banner, #tab-bar)
+        // threw NotFoundError every 60s. Insert before #primary-panel
+        // instead — banner sits at the top of #main, above the tab area.
+        (() => {
+          const main = document.getElementById('main');
+          const primaryPanel = document.getElementById('primary-panel');
+          if (main && primaryPanel) main.insertBefore(banner, primaryPanel);
+          else if (main) main.prepend(banner);
+        })();
       }
       const top = topError ? ` — top: <strong>${escapeHtml(topError.module || 'unknown')}</strong> ${escapeHtml(topError.message).slice(0, 120)}` : '';
       const lastErrTs = topError ? escapeHtml(topError.ts) : '';

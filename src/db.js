@@ -225,7 +225,44 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_logs_ts        ON logs(ts);
   CREATE INDEX IF NOT EXISTS idx_logs_level_ts  ON logs(level, ts);
   CREATE INDEX IF NOT EXISTS idx_logs_module_ts ON logs(module, ts);
+
+  -- #360 [K1]: numbered migration runner. Existing ALTER blocks above stay
+  -- as-is (idempotent, tested, in-prod). New schema changes go through
+  -- src/db/migrations/NNN-name.js — each exports up(db); the runner records
+  -- applied IDs here so a second boot is a no-op.
+  CREATE TABLE IF NOT EXISTS schema_migrations (
+    id TEXT PRIMARY KEY,
+    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
+  );
 `);
+
+// #360 [K1]: load + run any not-yet-applied migrations from src/db/migrations/.
+(function runSchemaMigrations() {
+  const fs = require('fs');
+  const path = require('path');
+  const migDir = path.join(__dirname, 'db', 'migrations');
+  let files;
+  try {
+    files = fs.readdirSync(migDir).filter(f => /^\d{3}-[\w-]+\.js$/.test(f)).sort();
+  } catch (err) {
+    if (err.code === 'ENOENT') return; // no migrations dir yet — fresh repo
+    throw err;
+  }
+  const applied = new Set(db.prepare('SELECT id FROM schema_migrations').all().map(r => r.id));
+  const recordApplied = db.prepare('INSERT INTO schema_migrations (id) VALUES (?)');
+  for (const f of files) {
+    const id = path.basename(f, '.js');
+    if (applied.has(id)) continue;
+    const mig = require(path.join(migDir, f));
+    if (typeof mig.up !== 'function') {
+      throw new Error(`migration ${id} must export up(db)`);
+    }
+    db.transaction(() => {
+      mig.up(db);
+      recordApplied.run(id);
+    })();
+  }
+})();
 
 // #303 task system v2 data migration:
 //   1. Backfill project_id, github_issue, archived for any tasks still on the

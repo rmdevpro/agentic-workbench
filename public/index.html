@@ -459,10 +459,16 @@
     #auth-modal .step { color: var(--text-muted); font-size: 12px; margin-bottom: 4px; text-align: left; }
 
     /* #340 [A15]: generic modal pattern shared by input + confirm dialogs.
-       Same overlay shape as #auth-modal, smaller content card, left-aligned. */
+       Same overlay shape as #auth-modal, smaller content card, left-aligned.
+       z-index: 1010 (Codex+Gemini R2 stacking fix): all the overlay form
+       modals — prog-cfg, proj-cfg, session-cfg, new-session-overlay,
+       picker, etc. — sit at z-index 1000. The error/confirm/input modals
+       MUST render above them so a Save error popping out of a still-open
+       config form is visible to the user without dismissing the parent.
+       Pre-fix the parent form occluded the error message until dismissed. */
     .generic-modal {
       display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0,0,0,0.7); z-index: 1000;
+      background: rgba(0,0,0,0.7); z-index: 1010;
       align-items: center; justify-content: center;
     }
     .generic-modal.visible { display: flex; }

@@ -5,7 +5,9 @@ const fs = require('fs');
 const path = require('path');
 const { readdir } = require('fs/promises');
 const { join, basename, resolve, dirname } = require('path');
-const { execSync, execFileSync } = require('child_process');
+const { execSync, execFileSync, execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const safe = require('./safe-exec');
 const sessionUtils = require('./session-utils');
 const logger = require('./logger');
@@ -180,14 +182,25 @@ handlers.file_find = async (args) => {
   const grepArgs = ['-rn', '--color=never', `-C${ctx}`, '-m', '50'];
   if (args.file_type) grepArgs.push(`--include=*.${args.file_type}`);
   grepArgs.push('--', String(args.pattern), WORKSPACE);
+  // #330 [A5] (Codex Phase 1 gate fold-back): async execFile, not
+  // execFileSync. The prior shape ran a synchronous grep inside an async
+  // MCP handler — a slow search blocked the Node event loop and stalled
+  // unrelated workbench requests / WebSocket activity. Timeout + maxBuffer
+  // sourced from defaults.json (mcp.fileFindTimeoutMs / mcp.fileFindMaxBuffer)
+  // so operators can tune without code edits (C2 #344's externalised keys).
+  const timeout = config.get('mcp.fileFindTimeoutMs', 10000);
+  const maxBuffer = config.get('mcp.fileFindMaxBuffer', 16 * 1024 * 1024);
   try {
-    const out = execFileSync('grep', grepArgs, {
-      encoding: 'utf-8', timeout: 10000, maxBuffer: 16 * 1024 * 1024,
-    }).trim();
+    const { stdout } = await execFileAsync('grep', grepArgs, {
+      encoding: 'utf-8', timeout, maxBuffer,
+    });
+    const out = stdout.trim();
     const lines = out.split('\n').slice(0, 200);
     return { pattern: args.pattern, matches: lines.map(l => l.replace(WORKSPACE + '/', '')) };
   } catch (e) {
-    if (e.status === 1) return { pattern: args.pattern, matches: [] };
+    // grep exits 1 when no matches — promisified execFile rejects with the
+    // exit code on `e.code` (numeric). Treat as empty result.
+    if (e.code === 1 || e.status === 1) return { pattern: args.pattern, matches: [] };
     if (e.code === 'ENOBUFS') {
       throw new ToolError('find output exceeded 16 MB — narrow your pattern or use file_type filter', 413);
     }
@@ -699,15 +712,23 @@ handlers.task_add = async (args) => {
 
 handlers.task_move = async (args) => {
   const id = requireTaskId(args);
-  // task_move now changes parent / project. parent_task_id is required.
-  // Use null to promote to top-level.
-  if (args.parent_task_id === undefined && args.project_id === undefined) {
-    throw new ToolError('task_move requires parent_task_id and/or project_id', 400);
+  // task_move changes parent / project, optionally with a target rank in
+  // the destination bucket. parent_task_id and/or project_id is required;
+  // rank is optional (omit → append to end of new bucket; supply → atomic
+  // insert at that rank).
+  if (args.parent_task_id === undefined && args.project_id === undefined && args.rank === undefined) {
+    throw new ToolError('task_move requires parent_task_id, project_id, or rank', 400);
   }
   try {
-    const out = db.reparentTask(id, {
+    // #327 [A2] (Codex Phase 1 gate fold-back): route through db.moveTask —
+    // same atomic transaction the HTTP PUT /api/tasks/:id path uses. The
+    // prior shape called db.reparentTask (which always appended to the
+    // destination bucket and ignored rank), so MCP cross-bucket moves with
+    // a target rank silently dropped the rank.
+    const out = db.moveTask(id, {
       parentTaskId: args.parent_task_id === undefined ? null : args.parent_task_id,
       projectId: args.project_id,
+      rank: args.rank,
     });
     return { moved: true, task: out };
   } catch (e) {

@@ -72,12 +72,48 @@
     document.getElementById('confirm-modal').classList.remove('visible');
     document.onkeydown = null;
     if (_confirmResolver) { _confirmResolver(true); _confirmResolver = null; }
+    // Restore Cancel button visibility — showErrorModal hides it.
+    const cancelBtn = document.getElementById('confirm-modal-cancel');
+    if (cancelBtn) cancelBtn.style.display = '';
   }
 
   function dismissConfirmModal() {
     document.getElementById('confirm-modal').classList.remove('visible');
     document.onkeydown = null;
     if (_confirmResolver) { _confirmResolver(false); _confirmResolver = null; }
+    // Restore Cancel button visibility — showErrorModal hides it.
+    const cancelBtn = document.getElementById('confirm-modal-cancel');
+    if (cancelBtn) cancelBtn.style.display = '';
+  }
+
+  // #340 [A15] (Codex Phase 1 gate fold-back): error variant — reuses the
+  // confirm-modal DOM with the Cancel button hidden + a fixed OK label.
+  // Replaces native alert() for primary CRUD failure messaging so the dialog
+  // is styleable + testable + works in embed contexts that block native
+  // alert().
+  function showErrorModal({ title = 'Error', message = '' } = {}) {
+    return new Promise((resolve) => {
+      _confirmResolver = resolve;
+      const modal = document.getElementById('confirm-modal');
+      document.getElementById('confirm-modal-title').textContent = title;
+      document.getElementById('confirm-modal-message').textContent = message;
+      document.getElementById('confirm-modal-ok').textContent = 'OK';
+      const cancelBtn = document.getElementById('confirm-modal-cancel');
+      if (cancelBtn) cancelBtn.style.display = 'none';
+      modal.classList.add('danger');
+      modal.classList.add('visible');
+      setTimeout(() => { document.getElementById('confirm-modal-ok').focus(); }, 0);
+      document.onkeydown = (e) => {
+        if (e.key === 'Escape' || e.key === 'Enter') {
+          e.preventDefault();
+          // Both Escape and Enter dismiss — there's no cancel branch.
+          modal.classList.remove('visible');
+          document.onkeydown = null;
+          if (cancelBtn) cancelBtn.style.display = '';
+          if (_confirmResolver) { _confirmResolver(true); _confirmResolver = null; }
+        }
+      };
+    });
   }
 
   global.showInputModal = showInputModal;
@@ -86,4 +122,5 @@
   global.showConfirmModal = showConfirmModal;
   global.acceptConfirmModal = acceptConfirmModal;
   global.dismissConfirmModal = dismissConfirmModal;
+  global.showErrorModal = showErrorModal;
 })(typeof window !== 'undefined' ? window : globalThis);

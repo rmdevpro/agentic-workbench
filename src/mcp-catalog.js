@@ -181,10 +181,11 @@ const TOOLS = [
     github_issue: { type: 'string', description: "Fully-qualified, e.g. 'rmdevpro/agentic-workbench#317'. Required for tasks in repo-backed projects." },
     status: { type: 'string', enum: ['inactive', 'active', 'blocked', 'done', 'cancelled'], description: "Default 'inactive'." },
   }, ['title']),
-  T('task_move', 'Re-parent a task and/or move it across projects. parent_task_id null = top-level.', {
+  T('task_move', 'Re-parent a task and/or move it across projects, optionally placing it at a specific rank in the destination bucket. parent_task_id null = top-level.', {
     task_id: P.task_id,
     parent_task_id: { type: ['number', 'null'], description: 'New parent task id, or null to make it top-level.' },
     project_id: { type: 'number', description: 'New project id (cascades to all descendants).' },
+    rank: { type: 'number', description: 'Optional 1-based rank in the destination bucket. Without it, moves append to the end (legacy behaviour). With it, lands at exactly that rank — same atomic transaction the HTTP path uses.' },
   }, ['task_id']),
   T('task_update', 'Update task fields. Status transitions and archive flag have server-side validation (e.g. cannot mark done with open subtasks; cannot archive non-terminal status).', {
     task_id: P.task_id,

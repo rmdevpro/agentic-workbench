@@ -144,24 +144,24 @@ function parseCookie(req, name) {
   return match ? match[1] : null;
 }
 
-// #337 [A12]: cache gate page content at module load. Previously every
-// auth-gated request re-read public/gate.html from disk and ran a .replace()
-// over it, which paid two syscalls + an N-byte scan per failed-auth request.
-// On a tight loop or a misbehaving probe, that adds up. The pure loader
-// + fallback live in src/gate-page.js so they're unit-testable without
-// booting the full server.
-const { loadGatePageHtml } = require('./gate-page');
-const GATE_PAGE_HTML = loadGatePageHtml({
+// #337 [A12]: cache the raw gate-page TEMPLATE at module load (one disk
+// read), but inject the current authMode per-request via renderGatePage().
+// Previous shape cached the rendered HTML with `mode: authMode` at boot,
+// when authMode is still the initial 'open' value — `detectAuthMode()` runs
+// later in startup, and the periodic re-detect at L306 can also flip it.
+// Caching the rendered HTML meant password/template deployments served the
+// wrong `__GATE_MODE__`. Codex Phase 1 gate review (High) flagged this.
+const { loadGatePageTemplate, renderGatePage } = require('./gate-page');
+const GATE_PAGE_TEMPLATE = loadGatePageTemplate({
   readFileSync: fs.readFileSync,
   gatePath: join(__dirname, '..', 'public', 'gate.html'),
-  mode: authMode,
   // No logger yet at boot. Use stderr so the operator still sees it in
   // `docker logs` if the file is missing or corrupt.
   onError: (err) => process.stderr.write(`[server.js] gate.html read failed at boot, falling back: ${err.message}\n`),
 });
 
 function serveGatePage(res) {
-  res.type('html').send(GATE_PAGE_HTML);
+  res.type('html').send(renderGatePage(GATE_PAGE_TEMPLATE, authMode));
 }
 
 // #351 [D2]: per-IP token bucket for /api/gate/login. 10 attempts/minute,

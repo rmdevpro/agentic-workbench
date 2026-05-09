@@ -464,6 +464,12 @@ module.exports = {
   deleteProject(id) {
     db.prepare('DELETE FROM projects WHERE id = ?').run(id);
   },
+  // #336 [A11] (Codex Phase 1 gate fold-back): drop all per-project MCP
+  // enablement rows so a reused project path doesn't inherit stale
+  // registrations. Called from the routes-side cascadeCleanupProject.
+  clearProjectMcpEnabled(projectId) {
+    db.prepare('DELETE FROM mcp_project_enabled WHERE project_id = ?').run(projectId);
+  },
   setProjectProgram(projectId, programId) {
     stmts.setProjectProgram.run(programId == null ? null : Number(programId), projectId);
     return stmts.getProjectById.get(projectId);

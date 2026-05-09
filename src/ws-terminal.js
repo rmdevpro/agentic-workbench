@@ -44,10 +44,18 @@ module.exports = function createWsTerminal({
       _ptyRegistry.delete(name);
     }
   }
+  // #355 [D6]: bind cleanup hooks. Codex Phase 1 gate review (High) flagged
+  // that the prior shape only called _cleanupAllPtys on SIGTERM/SIGINT
+  // without exiting — Node's default termination is overridden by adding a
+  // signal listener, so the process would hang until external SIGKILL.
+  // After cleanup the handler now explicitly exits with the conventional
+  // 128+signum code so docker / systemd / HF see a clean termination.
+  // The 'exit' hook stays as a last-resort sweep for natural exits where
+  // PTYs would otherwise outlive the parent.
   if (!global.__wbWsTerminalCleanupBound) {
     process.on('exit', _cleanupAllPtys);
-    process.on('SIGTERM', _cleanupAllPtys);
-    process.on('SIGINT', _cleanupAllPtys);
+    process.on('SIGTERM', () => { _cleanupAllPtys(); process.exit(143); });
+    process.on('SIGINT', () => { _cleanupAllPtys(); process.exit(130); });
     global.__wbWsTerminalCleanupBound = true;
   }
 

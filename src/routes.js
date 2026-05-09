@@ -1145,6 +1145,30 @@ function registerCoreRoutes(
         });
       }
     }
+    // 6. #336 [A11] (Codex Phase 1 gate fold-back): remove the project's
+    // own .mcp.json so reusing the path later doesn't preserve stale
+    // project-scoped MCP server registrations from the old project. Also
+    // strip the project from the workbench's mcp_project_enabled DB table
+    // so the registry doesn't hold a stale reference.
+    try {
+      const projectMcpFile = join(project.path, '.mcp.json');
+      await rm(projectMcpFile, { force: true });
+    } catch (err) {
+      if (err.code !== 'ENOENT') {
+        logger.warn('Failed to remove project .mcp.json', {
+          module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+        });
+      }
+    }
+    try {
+      if (typeof db.clearProjectMcpEnabled === 'function') {
+        db.clearProjectMcpEnabled(project.id);
+      }
+    } catch (err) {
+      logger.warn('Failed to clear mcp_project_enabled rows', {
+        module: 'routes', op: 'cascadeCleanupProject', err: err.message,
+      });
+    }
   }
 
   app.post('/api/projects/:name/remove', async (req, res) => {

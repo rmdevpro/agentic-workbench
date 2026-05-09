@@ -17,8 +17,11 @@ test('D6-PTY-01: ws-terminal.js maintains a PTY registry Map', () => {
 
 test('D6-PTY-02: process.on(exit) + SIGTERM + SIGINT hooks bound to cleanup', () => {
   assert.match(SRC, /process\.on\('exit',\s*_cleanupAllPtys\)/);
-  assert.match(SRC, /process\.on\('SIGTERM',\s*_cleanupAllPtys\)/);
-  assert.match(SRC, /process\.on\('SIGINT',\s*_cleanupAllPtys\)/);
+  // SIGTERM/SIGINT must call cleanup AND then exit (Codex gate finding):
+  // adding any listener overrides Node's default signal-termination
+  // behaviour, so a handler that doesn't exit hangs the container.
+  assert.match(SRC, /process\.on\('SIGTERM',[\s\S]*?_cleanupAllPtys\(\)[\s\S]*?process\.exit\(143\)/);
+  assert.match(SRC, /process\.on\('SIGINT',[\s\S]*?_cleanupAllPtys\(\)[\s\S]*?process\.exit\(130\)/);
 });
 
 test('D6-PTY-03: _cleanupAllPtys iterates registry and calls kill() on each', () => {

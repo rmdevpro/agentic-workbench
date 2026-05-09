@@ -1089,7 +1089,7 @@ build/**</textarea>
       <h2 id="confirm-modal-title">Confirm</h2>
       <p id="confirm-modal-message" style="margin-bottom:16px;line-height:1.5"></p>
       <div style="display:flex;gap:8px;justify-content:flex-end">
-        <button class="modal-btn-secondary" onclick="window.dismissConfirmModal()">Cancel</button>
+        <button id="confirm-modal-cancel" class="modal-btn-secondary" onclick="window.dismissConfirmModal()">Cancel</button>
         <button id="confirm-modal-ok" class="code-submit" onclick="window.acceptConfirmModal()">Confirm</button>
       </div>
     </div>
@@ -1825,7 +1825,7 @@ build/**</textarea>
         });
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
-          alert('Could not create program: ' + (err.error || r.statusText));
+          await window.showErrorModal({ title: 'Create program failed', message: err.error || r.statusText });
           return;
         }
         const program = await r.json();
@@ -1879,7 +1879,7 @@ build/**</textarea>
         });
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
-          alert('Could not save: ' + (err.error || r.statusText));
+          await window.showErrorModal({ title: 'Save failed', message: err.error || r.statusText });
           return;
         }
         document.getElementById(overlayId).remove();
@@ -3281,7 +3281,7 @@ build/**</textarea>
         });
         if (!r.ok) {
           const err = await r.json().catch(() => ({}));
-          alert('Could not move: ' + (err.error || r.statusText));
+          await window.showErrorModal({ title: 'Move failed', message: err.error || r.statusText });
         }
         loadTaskTree();
       });
@@ -3350,7 +3350,7 @@ build/**</textarea>
             });
             if (!r.ok) {
               const err = await r.json().catch(() => ({}));
-              alert(err.error || 'Failed to change status');
+              await window.showErrorModal({ title: 'Status change failed', message: err.error || 'Failed to change status' });
             }
             loadTaskTree();
           } else if (action === 'archive' || action === 'unarchive') {
@@ -3898,7 +3898,7 @@ build/**</textarea>
               toolbar.querySelector('span').title = cleanPath;
               renderTabs();
             } catch (err) {
-              alert('Save As failed: ' + err.message);
+              await window.showErrorModal({ title: 'Save As failed', message: err.message });
             }
           });
 
@@ -3994,7 +3994,7 @@ build/**</textarea>
           setTimeout(() => { saveBtn.textContent = origText; saveBtn.style.background = ''; }, 1500);
         }
       } catch (err) {
-        alert('Save failed: ' + err.message);
+        await window.showErrorModal({ title: 'Save failed', message: err.message });
       }
     }
 
@@ -5574,7 +5574,7 @@ build/**</textarea>
       });
       if (!res.ok) {
         const e = await res.json().catch(() => ({}));
-        alert('Edit failed: ' + (e.error || res.statusText));
+        await window.showErrorModal({ title: 'Edit failed', message: e.error || res.statusText });
       }
       refreshGitAccounts();
     }
@@ -5630,7 +5630,7 @@ build/**</textarea>
         });
         if (!res.ok) {
           const e = await res.json().catch(() => ({}));
-          alert('Add account failed: ' + (e.error || res.statusText));
+          await window.showErrorModal({ title: 'Add account failed', message: e.error || res.statusText });
           return;
         }
         document.getElementById('git-account-path').value = '';

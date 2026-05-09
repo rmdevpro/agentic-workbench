@@ -7,7 +7,12 @@ services:
       context: .
       dockerfile: Dockerfile
     container_name: workbench-test-workbench-1
-    ports:
+    # !override replaces the base compose's ports list (otherwise compose
+    # merges ports lists and the test container tries to bind host:7860
+    # which is already in use by the prod workbench on the same host).
+    # Test container exposes port 7867 only — tests inside the container
+    # use http://localhost:3000 (PORT=3000 env above).
+    ports: !override
       - '7867:3000'
     volumes:
       - workbench-test_data:/data

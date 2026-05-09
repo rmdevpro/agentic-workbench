@@ -158,8 +158,10 @@ test('TSK-11: move task across parent records history (v2: parent_task_id, not f
   await ensureSeedProject();
   const parent = await post('/api/tasks', { project_name: 'wb-seed', title: 'Parent' });
   const child = await post('/api/tasks', { project_name: 'wb-seed', title: 'Child to move' });
-  // v2 move shape: parent_task_id (or project_id, or rank), not folder_path
-  await put(`/api/tasks/${child.data.id}/move`, { parent_task_id: parent.data.id });
+  // v2 move shape: parent_task_id (or project_id, or rank), folded into PUT /api/tasks/:id
+  // (the /move sub-route was removed; src/routes.js:1898-1903 handles move logic in the
+  // base PUT handler when any of parent_task_id / project_id / rank is in the body).
+  await put(`/api/tasks/${child.data.id}`, { parent_task_id: parent.data.id });
   const r = await get(`/api/tasks/${child.data.id}`);
   assert.equal(r.data.parent_task_id, parent.data.id);
 });

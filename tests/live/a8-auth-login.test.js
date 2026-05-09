@@ -2,13 +2,28 @@
 
 // A8 #333: /api/auth/login uses checkAuthStatus() (file mtime + parse) instead
 // of `claude --print`. No tokens burned, response in <100ms.
+//
+// Codex R2 finding: A8-LIVE-02/03 mutated /data/.claude/.credentials.json
+// directly — not safe against a shared deployment. The matrix's accepted
+// disposition for A8 is "code inspection + sub-100ms response timing".
+// This file now aligns the tests with that disposition:
+//   - A8-LIVE-01: timing probe (read-only, no mutation) — KEPT.
+//   - A8-LIVE-02 (NEW): code-inspection assertion that the auth handler
+//     does NOT call `claude --print` or claudeExecAsync. This is the
+//     canonical proof of A8's "no token burn" property.
+//   - A8-LIVE-03 (REMOVED): the prior credential-wipe test was removed
+//     because it's replaced by the safer code-inspection at A8-LIVE-02.
+//     Anyone wanting to behaviorally test the no-creds branch in an
+//     isolated test container can use the resetBaseline-guarded helper
+//     pattern (WORKBENCH_TEST_SANDBOX=1).
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
 const { post } = require('../helpers/http-client');
-const { dockerExec } = require('../helpers/reset-state');
 
-test('A8-LIVE-01: POST /api/auth/login responds in <100ms (no CLI fork)', async () => {
+test('A8-LIVE-01: POST /api/auth/login responds in <100ms (no CLI fork — read-only)', async () => {
   // Run twice — first call may have cold caches. Take the second.
   await post('/api/auth/login');
   const t0 = Date.now();
@@ -22,44 +37,35 @@ test('A8-LIVE-01: POST /api/auth/login responds in <100ms (no CLI fork)', async 
   assert.ok(elapsed < 100, `login must complete in <100ms (file-stat fast path), took ${elapsed}ms`);
 });
 
-test('A8-LIVE-02: POST /api/auth/login with no credentials file returns 401', async () => {
-  // Snapshot existing creds (if any), wipe, call, restore.
-  let savedCreds = '';
-  try {
-    savedCreds = dockerExec('cat /data/.claude/.credentials.json 2>/dev/null || echo NO_CREDS');
-  } catch { /* ignore */ }
-  try {
-    dockerExec('rm -f /data/.claude/.credentials.json');
-    const r = await post('/api/auth/login');
-    assert.equal(r.status, 401, `expected 401 with no creds, got ${r.status}: ${JSON.stringify(r.data)}`);
-    assert.equal(r.data.valid, false);
-  } finally {
-    if (savedCreds && savedCreds !== 'NO_CREDS') {
-      // Restore — write via heredoc-style command. Escape carefully.
-      const b64 = Buffer.from(savedCreds).toString('base64');
-      dockerExec(`echo ${b64} | base64 -d > /data/.claude/.credentials.json`);
-    }
-  }
-});
-
-test('A8-LIVE-03: POST /api/auth/login with stale creds returns 401 (not throwing CLI error)', async () => {
-  // Plant a malformed/stale credentials file. Endpoint must return 401
-  // cleanly — not 500 from CLI invocation.
-  let saved = '';
-  try {
-    saved = dockerExec('cat /data/.claude/.credentials.json 2>/dev/null || echo NO_CREDS');
-  } catch { /* ignore */ }
-  try {
-    dockerExec('echo "malformed-not-valid-json" > /data/.claude/.credentials.json');
-    const r = await post('/api/auth/login');
-    assert.equal(r.status, 401, `expected 401 with malformed creds, got ${r.status}: ${JSON.stringify(r.data)}`);
-    assert.equal(r.data.valid, false);
-  } finally {
-    if (saved && saved !== 'NO_CREDS') {
-      const b64 = Buffer.from(saved).toString('base64');
-      dockerExec(`echo ${b64} | base64 -d > /data/.claude/.credentials.json`);
-    } else {
-      dockerExec('rm -f /data/.claude/.credentials.json');
-    }
-  }
+test('A8-LIVE-02: code inspection — /api/auth/login handler does NOT call claudeExecAsync or `claude --print`', () => {
+  // Per the A8 disposition (matrix Facilitator Audit): canonical proof
+  // that the no-token-burn property holds is that the handler doesn't
+  // spawn the Claude CLI. This is a structural assertion against the
+  // production source — safer than mutating real credentials, and
+  // catches future regressions where someone accidentally restores
+  // the CLI fork pattern.
+  const routesSrc = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'src', 'routes.js'),
+    'utf-8',
+  );
+  // Find the /api/auth/login handler block. Allow either app.post or
+  // app.get pattern (current code uses app.post).
+  const handlerMatch = routesSrc.match(
+    /app\.(?:post|get)\(['"]\/api\/auth\/login['"][\s\S]*?\n\s*\}\);/,
+  );
+  assert.ok(handlerMatch, '/api/auth/login handler must be present in src/routes.js');
+  const handlerBody = handlerMatch[0];
+  assert.ok(
+    !/claudeExecAsync\s*\(/.test(handlerBody),
+    '/api/auth/login handler must NOT call claudeExecAsync (would burn Claude tokens). Found in handler body.',
+  );
+  assert.ok(
+    !/claude.*--print/.test(handlerBody),
+    '/api/auth/login handler must NOT spawn `claude --print` (would burn Claude tokens).',
+  );
+  // Positive: handler should call checkAuthStatus (the file-stat fast path).
+  assert.ok(
+    /checkAuthStatus\s*\(/.test(handlerBody) || /readFile\s*\(/.test(handlerBody),
+    '/api/auth/login handler must use the file-stat path (checkAuthStatus or readFile).',
+  );
 });

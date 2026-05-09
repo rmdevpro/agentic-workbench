@@ -727,7 +727,7 @@ These 3 tests validate that the app is functional. If any fail, stop and investi
 3. Expand workspace mount by clicking mount header arrow
 4. `browser_evaluate`: `document.querySelectorAll('.task-folder').length > 0` — folders visible
 5. Right-click a folder label → context menu shows "Add Task" and "New Folder"
-6. Add a task via API: `POST /api/mcp/call {tool:'task_add', args:{folder_path:'/data/workspace/...', title:'Runbook test'}}`
+6. Add a task via API (v2 contract — #388): `POST /api/mcp/call {tool:'task_add', args:{project_name:'wb-seed', title:'Runbook test'}}` — task is scoped to a project (`project_id`/`project_name`/`parent_task_id` required), not a folder path
 7. Reload task tree, expand folder → task visible as `.task-node` with checkbox
 8. Click task checkbox → `browser_evaluate`: task status changes to 'done' in DB
 9. Click task ✕ button → task removed from tree and DB
@@ -4594,12 +4594,12 @@ After S-19, run `session_kill {session_id: mcp-cat-claude}` to clean up.
 
 | ID | Tool | Args | Verify |
 |----|------|------|--------|
-| MCP-T-01 | `task_add` | `{title:"runbook task", folder_path:"/"}` | Returns task with `id` (numeric). Save id. |
-| MCP-T-02 | `task_find` | `{folder_path:"/"}` | `{tasks:[..., {id, title:"runbook task"}, ...]}` |
+| MCP-T-01 | `task_add` | `{title:"runbook task", project_name:"wb-seed"}` | Returns task with `id` (numeric) and `project_id`. Save id. **v2 #388:** `folder_path` no longer accepted — `project_id` / `project_name` / `parent_task_id` required. |
+| MCP-T-02 | `task_find` | `{project_name:"wb-seed"}` | `{tasks:[..., {id, title:"runbook task", project_id}, ...]}`. **v2 #388:** scope is a project, not a folder path. |
 | MCP-T-03 | `task_get` | `{task_id:<id>}` | Full task row |
 | MCP-T-04 | `task_update` | `{task_id, title:"renamed", description:"x", status:"done"}` | Returns updated row |
 | MCP-T-05 | `task_find` (with pattern) | `{pattern:"renamed"}` | `{matches:[..., {id}, ...]}` |
-| MCP-T-06 | `task_move` | `{task_id, folder_path:"/inbox"}` | `{moved:true, task_id, folder_path:"/inbox"}` |
+| MCP-T-06 | `task_move` | `{task_id, parent_task_id:<other-task-id-in-same-project>}` | `{moved:true, task_id, parent_task_id}`. **v2 #388:** move semantics are `parent_task_id` / `project_id` / `rank` — `folder_path` is no longer a move target. To move under a parent, the parent must be in the same project. |
 
 After T-06 mark done by setting status=archived via T-04 to keep test DB clean.
 
@@ -4870,7 +4870,7 @@ Tests for the user-facing fixes shipped in the canonical branch but not yet in t
 5. From a separate context (MCP `task_add` or another browser tab POSTing to `/api/tasks`), create a new task in a folder visible in the current tree.
 6. Without reloading the page, click `#panel-refresh-tasks`.
 **Verify:** The task count updates to include the newly-added task (count + 1). No page reload required.
-**Programmatic verification:** `await fetch('/api/tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({folder_path: '/data/workspace/repos/agentic-workbench', title: 'REG-242 marker'})}); const before = document.querySelectorAll('#task-tree .task-node').length; document.getElementById('panel-refresh-tasks').click(); await new Promise(r=>setTimeout(r,1500)); const after = document.querySelectorAll('#task-tree .task-node').length; assert(after >= before + 1)`.
+**Programmatic verification (v2 #388 contract):** `await fetch('/api/tasks', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({project_name: 'wb-seed', title: 'REG-242 marker'})}); const before = document.querySelectorAll('#task-tree .task-node').length; document.getElementById('panel-refresh-tasks').click(); await new Promise(r=>setTimeout(r,1500)); const after = document.querySelectorAll('#task-tree .task-node').length; assert(after >= before + 1)`. (`folder_path` no longer accepted by `/api/tasks`; `project_id` / `project_name` / `parent_task_id` required.)
 **Pre-fix behavior:** Tasks created via MCP (or another tab) were invisible in the task panel until full page reload — no in-panel refresh control existed.
 
 ---

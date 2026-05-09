@@ -766,7 +766,11 @@ function registerCoreRoutes(
         }));
         _issuesCache.set(cacheKey, { fetchedAt: Date.now(), items });
       } catch (err) {
-        return res.status(502).json({ error: `GitHub API request failed: ${err.message}` });
+        // #328 [A3]: include the API host in the error so GHES routing
+        // bugs are visible (Node's fetch wraps the underlying network
+        // error in a `cause` chain that doesn't surface in err.message).
+        const causeMsg = err.cause && err.cause.message ? `: ${err.cause.message}` : '';
+        return res.status(502).json({ error: `GitHub API request to ${apiUrl} failed: ${err.message}${causeMsg}` });
       }
     }
     if (q) items = items.filter(i => i.title.toLowerCase().includes(q));

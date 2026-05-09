@@ -5833,6 +5833,15 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 1. \`POST /api/mcp/call\` with \`{tool:'file_search_code', args:{query:'uniqueMarkerForIssue291', limit:20}}\`.
 **Verify:** Response includes a result whose \`file_path\` ends in \`test-vec-291/marker.js\` AND whose \`text\` contains the marker token. Pre-fix this returned zero matches because scanCode hardcoded \`[WORKSPACE]\`.
 
+### TASK-DRAG-A2-01: Cross-bucket drag lands at requested rank, not appended (#327)
+**Issue:** #327 [A2].
+**Setup:** Two projects exist (`a2_drag_a` and `a2_drag_b`). Project A has 1 task `A2-DRAG-moving`. Project B has 4 tasks `A2-DRAG-b1..b4` at ranks 1..4. All tasks at status `inactive` (so they appear under the default `Active` filter). Open right panel → Tasks. Expand both A2 project rows.
+**Steps (browser):**
+1. Identify the moving task row by `[data-task-id="<MOV_ID>"]` and the target task row (b3) by `[data-task-id="<B3_ID>"]`.
+2. Dispatch a synthetic `dragstart` DragEvent on the moving row, set `application/x-task-id` on the DataTransfer, then dispatch `dragover` and `drop` on b3 with `clientY` in the top 10% of b3's bounding rect (the UI's "drag-over-above" zone — produces a PUT with `rank: <b3.rank>`).
+3. Wait ~2s for the PUT round-trip and tree reload.
+**Verify:** The rendered DOM under project B's task list shows **exactly** `[A2-DRAG-b1, A2-DRAG-b2, A2-DRAG-moving, A2-DRAG-b3, A2-DRAG-b4]` in that order. The moving task row's `data-project-id` is now project B's id. Server DB (`SELECT title, rank FROM tasks WHERE project_id=B.id AND parent_task_id IS NULL ORDER BY rank`) returns the same order with ranks `[1, 2, 3, 4, 5]`. Project A's bucket is densified (no rank gap left behind). Pre-fix the moving task appeared at rank 5 (appended) because PATCH split into two non-atomic calls; post-fix `db.moveTask` runs in one transaction and respects the requested rank.
+
 ### TASK-DRAG-PROJ-HL-01: Drop-on-project shows accent highlight (parity with drop-on-task)
 **Issue:** #312.
 **Setup:** Open right panel → Tasks. Expand at least one project that has tasks (e.g., \`Workbench\`). Have at least one task row visible.

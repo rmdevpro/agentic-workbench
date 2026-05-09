@@ -364,45 +364,9 @@ async function gitCloneAsync(url, targetPath) {
   return stdout;
 }
 
-function grepSearchAsync(pattern, cwd, glob) {
-  return new Promise((resolve) => {
-    const args = ['-rn'];
-    if (glob) args.push('--include=' + glob);
-    args.push('--', pattern, '.');
-    childProcess.execFile(
-      'grep',
-      args,
-      {
-        cwd,
-        encoding: 'utf-8',
-        timeout: 10000,
-        maxBuffer: 1024 * 1024,
-      },
-      (err, stdout) => {
-        if (err || !stdout) resolve('No matches found');
-        else resolve(stdout.split('\n').slice(0, 50).join('\n') || 'No matches found');
-      },
-    );
-  });
-}
-
-function curlFetchAsync(url) {
-  return new Promise((resolve) => {
-    childProcess.execFile(
-      'curl',
-      ['-sL', '--max-time', '10', url],
-      {
-        encoding: 'utf-8',
-        timeout: 15000,
-        maxBuffer: 1024 * 1024,
-      },
-      (err, stdout) => {
-        if (err || !stdout) resolve(`Error: failed to fetch ${url}`);
-        else resolve(stdout.substring(0, 20000));
-      },
-    );
-  });
-}
+// #349 [C8]: grepSearchAsync + curlFetchAsync deleted. They had zero product
+// call sites — only test fixtures referenced them. Tests of these functions
+// were removed in the same change.
 
 function findSessionsDir(projectPath) {
   // Claude Code's projects-subdir encoding replaces BOTH '/' AND '_' with '-'.
@@ -459,7 +423,5 @@ module.exports = {
   tmuxSendTextAsync,
   tmuxSendKeyAsync,
   gitCloneAsync,
-  grepSearchAsync,
-  curlFetchAsync,
   findSessionsDir,
 };

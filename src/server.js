@@ -25,7 +25,12 @@ const registerCoreRoutes = require('./routes');
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
-const PORT = parseInt(process.env.PORT, 10) || 3000;
+// #348 [C6]: 7860 default matches the Dockerfile + HF spec instead of the
+// legacy 3000 dev port. PORT=0 is preserved as the "OS-assign a port" sentinel
+// for tests, so we check for explicit-undefined rather than falsiness.
+const PORT = process.env.PORT !== undefined && process.env.PORT !== ''
+  ? parseInt(process.env.PORT, 10)
+  : 7860;
 const CLAUDE_HOME = safe.CLAUDE_HOME;
 const WORKSPACE = safe.WORKSPACE;
 // Tmux lifecycle thresholds now live in config/defaults.json under "tmux.*".

@@ -1078,7 +1078,6 @@ function registerCoreRoutes(
     // 2. Delete Claude JSONL session dir.
     try {
       const sessDir = safe.findSessionsDir(project.path);
-      const { rm } = require('fs/promises');
       await rm(sessDir, { recursive: true, force: true });
     } catch (err) {
       logger.warn('Failed to delete Claude sessions dir', {

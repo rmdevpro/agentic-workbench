@@ -136,52 +136,7 @@ test('SAF-09: tmuxSendKeysAsync writes temp file, load-buffer, paste-buffer, sen
   }
 });
 
-test('SAF-10: grepSearchAsync caps results and returns fallback on error', async (t) => {
-  t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) =>
-    cb(null, fixtures.safeExec.grepOutput, ''),
-  );
-  const { safe, restore } = freshSafe();
-  try {
-    const r = await safe.grepSearchAsync('needle', '/tmp', '*.js');
-    assert.match(r, /a\.js:1:needle/);
-  } finally {
-    restore();
-  }
-});
-
-test('SAF-10: grepSearchAsync returns no-matches on error', async (t) => {
-  t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) => cb(new Error('fail'), '', ''));
-  const { safe, restore } = freshSafe();
-  try {
-    const r = await safe.grepSearchAsync('x', '/tmp');
-    assert.match(r, /No matches/);
-  } finally {
-    restore();
-  }
-});
-
-test('SAF-11: curlFetchAsync truncates long body and falls back on error', async (t) => {
-  t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) =>
-    cb(null, fixtures.safeExec.curlLongBody, ''),
-  );
-  const { safe, restore } = freshSafe();
-  try {
-    assert.equal((await safe.curlFetchAsync('https://x.com')).length, 20000);
-  } finally {
-    restore();
-  }
-});
-
-test('SAF-11: curlFetchAsync returns error string on failure', async (t) => {
-  t.mock.method(childProcess, 'execFile', (_c, _a, _o, cb) => cb(new Error('fail'), '', ''));
-  const { safe, restore } = freshSafe();
-  try {
-    const r = await safe.curlFetchAsync('https://fail.com');
-    assert.match(r, /Error/);
-  } finally {
-    restore();
-  }
-});
+// #349 [C8]: SAF-10/SAF-11 deleted with grepSearchAsync/curlFetchAsync.
 
 test('SAF-12: tmuxCreateBash calls tmuxExecSync for new-session, mouse, history-limit, allow-passthrough, terminal-features', (t) => {
   const calls = [];

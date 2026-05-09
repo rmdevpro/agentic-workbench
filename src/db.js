@@ -254,7 +254,11 @@ db.exec(`
   }
   // #315: rename legacy 'todo' status to 'inactive' (idempotent — only runs
   // when rows still hold the old value).
-  try { db.prepare("UPDATE tasks SET status = 'inactive' WHERE status = 'todo'").run(); } catch (_e) { /* tasks table not yet created */ }
+  // #348 [C6]: try/catch is for the brief window during a fresh-DB bootstrap
+  // when this migration runs before the tasks table exists. The catch is NOT
+  // for "tasks table not yet created" in steady state — by that point the
+  // schema CREATE block has already run.
+  try { db.prepare("UPDATE tasks SET status = 'inactive' WHERE status = 'todo'").run(); } catch (_e) { /* fresh-DB bootstrap before tasks CREATE */ }
   // Densify rank within every bucket on every boot.
   const setRank = db.prepare('UPDATE tasks SET rank = ? WHERE id = ?');
   const buckets = db.prepare("SELECT DISTINCT project_id, COALESCE(parent_task_id, 0) AS pti FROM tasks WHERE project_id IS NOT NULL").all();

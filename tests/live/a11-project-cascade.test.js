@@ -59,10 +59,21 @@ test('A11-LIVE-02: project remove strips ~/.claude.json projects entry', async (
   dockerExec(`mkdir -p ${projPath}`);
   await post('/api/projects', { path: projPath, name: 'a11_claude_cfg' });
 
-  // Plant a .claude.json with this project + a keep entry
+  // Plant the project + a keep entry into .claude.json's projects map
+  // WITHOUT overwriting other top-level keys (hasCompletedOnboarding, theme,
+  // bypassPermissionsModeAccepted, etc.) — those are set by entrypoint.sh
+  // and other live tests (e.g. ENT-09) depend on them. Use a Python merge.
   const claudePath = '/data/.claude/.claude.json';
-  const before = JSON.stringify({ projects: { [projPath]: { trusted: true }, '/keep/this': { keep: true } } });
-  dockerExec(`echo '${before}' > ${claudePath}`);
+  const merge = [
+    `import json`,
+    `f='${claudePath}'`,
+    `d=json.load(open(f))`,
+    `d.setdefault('projects',{})`,
+    `d['projects']['${projPath}']={'trusted':True}`,
+    `d['projects']['/keep/this']={'keep':True}`,
+    `json.dump(d,open(f,'w'))`,
+  ].join(';');
+  dockerExec(`python3 -c "${merge}"`);
 
   const r = await post('/api/projects/a11_claude_cfg/remove', {});
   assert.equal(r.status, 200);
@@ -70,6 +81,8 @@ test('A11-LIVE-02: project remove strips ~/.claude.json projects entry', async (
   const afterJson = JSON.parse(readFile(claudePath));
   assert.equal(afterJson.projects[projPath], undefined, `~/.claude.json must drop ${projPath} entry. got: ${JSON.stringify(afterJson.projects)}`);
   assert.deepEqual(afterJson.projects['/keep/this'], { keep: true }, 'other entries must survive');
+  // Top-level invariants must survive the cascade — pre-fix this test wiped them.
+  assert.equal(afterJson.hasCompletedOnboarding, true, 'hasCompletedOnboarding must survive (set by entrypoint.sh; ENT-09 depends on it)');
 });
 
 test('A11-LIVE-03: project remove strips Gemini trustedFolders entry', async () => {

@@ -350,9 +350,62 @@ These are the issues where I CAUGHT a gap but the fix didn't fold under the no-p
 
 ## Gate review findings + dispositions
 
-To be filled by the gate orchestrator after the 3-CLI test review + 3-CLI code review rounds land. Disposition rules per Phase 0 precedent: ≥2-CLI consensus → fold back into the verify branch + re-run affected verify steps; single-CLI flags → noted, fold only if obviously a real bug.
+3-CLI gate review ran at `phase-1-verify` HEAD (run `git rev-parse --short phase-1-verify` for live SHA). Three reviews under `reviews/5-9-26 - Phase 1 Gate Review/{CLAUDE,CODEX,GEMINI}_CODE_REVIEW.md`. Both Claude and Codex did Round 1 + Round 2 passes; Gemini did one pass + an addendum. Findings dispositioned per PROC-002 §"Step 5 Peer review" (≥2-CLI consensus → fold; single-CLI obvious bug → fold; single-CLI process question → accept-with-documentation; out-of-scope → file follow-up).
 
-This section will record each finding's source CLI, severity, and action taken (fold back as Q-issue, accept-with-documentation, defer to Phase 2+, etc.).
+### Round 1 + Round 2 verdicts
+
+| CLI | Verdict |
+|---|---|
+| Claude (Opus 4.7) R1 | PASS WITH FOLLOW-UP |
+| Claude R2 | PASS WITH FOLLOW-UP — recommend merge after one fresh-rebuild verification cycle |
+| Codex R1 | DO NOT SIGN OFF YET (multiple High/Major) |
+| Codex R2 | DO NOT SIGN OFF YET — same + Critical: browser test silent-green |
+| Gemini | PASS + Addendum APPROVED |
+
+### Consensus findings + Codex high-priority single-CLI findings — FOLDED
+
+Codex's R1+R2 high-severity findings were folded into `phase-1-verify` in one batch commit (run `git log --grep "fold-back consensus blockers"` for the commit). All seven items below are now reflected in the deployed M5 runtime.
+
+| Finding | Source | Severity | Action |
+|---|---|---|---|
+| **A12 #337** — `GATE_PAGE_HTML` cached at module load with `mode: authMode` while `authMode` is still `'open'`; `detectAuthMode()` runs later. Password/template deploys served wrong `__GATE_MODE__`. | Codex R1+R2 (High) | High | **FOLD.** `src/gate-page.js` split into `loadGatePageTemplate` (raw) + `renderGatePage(template, mode)` per-request. `src/server.js` caches the template once at boot, injects current `authMode` per `serveGatePage()`. |
+| **D6 #355** — SIGTERM/SIGINT handlers only called `_cleanupAllPtys()` without `process.exit()`. Adding any signal listener overrides Node's default termination → container shutdown hangs until external SIGKILL. | Codex R1+R2 (High) | High | **FOLD.** `src/ws-terminal.js`: SIGTERM handler now calls cleanup then `process.exit(143)`; SIGINT calls cleanup then `process.exit(130)` (conventional `128+signum`). 'exit' hook stays as last-resort sweep for natural exits. Mock pin SAF-PTY-02 updated to assert the new shape. |
+| **A2 #327** — MCP `task_move` handler still called `db.reparentTask()` (not `db.moveTask`); catalog had no `rank` arg. MCP cross-bucket moves with target rank silently dropped the rank. | Codex R1+R2 (High) | High | **FOLD.** `src/mcp-tools.js` `task_move` routes through `db.moveTask({parentTaskId, projectId, rank})`. `src/mcp-catalog.js` adds `rank: { type: 'number', description: '…' }` to the schema. HTTP and MCP paths now share the same atomic transaction. |
+| **A5 #330** — `file_find` used `execFileSync` inside an async MCP handler. Slow searches blocked the Node event loop and stalled unrelated workbench requests / WebSocket activity. Original A5 acceptance was async `execFile`. | Codex R1+R2 (Major) | Major | **FOLD.** `src/mcp-tools.js` imports `execFile` + `util.promisify` → `execFileAsync`. Handler awaits the promisified call. Timeout + maxBuffer sourced from `mcp.fileFindTimeoutMs` + `mcp.fileFindMaxBuffer` config keys (already externalised by C2 #344) instead of hardcoded values. |
+| **A11 #336** — Cascade removed `~/.claude.json` projects entry, Gemini `trustedFolders`, Codex `config.toml` block — but did NOT remove the project-local `.mcp.json` or the `mcp_project_enabled` DB rows. Stale registrations could leak across project-path reuse. | Codex R1+R2 (Major) | Major | **FOLD.** `src/routes.js` `cascadeCleanupProject` adds steps 6 + 7: `rm <project.path>/.mcp.json` + `db.clearProjectMcpEnabled(project.id)`. New DB helper added in `src/db.js` (`DELETE FROM mcp_project_enabled WHERE project_id = ?`). |
+| **A15 #340** — Modal sweep claimed primary-CRUD coverage but 8 representative call sites still used native `alert()` for failure messaging (program create/save, task move/status, Save As, Save, Edit, Add account). Codex disagreed with Claude's accept; flagged as Major. | Codex R1 (Major), Claude R1 (accepted with caveat) | Major | **FOLD.** `public/js/modal.js` adds `showErrorModal({title, message})` reusing the `#confirm-modal` DOM with the Cancel button hidden. `public/index.html` converts the 8 primary-CRUD `alert()` sites Codex listed to `await window.showErrorModal(...)`. Remaining `alert()` calls (29) are debug toasts / non-CRUD explanatory paths and are out-of-scope per the original plan §5.A.A15 wording (primary CRUD). |
+| **Browser test silent-green** — `npm run test:browser` ran `node --test tests/browser/*.test.js` but those specs all `try { require('playwright') } catch { process.exit(0); }` — silent exit-0 with the playwright devDep removed. A green gate appearance with zero browser assertions actually run. | Codex R2 (Critical) | Critical | **FOLD.** `package.json` removes the `test:browser` script entirely. Browser verification is plugin-MCP-only per `feedback_no_npx_playwright.md` — the spec files remain as reference material for what to verify, but cannot be invoked via npm to fake a green gate. |
+
+### Single-CLI / lower-severity findings — DISPOSITIONED
+
+| Finding | Source | Disposition |
+|---|---|---|
+| **K1 #360** — `001-baseline.js` is empty; the legacy 20+ ALTER blocks at the top of `db.js` weren't replaced. Plan wording said K1 would replace them. | Claude R1 (LOW-MED), Codex R1+R2 (Minor) | **Re-scope as baseline-only foundation.** Both CLIs concur this is acceptable as a forward-looking anchor — first real `002-*` migration drives the byte-identical-`.schema` capture and the partial-apply test. The legacy ALTER blocks are idempotent + in-prod; replacing them would be its own multi-day effort. K1 #360's issue body is updated to clarify "baseline-only foundation; legacy ALTER conversion deferred to Phase 4 K1b". |
+| **A14 #339** — OAuth detector tests use synthetic fixture strings, not captured CLI output. Plan acceptance asked for redacted real-CLI fixtures. | Codex R1+R2 (Major), Claude silent | **DEFER to Phase 2.** Capturing the fixtures requires running the OAuth flow per CLI in a controlled environment and redacting tokens — non-trivial. The synthetic fixtures still pin the parser shape; the brittleness risk Codex flags (CLI prompt drift) is real but bounded. Filed as new follow-up issue: see #441 (filed during disposition). |
+| **`require-hoist` test skipped in production container** | Codex R2 (Major) | **Accept-with-documentation.** The test is structural-quality (AST walk via `acorn`, a devDep). Production containers run `npm ci --omit=dev` and don't ship acorn. The gate-evidence claim already counts the test as skipped, not passing. Per Codex's suggestion, the C5 #347 issue body is updated to clarify "structural test skipped in prod container by design; runs in dev/CI". |
+| **PHASE-1-GATE-01 is regression baseline, not cumulative** | Claude R1 (MED) → R2 walk-back to NOTED-DEFENSIBLE | **Accept-with-documentation per Claude R2.** The cumulative gate is the gate process (10 steps including UI runbook), not a single test. The 7 per-fix runbook entries running cumulatively against the same M5 deployment satisfy the spirit of `feedback_phase_gate_tests.md`. Tighter version (one orchestrated browser test exercising 3-5 fixes in sequence) noted as future improvement. |
+| **Mock fail attribution unspecified (5 names)** | Claude R1 → R2 RESOLVED via Gemini's R2 listing | **RESOLVED.** The 5 mock fails are: `DB-05` (task CRUD lifecycle), `TSK-07` (created_by), `TSK-08` (tree object shape), `TSK-09` (tree filter param), and "task CRUD success paths with DB verification". All five are pre-v2 task API tests; tracked by O3 #377 for Phase 4 alignment. |
+| **`task_update` `{updated:true}` masking missing rows** | Claude R1+R2 (D) | **FILED #438** ✓ (Phase 4) |
+| **`resetBaseline()` destroys all tasks + history** | Claude R2 surfaced this (verified `tests/helpers/reset-state.js:35`); developer agent filed | **FILED #439** ✓ (Phase 4 — Claude R2 recommended Major severity) |
+| **A11 cascade misses bash terminals** | Developer agent self-disclosed | **FILED #440** ✓ (Phase 2/3 — A11 stated scope was "Claude session") |
+| **Image-state honesty: runtime patched, not clean rebuild** | Claude R2 (MED, NEW) | **DO BEFORE MERGE.** Recommend rebuild image from `phase-1-verify` HEAD (no `docker cp` mutations), redeploy to M5, run regression sweep one more time. Cycle is ~30 min. Not a gate blocker but the merge candidate should be a clean build of HEAD, not a patched runtime. Captured below in §"Pre-merge action items". |
+
+### Post-fold verification
+
+After the seven consensus folds landed:
+- Mock suite on M5: **336 pass / 5 fail / 1 skip** (same baseline; zero new regressions)
+- Live suite on M5: **114 pass / 15 fail** (same O3 #377 baseline; zero new regressions)
+- 13 new live test files all pass (53 tests)
+- Browser MCP probes still confirm A14 / A15 / A16 / A18 surfaces
+
+### Pre-merge action items (Claude R2 §G.4.1)
+
+1. **Fresh image rebuild from `phase-1-verify` HEAD** (no `docker cp` mutations). Verifies the merge candidate is what was tested.
+2. **Redeploy to M5/dev** via RUN-001 canonical path.
+3. **Re-run regression sweep**: `npm test` + per-file live suite.
+4. **Spot-check 1-2 browser MCP scenarios** (A2 drag, A4 picker) to confirm the fresh build preserves the verified UI behavior.
+
+These four steps are NOT a Phase 2 follow-up — they're the rebuild-equivalence check before the merge candidate becomes `main`.
 
 ---
 

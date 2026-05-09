@@ -272,6 +272,12 @@ The Facilitator (separate session) audited the matrix evidence after the Develop
 
 **Issues with NO screenshot at all:** A2, A3, A4, A5, A6, A8, A9, A11, A12, A13, A15, A16, A17, A18, D1, D2, D6, L1, Q2, Q3, Q4, Q5, #388 — all cited evaluate / fetch / API / docker / programmatic-function-call as evidence. None of these meet STD-003 §12.6.
 
+### Re-verification — Development session, post-audit
+
+| Issue | Screenshot | Action chain (real events) | Observable in screenshot |
+|---|---|---|---|
+| A4 #329 | `06-a4-picker-different-org.png` | `browser_click` on `#panel-toggle` → `browser_click` on `.panel-tab:has-text("Tasks")` → `browser_click` on `#task-tree .project-row[data-project-id="1163"]` (expand rebuild_a4_proj) → `browser_click(doubleClick)` on `#task-tree .task-row[data-task-id="240"]` (open r-a4-task detail) → `browser_click` on `#task-detail-modal button:has-text("Pick…")` (open issue picker) | Picker header reads "Pick a GitHub issue **github.com/different-org/rebuild-test**" — the project's configured repo, NOT hardcoded `rmdevpro/`. Picker correctly attempted to query that repo (and failed with `no_account_for_path: github.com/different-org` — expected since workbench has no GH credentials for that org; that's a separate auth concern, not what A4 fixes). |
+
 **Issues marked N/A:** C2, C3, C4, C5, C6, C8, D3, D4, D5, D7, D8, D9, D10, K1, N1a, Q6 — these are claimed N/A. Per the user's "almost everything affects the UI" rule, many should be converted to "add assertion to existing runbook entry, screenshot the entry running" rather than skipped entirely.
 
 ### Honest verified count

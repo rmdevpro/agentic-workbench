@@ -335,7 +335,16 @@ Per memory `feedback_no_punted_followups.md`, every "deferred" / "follow-up" / "
 - Stop using `npx playwright` — drove cleanup of stale playwright devDep + chrome cache. Memory `feedback_no_npx_playwright.md` saved. Commit `dfe6bbf` (gate cleanup) drops the playwright devDep from `package.json`.
 - `/ultrareview` is not the 3-CLI mechanism in this project — corrected, references stripped from work-summary + gate issue. Memory `feedback_no_ultrareview.md` saved.
 - Product/user name canonicalisation: "Workbench" everywhere (no "Blueprint" or `blueprint` user). 14 memory files + `MEMORY.md` index updated. SSH config + remote unix users renamed `blueprint` → `workbench` on m5/hymie2 (irina already had workbench user; pub key authorized). Hymie unreachable.
-- Workbench task DB falsely returning `{updated: true}` for non-existent tasks via the `db.getTask(id) || { updated: true }` fallback at `/app/src/mcp-tools.js:609` — flagged but not folded (would change MCP semantics; Phase 4 territory).
+
+**Follow-up issues filed during this gate cycle (gaps surfaced by verification, not in original plan):**
+
+| # | Title | Phase | Why filed |
+|---|---|---|---|
+| 438 | `task_update` MCP returns `{updated:true}` for non-existent tasks (silent fallback) | Phase 4 | `db.getTask(id) \|\| { updated: true }` at `/app/src/mcp-tools.js:609` masked an empty `tasks` table during the gate cycle. Forty-one consecutive `task_update` calls all returned success while doing nothing. |
+| 439 | `resetBaseline()` destroys all tasks + task_history without warning | Phase 4 | `tests/helpers/reset-state.js:35` does unconditional `DELETE FROM tasks; DELETE FROM task_history;`. Wipes the user's panel state any time the live suite runs. |
+| 440 | Project remove cascade misses bash terminals | Phase 2/3 (parent: A11 #336) | A11 cascade enumerates `sessions` table; `/api/terminals` doesn't write there, so terminal tmux panes survive project deletion. Out-of-scope per A11's stated "Claude session" wording but real resource leak. |
+
+These are the issues where I CAUGHT a gap but the fix didn't fold under the no-punted-followups rule (different file / different error class / out-of-scope per the parent issue body). Each has acceptance criteria + a phase assignment. The 4 in-cycle bug fixes (A1 route lookup, A4 typo, A11 test side-effect, A16 third escHtml, A3 observability) DID fold under the rule and ship as followup commits within their parent issues.
 
 ---
 

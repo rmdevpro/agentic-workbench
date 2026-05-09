@@ -2320,14 +2320,20 @@ function registerCoreRoutes(
     try {
       const { sessionId } = req.params;
       const { mode = 'info', tailLines = 60 } = req.body;
+      // #326 [A1]: Resolve the project's actual path (not name) so the
+      // canonical findSessionsDir encoder sees the real on-disk path. The
+      // sessions row only carries project_id; look the project up to get
+      // its path. Falls back to req.body.project (treated as a name) only
+      // when the session row is absent — matches the legacy client contract.
       const entry = db.getSession(sessionId);
-      const project = entry ? entry.project_name : (req.body.project || '');
-      // #326 [A1]: Use canonical encoder safe.findSessionsDir which replaces
-      // [\/_] with '-' (matches Claude Code's actual encoding). The previous
-      // inline replace(/[^a-zA-Z0-9]/g, '-') was over-eager — it mangled
-      // valid path characters (., ~, +, space) and produced session-file
-      // paths that don't exist on disk.
-      const projectPath = project ? safe.resolveProjectPath(project) : '';
+      let projectPath = '';
+      if (entry && entry.project_id) {
+        const proj = db.getProjectById(entry.project_id);
+        if (proj && proj.path) projectPath = proj.path;
+      } else if (req.body.project) {
+        const proj = db.getProject(req.body.project);
+        projectPath = proj && proj.path ? proj.path : safe.resolveProjectPath(req.body.project);
+      }
       const sessionFile = join(safe.findSessionsDir(projectPath), `${sessionId}.jsonl`);
 
       if (mode === 'info') {

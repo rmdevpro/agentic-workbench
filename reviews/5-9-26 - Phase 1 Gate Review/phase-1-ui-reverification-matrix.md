@@ -324,6 +324,22 @@ PM/Facilitator dispatched 3-CLI Round 2 reviews on `fa9fc5c`. Codex returned DO-
 | F9 — Sync `tmuxCreateCLI` still in 3 async handlers | MINOR (Claude) | `8d79d0b` | POST /api/terminals (line 1557), POST /api/sessions/:id/resume (line 1609), POST /api/sessions/:id/restart (line 2437) all converted to `await tmuxCreateCLIAsync`. Folded per `feedback_no_punted_followups.md`. |
 | F10 — Matrix narrative says A11 retains JSONL dir; cascade actually removes it | DOCUMENTATION (Claude) | `a546145` | Row at line 175 + line 220 corrected: only the project's workspace dir is retained; the Claude JSONL dir IS removed by cascade step 2 (`src/routes.js:1057-1065`). Gemini's R2 "A11 cascade scope rationale" finding was based on the same inaccurate row. |
 
+### R3 fix-claimed (3-CLI Round 3 review findings → fold-back commits)
+
+PM/Facilitator dispatched 3-CLI Round 3 reviews on `ecb784e`. Gemini PASS, Claude PASS-with-minor-followups (4 non-blocking observations), Codex DO-NOT-SIGN-OFF-YET with 2 new findings (1 BLOCKER, 1 MAJOR) — the gaps that R2 fixes didn't reach. Both folded.
+
+| Finding | Tier | Commit | Disposition |
+|---|---|---|---|
+| R3-N1 — `WORKBENCH_TEST_SANDBOX=1` env var not wired into documented test runner (live + browser suites threw at setup) | BLOCKER (Codex; Claude flagged same as N1 observation) | `dd4343b` | `package.json` `test:live` and new `test:browser` scripts now prefix `WORKBENCH_TEST_SANDBOX=1`. `docker-compose.test.yml` adds the env to the test container. The `npm test` (mock) script intentionally does NOT set it (mock tests don't call `resetBaseline()`) so the safety guard's "explicit opt-in for destructive helpers" semantic stays clean. |
+| R3-N2 — Task-v2 cleanup incomplete: `tests/live/routes-tasks.test.js` + `tests/browser/task-tree.spec.js` still posted `{folder_path, title}` against the post-#388 `/api/tasks` handler | MAJOR (Codex) | `bec7742` | (1) `src/routes.js` POST `/api/tasks` accepts `project_name` as fallback when `project_id` missing (matches MCP `task_add`). (2) `tests/live/routes-tasks.test.js` rewritten: `ensureSeedProject()` helper, all `folder_path` → `project_name: 'wb-seed'`, `'todo'` → `'inactive'`, `cleanAllTasks` traverses the v2 tree shape, TSK-11 move uses `parent_task_id`. (3) `tests/browser/task-tree.spec.js` `createTask` helper switched to `project_name: 'wb-seed'`. Final `grep -rn "folder_path" tests/` returns only doc/comment hits + the routes mock infrastructure (the latter is the O3 #377 baseline territory; out of R3-N2 scope). |
+| docker-compose port collision (surfaced when bringing up the test stack) | follow-up to R3-N1 | `d542741` | Test compose `ports: !override` to fully replace the base compose's ports list (was inheriting `7860:7860` and conflicting with the prod workbench on the same host). Test stack now exposes 7867 only; internal traffic on container:3000. |
+
+**Post-R3 results (verified inside the workbench-test stack on M5):**
+- Mock: **401/407 pass** (5 task-v2 baseline failures unchanged from O3 #377; 1 skipped). `:bec7742` / image SHA `4dca9c9297b6`.
+- Live: **120/125 pass** in the sandboxed test container — 5 fails are: 1 fixture-empty issue (A5-LIVE-04), 1 in MCP-06 (project_find returned empty in the empty test fixture), and 3 v2-behavior gap surfacings in my TSK-07/10/11 rewrites (history event names + status field mappings differ from v1; tracked under O3 #377).
+
+Current `:latest` = `:d542741` after the test-compose ports fold (image rebuild needed for the compose change to land).
+
 ### N/A reclassification sweep — covered by existing exercised code paths
 
 Per the Facilitator's pushback ("almost everything affects the UI"), each issue previously marked `N/A` is reframed below as "covered by an existing exercised code path during this verification cycle" with the specific evidence that the affected code path ran during the screenshots already captured.

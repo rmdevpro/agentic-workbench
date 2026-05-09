@@ -408,14 +408,16 @@ After the seven consensus folds landed:
 - 13 new live test files all pass (53 tests)
 - Browser MCP probes still confirm A14 / A15 / A16 / A18 surfaces
 
-### Pre-merge action items (Claude R2 §G.4.1)
+### Pre-merge action items (Claude R2 §G.4.1) — COMPLETE
 
-1. **Fresh image rebuild from `phase-1-verify` HEAD** (no `docker cp` mutations). Verifies the merge candidate is what was tested.
-2. **Redeploy to M5/dev** via RUN-001 canonical path.
-3. **Re-run regression sweep**: `npm test` + per-file live suite.
-4. **Spot-check 1-2 browser MCP scenarios** (A2 drag, A4 picker) to confirm the fresh build preserves the verified UI behavior.
+| Step | Status | Result |
+|---|---|---|
+| 1. Fresh image rebuild from `phase-1-verify` HEAD | ✓ | image `8f2e8e500642` / sha256:79bc9932... / tagged `:2cd5f28` + `:latest`. Pushed to `irina:5000/workbench` registry. No `docker cp` mutations in this runtime. |
+| 2. Redeploy to M5/dev via RUN-001 canonical path | ✓ | `cd /srv/.admin/workbench && docker compose pull && docker compose up -d` recreated the container in 1s; `/health` returns `{"status":"ok","dependencies":{"db":"healthy","workspace":"healthy","auth":"healthy"}}` |
+| 3. Re-run regression sweep on fresh image | ✓ | Mock 386P/5F/1skip on the fresh image (was 336/5/1 on the patched runtime — the 50 difference is the new mock pin tests now bundled). Live 114P/15F (same 14 routes-tasks + 1 mcp-tools O3 #377 baseline). One transient a7-program-rename-race fail in the first sweep was state-pollution from prior tests; second sweep clean (4/4). |
+| 4. Spot-check browser MCP scenarios | ✓ | A2 cross-bucket drag on fresh image: rendered DOM = `[R-b1, R-b2, R-moving, R-b3, R-b4]`; moving task `data-project-id` flipped to destination. A4 issue picker on fresh image: `#issue-picker-repo` = `github.com/different-org/rebuild-test` (NOT hardcoded `rmdevpro/...`). Both behaviours match the per-issue verification recorded earlier in the gate cycle. |
 
-These four steps are NOT a Phase 2 follow-up — they're the rebuild-equivalence check before the merge candidate becomes `main`.
+The merge candidate is now identical in shape to what was tested. Image-state-honesty concern (Claude R2 §G.4.1) closed.
 
 ---
 

@@ -9,19 +9,17 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { get, post, put } = require('../helpers/http-client');
 const { resetBaseline, dockerExec } = require('../helpers/reset-state');
+const { queryJson } = require('../helpers/db-query');
 
 async function ensureProject(name, path) {
   dockerExec(`mkdir -p ${path}`);
   const r = await post('/api/projects', { path, name });
-  // 200 (newly created) or whatever status — we just need the project to exist
   if (r.status !== 200 && r.status !== 409) {
     throw new Error(`project create failed for ${name}: ${r.status} ${JSON.stringify(r.data)}`);
   }
-  // Look it up by name to get the id
-  const state = await get('/api/state');
-  const proj = state.data.projects.find((p) => p.name === name);
-  if (!proj) throw new Error(`project ${name} not found in /api/state`);
-  return proj;
+  const rows = queryJson(`SELECT id, name, path FROM projects WHERE name = '${name}'`);
+  if (!rows.length) throw new Error(`project ${name} not found in DB`);
+  return rows[0];
 }
 
 async function addTask(projectId, title) {

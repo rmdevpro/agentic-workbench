@@ -13,11 +13,22 @@ const { resetBaseline, BASE_URL } = require('../helpers/reset-state');
 const { startCoverage, stopCoverage, writeCoverageReport } = require('../helpers/browser-coverage');
 const SS = require('path').join(__dirname, 'screenshots');
 
-async function createTask(folderPath, title) {
+// R3-N2 (Codex MAJOR): per #388 v2 contract task_add no longer accepts
+// folder_path. /api/tasks POST now accepts project_name as a fallback
+// (matches MCP task_add). All tasks created here are scoped to wb-seed
+// (the test fixture project planted by resetBaseline).
+//
+// The folderPath argument is kept for call-site compatibility — it's
+// IGNORED now (no folder concept in the v2 task tree). Tests that
+// previously asserted folder-tree shape (UI-TSK-10/11/13/14) will see
+// all tasks scoped to wb-seed; folder/.task-folder UI elements may not
+// render the same way they did pre-v2 — those are known to fall under
+// the O3 #377 task-v2 baseline.
+async function createTask(_folderPath, title) {
   return fetch(`${BASE_URL}/api/tasks`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ folder_path: folderPath, title }),
+    body: JSON.stringify({ project_name: 'wb-seed', title }),
   }).then(r => r.json());
 }
 

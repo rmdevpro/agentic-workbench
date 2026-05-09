@@ -1828,17 +1828,21 @@ function registerCoreRoutes(
   });
 
   app.post('/api/tasks', (req, res) => {
-    const { project_id, parent_task_id, github_issue, title, description, status, created_by } = req.body || {};
+    const { project_id, project_name, parent_task_id, github_issue, title, description, status, created_by } = req.body || {};
     if (!title) return res.status(400).json({ error: 'title required' });
     if (title.length > TASK_TITLE_MAX_LEN) return res.status(400).json({ error: 'title too long' });
     if (description && description.length > TASK_DESC_MAX_LEN) return res.status(400).json({ error: 'description too long' });
+    // R3-N2: accept project_name as a fallback when project_id is missing,
+    // matching the MCP task_add tool's contract. Lets HTTP callers use the
+    // simpler {project_name, title} shape without first resolving the id.
     let project = null;
     if (project_id != null) project = db.getProjectById(Number(project_id));
+    if (!project && project_name) project = db.getProject(String(project_name));
     if (!project && parent_task_id != null) {
       const parent = db.getTask(Number(parent_task_id));
       if (parent) project = db.getProjectById(parent.project_id);
     }
-    if (!project) return res.status(400).json({ error: 'project_id or valid parent_task_id required' });
+    if (!project) return res.status(400).json({ error: 'project_id, project_name, or valid parent_task_id required' });
     const issue = github_issue ? String(github_issue).trim() : null;
     if (!issue && _projectHasRepoPath(project.path)) {
       return res.status(400).json({ error: `github_issue required for tasks in repo-backed project "${project.name}"` });

@@ -77,9 +77,9 @@ In `tests/workbench-test-runbook.md`:
 
 ## What still needs the user (out-of-agent gate items)
 
-1. **3-CLI test review** — invoke `/ultrareview` against the test diff (`git diff main...phase-1-verify -- tests/`) for independent confirmation per STD-005, STD-003, REQ-001 §1.4. Agent cannot run `/ultrareview`.
-2. **3-CLI code review** — `/ultrareview` against the code diff (`git diff main...phase-1-verify -- src/ public/`) per REQ-001, STD-004.
-3. **Sign-off** — once 3-CLI rounds complete + any consensus findings folded in + suites re-run, user grants permission to close Phase 1 issues per memory `feedback_never_close_without_permission.md`.
+1. **3-CLI test review** — pending. The mechanism for driving the 3-CLI review is user-owned (per Phase 0 precedent the outputs land at `reviews/<date>/{claude,gemini,codex}-review.md`); agent does not prescribe the tool. Diff to review: `git diff main...phase-1-verify -- tests/`.
+2. **3-CLI code review** — pending. Same — user-driven. Diff to review: `git diff main...phase-1-verify -- src/ public/`.
+3. **Sign-off** — once the 3-CLI rounds land + any consensus findings folded in + suites re-run, user grants permission to close Phase 1 issues per memory `feedback_never_close_without_permission.md`.
 
 ## Reading order for reviewers
 

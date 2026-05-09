@@ -5833,6 +5833,16 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 1. \`POST /api/mcp/call\` with \`{tool:'file_search_code', args:{query:'uniqueMarkerForIssue291', limit:20}}\`.
 **Verify:** Response includes a result whose \`file_path\` ends in \`test-vec-291/marker.js\` AND whose \`text\` contains the marker token. Pre-fix this returned zero matches because scanCode hardcoded \`[WORKSPACE]\`.
 
+### MODAL-A15-01: showInputModal + showConfirmModal render workbench modals, not native dialogs (#340)
+**Issue:** #340 [A15].
+**Setup:** Workbench loaded in browser (M5).
+**Steps (browser):**
+1. Save originals; stub `window.prompt = () => { nativePromptCalled = true; return null; }` and `window.confirm = () => { nativeConfirmCalled = true; return false; }`.
+2. `browser_evaluate` `window.showInputModal({ title:'A15-test', label:'Enter value', defaultValue:'hello' })` and capture the returned promise.
+3. After 200 ms wait, read `document.getElementById('input-modal').classList.contains('visible')`, the rendered title/field value, then call `window.submitInputModal()` and await the promise.
+4. `browser_evaluate` `window.showConfirmModal({ title:'A15-confirm', message:'really?', confirmLabel:'Yes', danger:true })`, wait, read DOM, call `window.dismissConfirmModal()` and await.
+**Verify:** `#input-modal.visible` is true while open; `#input-modal-title` text equals the supplied title; `#input-modal-field.value` equals the `defaultValue`; submitting resolves the promise with that value. `#confirm-modal.visible` is true while open; title and message render; dismiss resolves to `false`. Across both flows `nativePromptCalled === false` and `nativeConfirmCalled === false` — i.e., workbench modals supplant native prompt/confirm for primary CRUD. Pre-fix `window.prompt` was called in 6+ sites and broke silently in embed contexts that block native dialogs.
+
 ### OAUTH-DETECTOR-A14-01: oauth-detector.js loads in browser and parses real fixtures (#339)
 **Issue:** #339 [A14].
 **Setup:** Workbench loaded in browser (M5). No CLI session needed — this entry verifies the extracted module's behavior in the page context, decoupled from a live OAuth flow.

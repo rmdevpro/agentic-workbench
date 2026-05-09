@@ -32,13 +32,32 @@ test('A6-LIVE-03: gh_cmd rejects array with number element (400)', async () => {
   assert.equal(r.status, 400);
 });
 
-test('A6-LIVE-04: gh_cmd valid argv form does not 400 (proves shape passed validation)', async () => {
-  // gh may not be authenticated in the container — that is fine; we are
-  // verifying the request reached the gh subprocess (i.e., did NOT 400 on
-  // shape). Whatever exit code gh returns is acceptable here.
+test('A6-LIVE-04: gh_cmd valid argv form passes shape validation (rejects only missing repo, not shape)', async () => {
+  // Without `repo` the route returns 400 "repo or path required" — that's a
+  // *different* 400 than the argv-shape rejections. Verify the error string
+  // is about repo/path, NOT about command shape, which proves the argv
+  // validation accepted ['version'].
   const r = await post('/api/mcp/call', {
     tool: 'gh_cmd',
     args: { command: ['version'] },
   });
-  assert.notEqual(r.status, 400, `valid argv must not 400: ${JSON.stringify(r.data)}`);
+  // Either 400 (missing repo, which is correct) or 200 (succeeded against
+  // some default) — the failure mode we care about is shape rejection.
+  if (r.status === 400) {
+    assert.doesNotMatch(r.data.error, /command must be an array|every command element/i, `400 reason must NOT be argv-shape: ${r.data.error}`);
+    assert.match(r.data.error, /repo|path/i, `expected repo/path required error, got: ${r.data.error}`);
+  }
+});
+
+test('A6-LIVE-05: gh_cmd valid argv with repo passes validation (reaches gh subprocess)', async () => {
+  // Now provide repo. gh may auth-fail, but the response must not be a
+  // shape-validation 400.
+  const r = await post('/api/mcp/call', {
+    tool: 'gh_cmd',
+    args: { command: ['version'], repo: 'rmdevpro/agentic-workbench' },
+  });
+  if (r.status === 400) {
+    assert.doesNotMatch(r.data.error, /command must be an array|every command element/i, `400 reason must NOT be argv-shape: ${r.data.error}`);
+  }
+  // Any non-shape outcome is acceptable: 200 (success), 502 (gh auth fail), etc.
 });

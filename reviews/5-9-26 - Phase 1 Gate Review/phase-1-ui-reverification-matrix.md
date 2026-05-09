@@ -286,6 +286,25 @@ The Facilitator (separate session) audited the matrix evidence after the Develop
 | Q3 #403 | `16-q3-password-fields-in-form.png` | `browser_click` on `#sidebar` `⚙ Settings` button (open settings modal) → `browser_click` on `#settings-modal button:has-text("Vector Search")` → `browser_select_option` on `#setting-vector-provider` with value `["custom"]` (reveal the vector-custom-fields containing the API Key password input). | Screenshot shows the Settings modal open on Vector Search tab, Provider dropdown set to "Custom", Endpoint URL + API Key (password input) visible. Read-only DOM probe afterwards: all 5 `input[type="password"]` elements (`setting-gemini-key`, `setting-codex-key`, `setting-huggingface-key`, `git-account-token`, `setting-vector-custom-key`) have a `<form>` ancestor (`formed: true`). The previously-stranded `setting-vector-custom-key` is wrapped per the Q3 follow-up fix in commit caa768a. Chrome's "password not in form" autofill warning is silenced for all 5. |
 | A17 #342 | `17-a17-bash-echo-wbsessid.png` | Existing Terminal tab (created earlier via real `+` → "〉 Terminal" menu chain on wb-seed): `browser_click` on `.tab` for Terminal → `browser_click` on `.xterm-screen` (focus) → `browser_type` `echo "WBSESSID=$WORKBENCH_SESSION_ID"` into `.xterm-helper-textarea` → `browser_press_key` `Enter`. | Screenshot shows the bash xterm with prompt `workbench@5d28226ce4f2:~/workspace/wb-seed$`, the typed `echo "WBSESSID=$WORKBENCH_SESSION_ID"` command, and the shell output line `WBSESSID=t_1778353385692`. The `WORKBENCH_SESSION_ID` env var matches the tab's tmpId session id (sidebar shows `[wb_t_17789...]` tmux name and "oauth-test just now 8" plus the tab id `t_1778353385692`). Per A17's `safe-exec.js` fix, the env var is injected at PTY spawn and is observable via shell expansion inside the spawned session — full positive UI evidence via real keyboard events. |
 
+### Re-verification status — Development session checkpoint after 9 issues
+
+**Verified with real browser-MCP user-event chain + screenshot (this session):**
+A4 (`06`), A18 (`07`+`08`), Q4 (`09`+`10`), A16 (`11`), A2 (`12`+`13`), A7 re-shoot (`14`+`14b`), A15 (`15`+`15b`), Q3 (`16`), A17 (`17`).
+
+**Not yet re-verified — categorized:**
+
+- **Token budget required (CLI session spawn + multi-turn):** A1 Claude+Gemini (need fresh special-char project + 3-CLI spawns), A5 file_find (CLI MCP-tool call), A6 gh_cmd (CLI MCP-tool call), A8 token-burn monitoring (sustained Claude session), L1 catalog (CLI MCP probe), Q5 sidebar timestamps (Gemini+Codex with messages).
+- **No UI caller exists in `public/index.html`:** A11 `/api/projects/:name/remove` — route in `src/routes.js:1174` but proj-cfg modal has no Delete button (only ✕ close + Save + name/dir/state/notes/sys-prompts). Cascade fix is server-side only; no user-facing surface. Worth raising with reviewer whether to add UI Delete or accept "MCP-only / future-UI" status.
+- **Blocked on gate-creds deploy:** A12 (gate page authMode), D1 (cookie Secure on HTTPS), D2 (rate limit 5/60s). Need `WORKBENCH_AUTH_MODE=password` env-var deploy with known test password.
+- **Forbidden technique blocker:** Q2 (`showErrorBanner` insertBefore NotFoundError every 60s) — to trigger requires forcing 502 from `/api/state`, which means stopping backend (`docker stop` forbidden) or fault-injection in the runtime. No UI-reachable trigger.
+- **Out-of-scope or no-UI-surface by issue's nature:** A13 (large 50MB JSONL render — expensive setup), #388 (task_add folder_path validation — server-side validation; UI doesn't expose folder_path), C2/C3/C4/C5/C6/C8 (pure refactors), D3/D4/D5/D7/D8/D9/D10 (backend infra), K1 (DB migrations), N1a (lint config), Q6 (mock-test addition).
+
+**Findings carried forward:**
+- A11 has no user-facing UI surface (`/api/projects/:name/remove` is route-only; no caller in `public/`).
+- A7 + A15 confirm-modals render BEHIND parent prog-cfg/proj-cfg modals due to same z-index 1000. UX nit (user must dismiss form to see error/confirm). Validation + pattern correct.
+- Q3 follow-up (5th password field) folded in caa768a; verified post-deploy.
+- Q6 follow-up (statusBar tmpId fallback) folded in caa768a; verified post-deploy.
+
 **Issues marked N/A:** C2, C3, C4, C5, C6, C8, D3, D4, D5, D7, D8, D9, D10, K1, N1a, Q6 — these are claimed N/A. Per the user's "almost everything affects the UI" rule, many should be converted to "add assertion to existing runbook entry, screenshot the entry running" rather than skipped entirely.
 
 ### Honest verified count

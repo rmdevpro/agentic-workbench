@@ -228,3 +228,38 @@ test('MCP task_add rejects without project_id or project_name (no folder_path fa
     assert.match(r.body.error, /project_id or project_name required/i);
   });
 });
+
+// #437: session_list previously walked <project>/.claude/sessions/*.jsonl which
+// is Claude-only — gemini and codex sessions (rows in the sessions DB table
+// with non-claude cli_type) were invisible to MCP clients. The fix queries
+// db.getSessionsForProject so all 3 cli_types appear. Mock test seeds rows
+// directly via db and asserts the response contains all 3.
+test('MCP session_list returns rows for all 3 cli_types (#437)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const { join } = require('path');
+  // Seed a temp project + 3 sessions with different cli_types.
+  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_437_proj');
+  fs.mkdirSync(projPath, { recursive: true });
+  const proj = db.ensureProject('mock_437_proj', projPath);
+  try {
+    db.upsertSession('mock-437-claude-session', proj.id, 'claude-sess', 'claude');
+    db.upsertSession('mock-437-gemini-session', proj.id, 'gemini-sess', 'gemini');
+    db.upsertSession('mock-437-codex-session',  proj.id, 'codex-sess',  'codex');
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, { tool: 'session_list', args: { project: 'mock_437_proj' } });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+      const types = new Set(r.body.result.sessions.map(s => s.cli_type));
+      assert.ok(types.has('claude'), `claude session must be listed; got ${[...types]}`);
+      assert.ok(types.has('gemini'), `gemini session must be listed; got ${[...types]}`);
+      assert.ok(types.has('codex'),  `codex session must be listed; got ${[...types]}`);
+      assert.equal(r.body.result.sessions.length, 3, `3 sessions expected; got ${r.body.result.sessions.length}`);
+    });
+  } finally {
+    // Cleanup so re-runs don't accumulate.
+    try { db.deleteSession('mock-437-claude-session'); } catch { /* ignore */ }
+    try { db.deleteSession('mock-437-gemini-session'); } catch { /* ignore */ }
+    try { db.deleteSession('mock-437-codex-session'); }  catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+  }
+});

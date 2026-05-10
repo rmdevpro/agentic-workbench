@@ -302,26 +302,33 @@ handlers.session_list = async (args) => {
   require_(args, 'project');
   const proj = db.getProject(args.project);
   if (!proj) throw new ToolError('project not found', 404);
-  const sDir = sessionUtils.sessionsDir(proj.path);
+  // #437: query the DB (which has rows for all 3 cli_types via db.upsertSession)
+  // instead of walking <project>/.claude/sessions/ — that was Claude-only and
+  // made gemini/codex sessions invisible to MCP clients. getSessionInfo
+  // dispatches per cli_type for timestamp + message_count metadata; we skip
+  // token reads (heavy, not needed for a list view).
+  const dbRows = db.getSessionsForProject(proj.id) || [];
   const sessions = [];
-  try {
-    const files = await readdir(sDir);
-    for (const file of files) {
-      if (!file.endsWith('.jsonl')) continue;
-      const sessionId = basename(file, '.jsonl');
-      const meta = await sessionUtils.parseSessionFile(join(sDir, file));
-      if (meta) {
-        sessions.push({
-          session_id: sessionId,
-          name: meta.name || 'Untitled',
-          timestamp: meta.timestamp,
-          message_count: meta.messageCount,
-        });
-      }
-    }
-  } catch (err) {
-    if (err.code !== 'ENOENT') {
-      logger.error('Error listing sessions', { module: 'mcp-tools', project: args.project, err: err.message });
+  for (const row of dbRows) {
+    const info = await sessionUtils.getSessionInfo(row.id, { includeTokens: false });
+    if (info) {
+      sessions.push({
+        session_id: row.id,
+        name: info.name || row.name || 'Untitled',
+        cli_type: info.cli_type,
+        timestamp: info.timestamp || row.updated_at || null,
+        message_count: info.message_count || 0,
+      });
+    } else {
+      // Brand-new session (DB row exists but per-CLI helper hasn't found a
+      // file yet). Surface it anyway so the list reflects DB truth.
+      sessions.push({
+        session_id: row.id,
+        name: row.name || 'Untitled',
+        cli_type: row.cli_type || 'claude',
+        timestamp: row.updated_at || null,
+        message_count: 0,
+      });
     }
   }
   return { sessions: sessions.sort((a, b) => new Date(b.timestamp || 0) - new Date(a.timestamp || 0)) };

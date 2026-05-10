@@ -1,4 +1,6 @@
-Context is getting full. Work through the following session end checklist now, before running `/compact`:
+Context is getting full. Codex CLI does NOT have an in-session compaction command — `/clear` ends the session entirely (per the workbench's saved knowledge that Codex's `/clear` kills the session, unlike Claude's or Gemini's). The workbench-supported transition for Codex is therefore: **save state, exit this session, start a new Codex session, and restore context via `/session resume`.**
+
+Work through the following session end checklist now, before exiting:
 
 **1. Update the plan file**
 Update your plan file at `/data/.workbench/plans/{{SESSION_ID}}.md` (workbench-managed, CLI-agnostic — same path works for Claude, Gemini, and Codex; create the directory if it doesn't exist). Include:
@@ -23,4 +25,4 @@ Comment on all open issues with current state. If mid-task, record exactly where
 **5. Update memory files**
 If durable facts emerged this session (user preferences, process decisions, component-specific constraints), write them to the appropriate memory file.
 
-When the checklist is complete, run `/compact`. After compaction, run `/session resume` to restore context.
+When the checklist is complete, exit this Codex session, then start a NEW Codex session in this workbench project and run `/session resume` (with this session's id, `{{SESSION_ID}}`) to restore context. Do NOT run `/clear` — it terminates the session without preserving anything.

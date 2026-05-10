@@ -229,6 +229,59 @@ test('MCP task_add rejects without project_id or project_name (no folder_path fa
   });
 });
 
+// #446: session_prepare_pre_compact dispatches per cli_type so non-Claude
+// callers don't get the Claude-shaped prompt (which references /compact +
+// ~/.claude/plans/, neither of which apply to Gemini or Codex). The mock
+// test seeds 3 sessions directly and asserts each cli_type returns the
+// CLI-appropriate prompt.
+test('MCP session_prepare_pre_compact dispatches per cli_type (#446)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const { join } = require('path');
+  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_446_prepare');
+  fs.mkdirSync(projPath, { recursive: true });
+  const proj = db.ensureProject('mock_446_prepare', projPath);
+  try {
+    db.upsertSession('mock-446-claude-prep', proj.id, 'c', 'claude');
+    db.upsertSession('mock-446-gemini-prep', proj.id, 'g', 'gemini');
+    db.upsertSession('mock-446-codex-prep',  proj.id, 'x', 'codex');
+    await withServer(startMcpApp(), async ({ port }) => {
+      const claudeR = await call(port, { tool: 'session_prepare_pre_compact', args: { session_id: 'mock-446-claude-prep' } });
+      assert.equal(claudeR.status, 200, JSON.stringify(claudeR.body));
+      assert.match(claudeR.body.result, /\/compact/i, 'Claude prompt must reference /compact');
+
+      const geminiR = await call(port, { tool: 'session_prepare_pre_compact', args: { session_id: 'mock-446-gemini-prep' } });
+      assert.equal(geminiR.status, 200, JSON.stringify(geminiR.body));
+      assert.match(geminiR.body.result, /\/compress/i, 'Gemini prompt must reference /compress (not /compact)');
+
+      const codexR = await call(port, { tool: 'session_prepare_pre_compact', args: { session_id: 'mock-446-codex-prep' } });
+      assert.equal(codexR.status, 200, JSON.stringify(codexR.body));
+      assert.match(codexR.body.result, /Codex CLI does NOT/i, 'Codex prompt must call out the no-compaction caveat');
+      assert.doesNotMatch(codexR.body.result, /run `\/clear`/, 'Codex prompt must NOT instruct /clear (it kills the session)');
+    });
+  } finally {
+    try { db.deleteSession('mock-446-claude-prep'); } catch { /* ignore */ }
+    try { db.deleteSession('mock-446-gemini-prep'); } catch { /* ignore */ }
+    try { db.deleteSession('mock-446-codex-prep');  } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+  }
+});
+
+// #446: session_resume_post_compact must throw a clean 404 (not silently
+// return "(could not read session file)") when the session row is missing.
+// The pre-fix silent-fallback was the bug — callers got a useless resume
+// prompt with no actual context tail.
+test('MCP session_resume_post_compact 404s on missing session (#446 no-silent-failure)', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'session_resume_post_compact',
+      args: { session_id: 'definitely-not-a-real-session-id', tail_lines: 5 },
+    });
+    assert.equal(r.status, 404, `expected 404; got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.match(r.body.error || '', /session not found/i);
+  });
+});
+
 // #437: session_list previously walked <project>/.claude/sessions/*.jsonl which
 // is Claude-only — gemini and codex sessions (rows in the sessions DB table
 // with non-claude cli_type) were invisible to MCP clients. The fix queries

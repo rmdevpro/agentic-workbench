@@ -347,28 +347,85 @@ handlers.session_summarize = async (args) => {
   return await sessionUtils.summarizeSession(args.session_id, args.project);
 };
 
-handlers.session_prepare_pre_compact = async () => {
-  return config.getPrompt('session-transition', {});
+// #446: per-CLI prompt dispatch tables. session_prepare_pre_compact and
+// session_resume_post_compact were Claude-only pre-fix — gemini callers got
+// Claude-shaped instructions ("/compact" doesn't exist in Gemini; "/clear"
+// kills a Codex session entirely). Each cli_type now resolves to the prompt
+// authored for it.
+const TRANSITION_PROMPTS = {
+  claude: 'session-transition',
+  gemini: 'session-transition-gemini',
+  codex:  'session-transition-codex',
+};
+const RESUME_PROMPTS = {
+  claude: 'session-resume',
+  gemini: 'session-resume-gemini',
+  codex:  'session-resume-codex',
+};
+
+handlers.session_prepare_pre_compact = async (args = {}) => {
+  requireSessionId(args);
+  const session = db.getSessionFull(args.session_id);
+  if (!session) throw new ToolError('session not found', 404);
+  const cliType = session.cli_type || 'claude';
+  const promptName = TRANSITION_PROMPTS[cliType];
+  if (!promptName) {
+    throw new ToolError(
+      `session_prepare_pre_compact does not support cli_type "${cliType}" — supported: ${Object.keys(TRANSITION_PROMPTS).join(', ')}`,
+      400,
+    );
+  }
+  return config.getPrompt(promptName, { SESSION_ID: args.session_id });
 };
 
 handlers.session_resume_post_compact = async (args) => {
   requireSessionId(args);
   const session = db.getSessionFull(args.session_id);
-  const projectPath = session?.project_path || '';
-  const sessDir = sessionUtils.sessionsDir(projectPath);
-  const sessionFile = join(sessDir, `${args.session_id}.jsonl`);
+  if (!session) throw new ToolError('session not found', 404);
+  const cliType = session.cli_type || 'claude';
+  const projectPath = session.project_path || '';
   const tailLines = Math.max(1, Number.isFinite(args.tail_lines) ? args.tail_lines : 60);
+
   let tail = '';
   let lineCount = 0;
-  try {
-    const content = fs.readFileSync(sessionFile, 'utf-8');
-    const lines = content.trim().split('\n').filter(Boolean);
-    const kept = lines.slice(-tailLines);
-    tail = kept.join('\n');
+
+  if (cliType === 'claude') {
+    const sessDir = sessionUtils.sessionsDir(projectPath);
+    const sessionFile = join(sessDir, `${args.session_id}.jsonl`);
+    try {
+      const content = fs.readFileSync(sessionFile, 'utf-8');
+      const lines = content.trim().split('\n').filter(Boolean);
+      const kept = lines.slice(-tailLines);
+      tail = kept.join('\n');
+      lineCount = kept.length;
+    } catch {
+      throw new ToolError(`Claude session file not found at ${sessionFile} — has the CLI written any messages?`, 404);
+    }
+  } else if (cliType === 'gemini') {
+    // _readGeminiTranscript returns parsed messages; format as text rows for
+    // the resume tail file so the resuming agent can read it as a flat log.
+    const messages = sessionUtils._readGeminiTranscript(args.session_id, 100000, 5000);
+    if (messages.length === 0) {
+      throw new ToolError('No Gemini transcript content for this session — has the CLI written any messages yet?', 404);
+    }
+    const kept = messages.slice(-tailLines);
+    tail = kept.map(m => `[${m.role}] ${m.text}`).join('\n\n');
     lineCount = kept.length;
-  } catch {
-    tail = '(could not read session file)';
+  } else if (cliType === 'codex') {
+    const messages = sessionUtils._readCodexTranscript(args.session_id, 100000, 5000);
+    if (messages.length === 0) {
+      throw new ToolError('No Codex transcript content for this session — has the CLI written any messages yet?', 404);
+    }
+    const kept = messages.slice(-tailLines);
+    tail = kept.map(m => `[${m.role}] ${m.text}`).join('\n\n');
+    lineCount = kept.length;
+  } else {
+    throw new ToolError(
+      `session_resume_post_compact does not support cli_type "${cliType}" — supported: ${Object.keys(RESUME_PROMPTS).join(', ')}`,
+      400,
+    );
   }
+
   // Always write the tail to a file and return the path. Inline return blew
   // past the CLI's tool-result token cap on long sessions; the file path
   // pattern lets the model chunk-read with Read offset/limit at its own pace.
@@ -389,7 +446,7 @@ handlers.session_resume_post_compact = async (args) => {
   } catch { /* ignore */ }
   fs.writeFileSync(tailPath, tail, 'utf-8');
   const byteCount = Buffer.byteLength(tail, 'utf-8');
-  return config.getPrompt('session-resume', {
+  return config.getPrompt(RESUME_PROMPTS[cliType], {
     TAIL_PATH: tailPath,
     LINE_COUNT: String(lineCount),
     BYTE_COUNT: String(byteCount),

@@ -1,4 +1,4 @@
-Context is getting full. Work through the following session end checklist now, before running `/compact`:
+Context is getting full. Work through the following session end checklist now, before running `/compress`:
 
 **1. Update the plan file**
 Update your plan file at `/data/.workbench/plans/{{SESSION_ID}}.md` (workbench-managed, CLI-agnostic — same path works for Claude, Gemini, and Codex; create the directory if it doesn't exist). Include:
@@ -23,4 +23,4 @@ Comment on all open issues with current state. If mid-task, record exactly where
 **5. Update memory files**
 If durable facts emerged this session (user preferences, process decisions, component-specific constraints), write them to the appropriate memory file.
 
-When the checklist is complete, run `/compact`. After compaction, run `/session resume` to restore context.
+When the checklist is complete, run `/compress` (Gemini's compaction command — the equivalent of Claude's `/compact`). After compression, run `/session resume` to restore context.

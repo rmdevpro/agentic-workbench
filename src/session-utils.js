@@ -1139,5 +1139,11 @@ module.exports = {
   getSessionInfo,
   invalidateSessionInfoCache,
   getSessionSlug,
+  // #446: exposed for session_resume_post_compact's per-CLI dispatch.
+  // Pattern parallels the F4 / R5 export of _streamHashAndChunk — internal
+  // helper surfaced because a sibling handler needs the same code path
+  // without re-implementing it.
+  _readGeminiTranscript,
+  _readCodexTranscript,
   CLAUDE_HOME,
 };

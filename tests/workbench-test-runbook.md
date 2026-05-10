@@ -4503,6 +4503,84 @@ Then measure:
 
 ---
 
+### REG-437-01: session_list returns sessions of all 3 cli_types when invoked from each CLI
+**Issue:** #437 — session_list omits non-Claude sessions.
+**Setup:** A target project (e.g. `Workbench`) on M5/dev:7860 with at least one active session of each cli_type: one claude, one gemini, one codex. Spawn via the workbench UI's per-project `+` button (one per cli_type) if not already present.
+
+**Steps (repeat once per CLI tab — claude, gemini, codex):**
+1. Open the workbench UI at `${WORKBENCH_URL}` and click into the CLI session tab for that cli_type.
+2. Send a single user prompt asking the CLI to call the workbench MCP tool `session_list` with `project: <target project>`. Example prompt: `Use the workbench session_list tool with project: "<target>". Then list every returned row showing session_id (first 8 chars), name, and cli_type.`
+3. Wait for the CLI to complete the tool call + report the rows back in plain text.
+4. `browser_screenshot` the terminal pane showing the CLI's tool-call output (the rows).
+
+**Verify (3 affirmations × 3 CLIs = 9 verify clauses):**
+- [Claude tab] Reported rows include at least one row whose `cli_type` is `gemini`. Screenshot path: `tests/browser/screenshots/post-gate-parity/reg-437-claude-tab-shows-gemini-row.png`.
+- [Claude tab] Reported rows include at least one row whose `cli_type` is `codex`. Same screenshot.
+- [Claude tab] Every reported row carries a `cli_type` field (no row missing the field). Same screenshot.
+- [Gemini tab] Same three affirmations from a Gemini-driven invocation. Screenshot: `…/reg-437-gemini-tab-shows-all-cli-types.png`.
+- [Codex tab] Same three affirmations from a Codex-driven invocation. Screenshot: `…/reg-437-codex-tab-shows-all-cli-types.png`.
+
+Per `feedback_test_all_clis.md`: every CLI test runs from all 3 CLI types so the MCP layer is exercised through each CLI's tool-use path, not just one.
+
+**Failure Criteria:** If any cli_type's session is omitted from any tab's response, the test fails. If `cli_type` field is missing from any row, the test fails.
+
+**Result:** ☐ PASS ☐ FAIL
+
+---
+
+### REG-445-01: project_mcp_enable writes per-CLI config + enabled MCP callable from each CLI
+**Issue:** #445 — project_mcp_enable updated only `.mcp.json`; Gemini/Codex couldn't see project-enabled MCPs.
+**Setup:** A test project on M5/dev:7860 with no MCPs currently enabled. A test MCP server registered (`project_mcp_register {mcp_name: 'reg-445-fixture', mcp_config: {command: 'node', args: ['/tmp/fake-mcp.js']}}`) — register from any CLI tab via tool-call prompt.
+
+**Steps:**
+1. From a Claude tab, send a prompt asking the CLI to call `project_mcp_enable {mcp_name: 'reg-445-fixture', project: <target>}`. `browser_screenshot` the response.
+2. Verify per-CLI config files written. Open the workbench file viewer (or send a prompt asking the CLI to read each via `file_read`):
+   - `<project>/.mcp.json` → contains `mcpServers["reg-445-fixture"]` with the registered command/args.
+   - `<project>/.gemini/settings.json` → contains `mcpServers["reg-445-fixture"]`.
+   - `<project>/.codex/config.toml` → contains `[mcp_servers.reg-445-fixture]` with `command = "node"` and `args = ["/tmp/fake-mcp.js"]`.
+   `browser_screenshot` each file's rendered content.
+3. From a Gemini tab in the project, send a prompt asking the CLI to read its enabled MCP servers (e.g. `list the MCP servers configured for this project`). Verify `reg-445-fixture` appears in the response. `browser_screenshot`.
+4. From a Codex tab in the project, same step. Verify `reg-445-fixture` appears. `browser_screenshot`.
+5. From any tab, call `project_mcp_disable {mcp_name: 'reg-445-fixture', project: <target>}`. `browser_screenshot` the response.
+6. Re-read the 3 config files from step 2; verify `reg-445-fixture` is gone from each AND no orphan content remains in `<project>/.codex/config.toml` (no orphan `args = [...]` line, no orphan `["…"]` literal — pins the line-based strip from `70bc281`). `browser_screenshot` each.
+7. From any tab, call `project_mcp_unregister {mcp_name: 'reg-445-fixture'}` for cleanup.
+
+**Verify clauses:**
+- Step 1: enable returns 200/success; screenshot shows the response.
+- Step 2 (3 file reads): each per-CLI config file contains the fixture entry; screenshots prove it.
+- Step 3: Gemini tab's CLI sees the fixture in its config (the workbench wrote `<project>/.gemini/settings.json`).
+- Step 4: Codex tab's CLI sees the fixture in its config.
+- Step 5: disable returns 200/success.
+- Step 6 (3 file reads): each file dropped the fixture cleanly. Codex config.toml has no orphan content.
+
+**Failure Criteria:** Any per-CLI config file missing the entry after enable, OR any per-CLI tab not seeing the MCP, OR any orphan content after disable.
+
+**Result:** ☐ PASS ☐ FAIL
+
+---
+
+### REG-446-01: session_prepare_pre_compact + session_resume_post_compact dispatch per cli_type
+**Issue:** #446 — both tools were Claude-only; Gemini/Codex got Claude-shaped instructions or silent no-content resumes.
+**Setup:** Three active sessions on M5/dev:7860, one per cli_type (claude, gemini, codex). Each session has at least one user/assistant turn so the resume path has a transcript to read.
+
+**Steps (per session):**
+1. From the session's own tab, send a prompt asking the CLI to call `session_prepare_pre_compact {session_id: <its own id from $WORKBENCH_SESSION_ID>}`. The CLI reports the returned prompt body. `browser_screenshot` the terminal output showing the prompt.
+2. From the same tab, send a prompt asking the CLI to call `session_resume_post_compact {session_id: <its own id>, tail_lines: 5}`. The CLI reports the returned resume prompt + (optionally) reads the tail file. `browser_screenshot` the terminal output.
+
+**Verify clauses (per cli_type, 4 prompts × 3 CLIs = 12 affirmations):**
+- [Claude tab] `session_prepare_pre_compact` returned prompt mentions `/compact` AND mentions `/data/.workbench/plans/`. Does NOT mention `/compress` or "NEW Codex session". Screenshot: `…/reg-446-claude-prepare.png`.
+- [Claude tab] `session_resume_post_compact` returned prompt mentions a tail file path under `/tmp/workbench-resume-`. The tail file exists and contains non-empty transcript content (NOT `(could not read session file)`). Screenshot: `…/reg-446-claude-resume.png`.
+- [Gemini tab] `session_prepare_pre_compact` returned prompt mentions `/compress`. May reference `/compact` once for cross-reference but the closing instruction is `/compress`. Screenshot: `…/reg-446-gemini-prepare.png`.
+- [Gemini tab] `session_resume_post_compact` returned prompt + tail file with non-empty transcript content. Screenshot: `…/reg-446-gemini-resume.png`.
+- [Codex tab] `session_prepare_pre_compact` returned prompt contains `Do NOT run /clear` AND directs the user to start a `NEW Codex session`. Screenshot: `…/reg-446-codex-prepare.png`.
+- [Codex tab] `session_resume_post_compact` returned prompt + tail file with non-empty transcript content. Screenshot: `…/reg-446-codex-resume.png`.
+
+**Failure Criteria:** Wrong-CLI prompt returned for any cli_type, OR `(could not read session file)` placeholder returned for any cli_type, OR `session_prepare_pre_compact` accepts a call without `session_id` (the contract change in `f613e4f` made it required).
+
+**Result:** ☐ PASS ☐ FAIL
+
+---
+
 ## Phase 14: MCP Tool Catalogue (44 flat tools)
 
 End-to-end coverage for the flat MCP tool surface introduced in the `mcp-rework` work. Each tool gets one happy-path integration test; the layered safety net is:

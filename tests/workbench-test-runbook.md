@@ -5324,101 +5324,14 @@ for (const p of projects) assert(trust[p] === 'TRUST_FOLDER');
 **Verify:** `404 {"error":"task not found"}`.
 
 ---
-### TASK-FOLDER-01: Create virtual folder via UI shows 📋 in tree
-**Issue:** #243.
-**Setup:** Tasks panel open, at least one mount root expanded.
-**Steps:**
-1. Right-click the mount root → click "New Folder". Type name `tf-smoke`. (Optional) type description `from UI test`.
-2. After the prompt closes, wait for `loadTaskTree()` to complete.
-3. In the tree, find `tf-smoke`.
-**Verify:** Element has class `task-folder virtual`, contains `📋` icon, hover tooltip shows `from UI test`. `curl ${WORKBENCH_URL}/api/task-folders | jq '.folders | map(.name)'` includes `tf-smoke`.
-
----
-### TASK-FOLDER-02: Create + delete via HTTP roundtrip
-**Issue:** #243.
-**Steps:**
-1. `curl -X POST ${WORKBENCH_URL}/api/task-folders -H 'Content-Type: application/json' -d '{"parent_path":"/data/workspace/<project>","name":"http-tf","description":"smoke"}'` → expect `200` + folder row including `id`, `path`, `status:"active"`.
-2. `curl ${WORKBENCH_URL}/api/task-folders | jq '.folders | map(select(.name=="http-tf"))'` → array of length 1 with the same id.
-3. `curl -X DELETE ${WORKBENCH_URL}/api/task-folders/<id>` → `200 {"deleted":true,"to":"<parent>"}`.
-4. `curl ${WORKBENCH_URL}/api/task-folders | jq '.folders | map(select(.name=="http-tf"))'` → empty array.
-**Verify:** Create-then-delete roundtrip both modify the listing as expected.
-
----
-### TASK-FOLDER-03: Nested folder creation persists structure
-**Issue:** #243.
-**Steps:**
-1. Create folder A at `/data/workspace/<project>` (POST `/api/task-folders` parent_path=`/data/workspace/<project>` name=`A`).
-2. Create folder B at A's path (parent_path=`/data/workspace/<project>/A` name=`B`).
-3. `curl ${WORKBENCH_URL}/api/tasks/tree | jq '.tree.children.data.children.workspace.children["<project>"].children.A.children.B.virtual'` → `true`.
-**Verify:** Both folders persist; tree has B nested under A with `virtual:true` markers at both levels.
-
----
-### TASK-FOLDER-04: Edit description updates row + tooltip
-**Issue:** #243.
-**Steps:**
-1. PUT `/api/task-folders/<id>` with `{"description":"updated text"}`.
-2. Read response → `description === "updated text"`.
-3. Reload the task tree in the UI; hover the folder.
-**Verify:** Tooltip on the folder element shows `updated text`. GET listing shows the new description for that row.
-
----
-### TASK-FOLDER-05: Archive hides folder by default
-**Issue:** #243.
-**Steps:**
-1. PUT `/api/task-folders/<id>` with `{"status":"archived"}` → response has `archived_at` populated, `status:"archived"`.
-2. `curl ${WORKBENCH_URL}/api/task-folders?filter=active | jq '.folders | map(.id)'` → does NOT include `<id>`.
-3. `curl ${WORKBENCH_URL}/api/task-folders?filter=archived | jq '.folders | map(.id)'` → includes `<id>`.
-4. `curl ${WORKBENCH_URL}/api/tasks/tree | jq` walking to the path — the archived folder is absent from the default tree.
-**Verify:** Archive status flips `archived_at`, default tree omits the folder, `filter=archived` query surfaces it.
-
----
-### TASK-FOLDER-06: Unarchive restores folder
-**Issue:** #243.
-**Steps:**
-1. With the folder from TASK-FOLDER-05 archived, PUT status `active`.
-2. Response has `archived_at: null`, `status:"active"`.
-3. `curl ${WORKBENCH_URL}/api/task-folders?filter=active` includes the row again.
-**Verify:** Round-trips between active and archived without loss of metadata.
-
----
-### TASK-FOLDER-07: Counts include nested subtree
-**Issue:** #243.
-**Setup:** Folder A with subfolder B, plus one task at `A/B`.
-**Steps:**
-1. `curl ${WORKBENCH_URL}/api/task-folders/<A_id>/task-counts | jq`.
-**Verify:** Response `total === 1`, `counts.active === 1` (or matching task status). Counts include the nested task even though it lives at depth `A/B`.
-
----
-### TASK-FOLDER-08: Delete reparents subtree atomically
-**Issue:** #243.
-**Setup:** Folder A → Folder B → Task T (at `A/B`).
-**Steps:**
-1. `curl -X DELETE ${WORKBENCH_URL}/api/task-folders/<A_id>` → expect `200 {"deleted":true,"to":"<A's parent>"}`.
-2. `curl ${WORKBENCH_URL}/api/tasks/<T_id> | jq .folder_path` → equals `<A's parent>/B` (prefix replaced; no `A` segment).
-3. `curl ${WORKBENCH_URL}/api/task-folders/<B_id>` (via PUT with `{}` to read) → `path === "<A's parent>/B"`.
-**Verify:** Both task and nested folder paths got the prefix swap in a single transaction. No orphans.
-
----
-### TASK-FOLDER-09: Delete confirmation shows accurate counts
-**Issue:** #243.
-**Setup:** Same as TASK-FOLDER-08.
-**Steps:**
-1. In the UI, right-click folder A → click Delete.
-**Verify:** Confirmation prompt text contains `Tasks exist:` followed by `1 active, 0 done, 0 archived` (or whatever the real counts are) and mentions "moved to the parent folder". Cancel → no change. OK → folder deleted, subtree reparented.
-
----
-### TASK-FOLDER-10: Duplicate path rejected
-**Issue:** #243.
-**Steps:**
-1. POST `/api/task-folders` with parent + name = an existing folder's path.
-**Verify:** `409 {"error":"folder already exists at this path"}`. The original folder is unchanged.
-
----
-### TASK-FOLDER-11: Name with `/` rejected
-**Issue:** #243.
-**Steps:**
-1. POST `/api/task-folders` with `{"parent_path":"/x","name":"a/b"}`.
-**Verify:** `400 {"error":"name must not contain \"/\""}`. No folder is created.
+### TASK-FOLDER-XX: REMOVED — endpoint deleted, see #388
+The legacy `/api/task-folders/...` endpoint and the virtual-folder data model
+were removed in #388 (v2 task contract: programs > projects > tasks, no folder
+hierarchy). All TASK-FOLDER-01..11 entries previously in this section tested
+that removed surface and have been deleted to prevent runbook executors from
+exercising a 404 path. Original entries are preserved in git history; if a
+folder concept is re-introduced in a future phase, replacement entries should
+land alongside that work, not by reviving these.
 
 ---
 ### PROGRAM-01: Create program via UI, header renders with uppercase styling

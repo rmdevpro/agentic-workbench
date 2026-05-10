@@ -320,7 +320,9 @@ test('MCP session_prepare_pre_compact dispatches per cli_type (#446)', async () 
       const codexR = await call(port, { tool: 'session_prepare_pre_compact', args: { session_id: 'mock-446-codex-prep' } });
       assert.equal(codexR.status, 200, JSON.stringify(codexR.body));
       assert.match(codexR.body.result, /Codex CLI does NOT/i, 'Codex prompt must call out the no-compaction caveat');
-      assert.doesNotMatch(codexR.body.result, /run `\/clear`/, 'Codex prompt must NOT instruct /clear (it kills the session)');
+      // Closing instruction must be "start a new Codex session" (not /clear).
+      assert.match(codexR.body.result, /start a NEW Codex session/i, 'Codex prompt closing instruction must direct user to a new session');
+      assert.match(codexR.body.result, /Do NOT run `\/clear`/, 'Codex prompt must explicitly warn against /clear');
     });
   } finally {
     try { db.deleteSession('mock-446-claude-prep'); } catch { /* ignore */ }

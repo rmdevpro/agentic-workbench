@@ -38,7 +38,8 @@ test('#446 session_prepare_pre_compact returns CLI-appropriate prompt for all 3 
   const codexR = await post('/api/mcp/call', { tool: 'session_prepare_pre_compact', args: { session_id: codex.data.id } });
   assert.equal(codexR.status, 200, JSON.stringify(codexR.data));
   assert.match(codexR.data.result, /Codex CLI does NOT/i, 'Codex prompt must call out the no-compaction caveat');
-  assert.doesNotMatch(codexR.data.result, /run `\/clear`/, 'Codex prompt must NOT instruct /clear');
+  assert.match(codexR.data.result, /start a NEW Codex session/i, 'Codex prompt must direct user to a new session');
+  assert.match(codexR.data.result, /Do NOT run `\/clear`/, 'Codex prompt must explicitly warn against /clear');
 });
 
 test('#446 session_resume_post_compact 404s cleanly with per-CLI message when no transcript', async () => {

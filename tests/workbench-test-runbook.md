@@ -4599,7 +4599,7 @@ After S-19, run `session_kill {session_id: mcp-cat-claude}` to clean up.
 | MCP-T-03 | `task_get` | `{task_id:<id>}` | Full task row |
 | MCP-T-04 | `task_update` | `{task_id, title:"renamed", description:"x", status:"done"}` | Returns updated row |
 | MCP-T-05 | `task_find` (with pattern) | `{pattern:"renamed"}` | `{matches:[..., {id}, ...]}` |
-| MCP-T-06 | `task_move` | `{task_id, parent_task_id:<other-task-id-in-same-project>}` | `{moved:true, task_id, parent_task_id}`. **v2 #388:** move semantics are `parent_task_id` / `project_id` / `rank` — `folder_path` is no longer a move target. To move under a parent, the parent must be in the same project. |
+| MCP-T-06 | `task_move` | `{task_id, parent_task_id:<other-task-id-in-same-project>}` | `{moved:true, task:{id, parent_task_id, project_id, ...}}`. **v2 #388:** move semantics are `parent_task_id` / `project_id` / `rank` — `folder_path` is no longer a move target. To move under a parent, the parent must be in the same project. |
 
 After T-06 mark done by setting status=archived via T-04 to keep test DB clean.
 

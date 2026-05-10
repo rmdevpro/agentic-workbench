@@ -658,7 +658,11 @@ function _projectHasRepo(projectPath) {
 
 handlers.task_find = async (args = {}) => {
   let tasks;
-  if (args.project_id != null) tasks = db.getTasksByProject(Number(args.project_id));
+  // R5-N1: parity with task_add — accept project_name as well as project_id.
+  // _resolveProject throws ToolError 404 if project_name is given but missing,
+  // matching task_add's contract.
+  const project = _resolveProject(args);
+  if (project) tasks = db.getTasksByProject(project.id);
   else tasks = db.getAllTasks(args.filter || 'inactive');
   if (args.pattern) {
     let re;

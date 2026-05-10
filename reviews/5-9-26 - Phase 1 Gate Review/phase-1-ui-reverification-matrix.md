@@ -1,6 +1,6 @@
 # Phase 1 UI Re-Verification Matrix
 
-**Status:** All 43 reopened Phase 1 issues verified + 5 reassigned/extracted issues (G1.1 #444, E3 #369, E2 #372, E1 #371, E4 #443) now landed end-to-end on M5/dev (`:2d9d629`). Awaiting Facilitator/reviewer sign-off per PROC-006.
+**Status:** All 43 + 5 issues verified; R2/R3/R4/R5 review fold-back complete (R5 unanimous PASS with minor non-blocking residuals folded). Awaiting Facilitator/reviewer sign-off per PROC-006.
 **Scope:** 43 reopened Phase 1 issues + 5 reassigned/extracted from future phases (Phase 2/4) during Phase 1 gate-review triage + #390 Phase 1 gate. **48 issues total.**
 **Purpose:** For each issue, identify the UI surface honestly, plan the browser-MCP run(s) per `tests/workbench-test-plan-ui.md` §3.4b (rendered DOM / multi-turn CLI chat / CLI MCP tool use), and identify 3-CLI parity coverage required by `feedback_test_all_clis.md` + `feedback_parity_rule.md`.
 
@@ -353,6 +353,24 @@ PM/Facilitator dispatched 3-CLI Round 4 reviews on `96ecf59`. Gemini PASS-with-m
 - Live: **124/125 pass** in the sandboxed test container — sole remaining fail is A5-LIVE-04 (file_find on empty test-fixture workspace; fixture issue, not code).
 
 Current `:latest` = `:2ffa460` (R4-N1 + R4-N2 baked) / image SHA `8ebba98f8df2`. The bonus `be240b5` commit is test-only — no rebuild needed for the workbench server itself.
+
+### R5 fix-claimed (3-CLI Round 5 review findings → fold-back commits)
+
+PM/Facilitator dispatched 3-CLI Round 5 reviews on `ca2cc75`. **Unanimous PASS** from Codex/Gemini/Claude. Residual minor items (1 runtime parity, 2 runbook docs, 1 compose comment, 1 test helper, 1 dead-section disposition) folded as focused commits before R6 dispatch.
+
+| Finding | Tier | Commit | Disposition |
+|---|---|---|---|
+| R5-N1 — `task_find` only resolves `project_id`; missing `project_name` parity that `task_add` got in `bec7742` | MINOR (Claude) | `85f09ff` | `handlers.task_find` now calls `_resolveProject(args)` (the same helper `task_add` uses), so MCP clients can scope a find by either `project_id` or `project_name`. `_resolveProject` throws ToolError 404 when `project_name` doesn't resolve — matches `task_add`'s 404 contract. **RUNTIME** — image rebuild + sandbox redeploy required. |
+| R5-N2 — runbook MCP-T-06 verify column claimed `{moved:true, task_id, parent_task_id}`; actual route response is `{moved:true, task:{id, parent_task_id, project_id, ...}}` | MINOR (Claude) | `1c74de5` | Runbook line 4602 verify column updated to match the real route shape (nested `task` object, not flat fields). |
+| R5-N3 — runbook line 4604 said "set status=archived via T-04" but v2 (#388) makes `archived` a separate boolean | MINOR (Claude) | `ff24643` | Two-step archive flow spelled out: `task_update {status:"done"}` then `task_update {archived:true}`. Notes that the DB rejects `archived:true` unless status is `done` or `cancelled`. |
+| R4-N2 (residual) — `docker-compose.test.yml` `ports: !override` syntax requires Compose v2.20+ but version constraint not noted | MINOR (Claude) | `62fbc90` | One-line `# NOTE: !override syntax requires Compose v2.20+` comment near the override line. |
+| R4-N4 — `ensureSeedProject()` discarded the response, so a 5xx silently passed through and downstream tests failed with confusing errors | MINOR (Claude) | `43648b5` | Helper now throws on 5xx (clear cause-of-failure surfaces here); warns (doesn't throw) on unexpected 4xx other than 409 so the helper doesn't mask downstream signal. |
+| Codex R5 residual — `TASK-FOLDER-XX` runbook section (11 entries) tests `/api/task-folders/*` removed by #388 | residual non-blocking (Codex) | `c514359` | Entire section (lines 5324-5419, ~95 lines) replaced with single `### TASK-FOLDER-XX: REMOVED — endpoint deleted, see #388` marker. Original entries preserved in git history. Per Codex: needed before future runbook execution cycles to avoid 404 burn. |
+
+**Skipped (per Claude's R4-N1 disposition):** TSK-12/16 rank coverage thinning — Claude marked "Phase 2 cleanup at most"; needs new ranking-behavior tests against a v2 contract that isn't characterized. Not a one-line fold; out of R5 scope.
+
+**Post-R5 results (verified inside the workbench-test stack on M5):**
+- (Will be filled in after rebuild + sandbox test run; see resume notes below.)
 
 ### N/A reclassification sweep — covered by existing exercised code paths
 

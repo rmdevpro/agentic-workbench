@@ -646,13 +646,104 @@ handlers.project_mcp_unregister = async (args) => {
   return { unregistered: args.mcp_name };
 };
 
-function _writeProjectMcpJson(proj) {
-  const enabled = db.getEnabledMcpForProject(proj.id);
+// #445: per-project MCP config writes for all 3 CLIs. Pre-fix only Claude's
+// .mcp.json was written, so project_mcp_enable foo only made foo callable
+// from Claude — Gemini and Codex sessions in the same project never saw it.
+//
+// Per-CLI config strategy:
+//   claude: <project>/.mcp.json — Claude's documented per-project MCP path.
+//   gemini: <project>/.gemini/settings.json mcpServers block — parallel
+//           pattern. If a Gemini build doesn't read per-project settings,
+//           the workbench MCP itself is still globally registered via
+//           registerGeminiMcp (watchers.js); user-enabled MCPs would then
+//           need a future global-sync path. The workbench's contractual
+//           responsibility here is the file write at the conventionally-
+//           expected location.
+//   codex:  <project>/.codex/config.toml with [mcp_servers.<name>] blocks.
+//           Same caveat as Gemini — the workbench writes the config; the
+//           CLI decides whether to read it.
+//
+// Mock tests pin all 3 file writes; live test asserts each file lands with
+// the expected MCP entries.
+function _serializeMcpConfigJson(enabled) {
   const mcpJson = {};
   for (const s of enabled) {
     try { mcpJson[s.name] = JSON.parse(s.config); } catch { mcpJson[s.name] = s.config; }
   }
-  fs.writeFileSync(join(proj.path, '.mcp.json'), JSON.stringify({ mcpServers: mcpJson }, null, 2));
+  return mcpJson;
+}
+
+function _serializeMcpConfigToml(enabled) {
+  // Codex's TOML schema for MCP servers: each server is its own
+  // `[mcp_servers.<name>]` block with `command` + `args` (and optional `env`).
+  // Mirror the JSON schema where possible — server.config is JSON; coerce.
+  const lines = [];
+  for (const s of enabled) {
+    let cfg;
+    try { cfg = JSON.parse(s.config); } catch { cfg = { command: s.config }; }
+    lines.push(`[mcp_servers.${s.name}]`);
+    if (cfg.command) lines.push(`command = ${JSON.stringify(cfg.command)}`);
+    if (Array.isArray(cfg.args)) {
+      lines.push(`args = [${cfg.args.map((a) => JSON.stringify(a)).join(', ')}]`);
+    }
+    if (cfg.env && typeof cfg.env === 'object') {
+      lines.push('[mcp_servers.' + s.name + '.env]');
+      for (const [k, v] of Object.entries(cfg.env)) {
+        lines.push(`${k} = ${JSON.stringify(String(v))}`);
+      }
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+function _writeProjectMcpForAllCLIs(proj) {
+  const enabled = db.getEnabledMcpForProject(proj.id);
+  const mcpJson = _serializeMcpConfigJson(enabled);
+  const wrapped = JSON.stringify({ mcpServers: mcpJson }, null, 2);
+
+  // Claude: <project>/.mcp.json
+  fs.writeFileSync(join(proj.path, '.mcp.json'), wrapped);
+
+  // Gemini: <project>/.gemini/settings.json with mcpServers block. Merge
+  // with any existing settings so user-authored fields aren't clobbered.
+  const geminiDir = join(proj.path, '.gemini');
+  const geminiSettingsPath = join(geminiDir, 'settings.json');
+  try { fs.mkdirSync(geminiDir, { recursive: true }); } catch { /* exists */ }
+  let geminiSettings = {};
+  try {
+    geminiSettings = JSON.parse(fs.readFileSync(geminiSettingsPath, 'utf-8'));
+  } catch (err) {
+    if (err.code !== 'ENOENT' && !(err instanceof SyntaxError)) {
+      logger.warn('per-project Gemini settings read failed', { module: 'mcp-tools', project: proj.name, err: err.message });
+    }
+    /* ENOENT or corrupt: start fresh */
+  }
+  geminiSettings.mcpServers = mcpJson;
+  fs.writeFileSync(geminiSettingsPath, JSON.stringify(geminiSettings, null, 2));
+
+  // Codex: <project>/.codex/config.toml with [mcp_servers.<name>] blocks.
+  // Idempotent rewrite of the mcp_servers section: strip existing blocks,
+  // append the current full set. Preserves any non-mcp_servers config the
+  // user authored (e.g. model, model_provider).
+  const codexDir = join(proj.path, '.codex');
+  const codexConfigPath = join(codexDir, 'config.toml');
+  try { fs.mkdirSync(codexDir, { recursive: true }); } catch { /* exists */ }
+  let codexContent = '';
+  try {
+    codexContent = fs.readFileSync(codexConfigPath, 'utf-8');
+  } catch (err) {
+    if (err.code !== 'ENOENT') {
+      logger.warn('per-project Codex config read failed', { module: 'mcp-tools', project: proj.name, err: err.message });
+    }
+  }
+  // Strip every existing [mcp_servers.*] block + its trailing key=value lines
+  // up to the next [section] or EOF. A bit of a regex but TOML's grammar is
+  // strict enough that this is safe for our own write format.
+  const stripped = codexContent.replace(/\[mcp_servers\.[^\]]+\][^\[]*/g, '').trimEnd();
+  const tomlBlocks = _serializeMcpConfigToml(enabled);
+  const newContent = stripped + (tomlBlocks ? '\n\n' + tomlBlocks : '\n');
+  fs.writeFileSync(codexConfigPath, newContent);
 }
 
 async function _restartCallingSession(args, projectPath) {
@@ -670,7 +761,7 @@ handlers.project_mcp_enable = async (args) => {
   if (!proj) throw new ToolError('project not found', 404);
   if (!db.getMcpServer(args.mcp_name)) throw new ToolError('MCP server not registered', 404);
   db.enableMcpForProject(proj.id, args.mcp_name);
-  _writeProjectMcpJson(proj);
+  _writeProjectMcpForAllCLIs(proj);
   await _restartCallingSession(args, proj.path);
   return { enabled: args.mcp_name, project: args.project };
 };
@@ -680,7 +771,7 @@ handlers.project_mcp_disable = async (args) => {
   const proj = db.getProject(args.project);
   if (!proj) throw new ToolError('project not found', 404);
   db.disableMcpForProject(proj.id, args.mcp_name);
-  _writeProjectMcpJson(proj);
+  _writeProjectMcpForAllCLIs(proj);
   await _restartCallingSession(args, proj.path);
   return { disabled: args.mcp_name, project: args.project };
 };

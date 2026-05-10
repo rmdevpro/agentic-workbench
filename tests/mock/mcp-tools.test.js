@@ -229,6 +229,69 @@ test('MCP task_add rejects without project_id or project_name (no folder_path fa
   });
 });
 
+// #445: project_mcp_enable previously wrote only Claude's <project>/.mcp.json,
+// so foo enabled in a project was never visible to Gemini/Codex. The fix
+// writes per-project config for all 3 CLIs:
+//   claude: <project>/.mcp.json           (existing)
+//   gemini: <project>/.gemini/settings.json mcpServers
+//   codex:  <project>/.codex/config.toml [mcp_servers.<name>]
+// Mock test enables a fixture MCP and asserts each of the 3 files lands.
+test('MCP project_mcp_enable writes per-project config for claude+gemini+codex (#445)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const { join } = require('path');
+  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_445_proj');
+  fs.mkdirSync(projPath, { recursive: true });
+  const proj = db.ensureProject('mock_445_proj', projPath);
+  // Cleanup any prior state
+  try { fs.unlinkSync(join(projPath, '.mcp.json')); } catch { /* ignore */ }
+  try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
+
+  // Register a fixture MCP server (db.registerMcp internally JSON.stringifies the
+  // config, so we pass an object to avoid the double-stringify edge case).
+  db.registerMcp('mock-445-fixture', 'stdio', { command: 'node', args: ['/tmp/fake-mcp.js'], env: { FOO: 'bar' } }, 'fixture');
+  try {
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, { tool: 'project_mcp_enable', args: { mcp_name: 'mock-445-fixture', project: 'mock_445_proj' } });
+      assert.equal(r.status, 200, JSON.stringify(r.body));
+
+      // Claude: <project>/.mcp.json
+      const claudeJson = JSON.parse(fs.readFileSync(join(projPath, '.mcp.json'), 'utf-8'));
+      assert.ok(claudeJson.mcpServers['mock-445-fixture'], `Claude .mcp.json must include fixture; got ${JSON.stringify(claudeJson)}`);
+      assert.equal(claudeJson.mcpServers['mock-445-fixture'].command, 'node');
+
+      // Gemini: <project>/.gemini/settings.json
+      const geminiJson = JSON.parse(fs.readFileSync(join(projPath, '.gemini', 'settings.json'), 'utf-8'));
+      assert.ok(geminiJson.mcpServers['mock-445-fixture'], `Gemini settings.json must include fixture; got ${JSON.stringify(geminiJson)}`);
+
+      // Codex: <project>/.codex/config.toml
+      const codexToml = fs.readFileSync(join(projPath, '.codex', 'config.toml'), 'utf-8');
+      assert.match(codexToml, /\[mcp_servers\.mock-445-fixture\]/, `Codex config.toml must declare [mcp_servers.mock-445-fixture]; got ${codexToml}`);
+      assert.match(codexToml, /command = "node"/, 'Codex config.toml must record command');
+      assert.match(codexToml, /args = \["\/tmp\/fake-mcp\.js"\]/, 'Codex config.toml must record args array');
+      assert.match(codexToml, /\[mcp_servers\.mock-445-fixture\.env\]/, 'Codex env block must be written');
+
+      // project_mcp_disable removes from all 3
+      const r2 = await call(port, { tool: 'project_mcp_disable', args: { mcp_name: 'mock-445-fixture', project: 'mock_445_proj' } });
+      assert.equal(r2.status, 200, JSON.stringify(r2.body));
+
+      const claudeJson2 = JSON.parse(fs.readFileSync(join(projPath, '.mcp.json'), 'utf-8'));
+      assert.ok(!claudeJson2.mcpServers['mock-445-fixture'], 'Claude .mcp.json must drop fixture after disable');
+      const geminiJson2 = JSON.parse(fs.readFileSync(join(projPath, '.gemini', 'settings.json'), 'utf-8'));
+      assert.ok(!geminiJson2.mcpServers['mock-445-fixture'], 'Gemini settings.json must drop fixture after disable');
+      const codexToml2 = fs.readFileSync(join(projPath, '.codex', 'config.toml'), 'utf-8');
+      assert.doesNotMatch(codexToml2, /\[mcp_servers\.mock-445-fixture\]/, 'Codex config.toml must drop fixture after disable');
+    });
+  } finally {
+    try { db.unregisterMcp('mock-445-fixture'); } catch { /* ignore */ }
+    try { fs.rmSync(join(projPath, '.mcp.json'), { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+  }
+});
+
 // #446: session_prepare_pre_compact dispatches per cli_type so non-Claude
 // callers don't get the Claude-shaped prompt (which references /compact +
 // ~/.claude/plans/, neither of which apply to Gemini or Codex). The mock

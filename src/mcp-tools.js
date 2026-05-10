@@ -353,12 +353,12 @@ handlers.session_summarize = async (args) => {
 // kills a Codex session entirely). Each cli_type now resolves to the prompt
 // authored for it.
 const TRANSITION_PROMPTS = {
-  claude: 'session-transition',
+  claude: 'session-transition-claude',
   gemini: 'session-transition-gemini',
   codex:  'session-transition-codex',
 };
 const RESUME_PROMPTS = {
-  claude: 'session-resume',
+  claude: 'session-resume-claude',
   gemini: 'session-resume-gemini',
   codex:  'session-resume-codex',
 };
@@ -409,7 +409,6 @@ handlers.session_resume_post_compact = async (args) => {
   const tailLines = Math.max(1, Number.isFinite(args.tail_lines) ? args.tail_lines : 60);
 
   let tail = '';
-  let lineCount = 0;
 
   if (cliType === 'claude') {
     const sessDir = sessionUtils.sessionsDir(projectPath);
@@ -417,9 +416,7 @@ handlers.session_resume_post_compact = async (args) => {
     try {
       const content = fs.readFileSync(sessionFile, 'utf-8');
       const lines = content.trim().split('\n').filter(Boolean);
-      const kept = lines.slice(-tailLines);
-      tail = kept.join('\n');
-      lineCount = kept.length;
+      tail = lines.slice(-tailLines).join('\n');
     } catch {
       throw new ToolError(`Claude session file not found at ${sessionFile} — has the CLI written any messages?`, 404);
     }
@@ -430,17 +427,13 @@ handlers.session_resume_post_compact = async (args) => {
     if (messages.length === 0) {
       throw new ToolError('No Gemini transcript content for this session — has the CLI written any messages yet?', 404);
     }
-    const kept = messages.slice(-tailLines);
-    tail = kept.map(m => `[${m.role}] ${m.text}`).join('\n\n');
-    lineCount = kept.length;
+    tail = messages.slice(-tailLines).map(m => `[${m.role}] ${m.text}`).join('\n\n');
   } else if (cliType === 'codex') {
     const messages = sessionUtils._readCodexTranscript(args.session_id, 100000, 5000);
     if (messages.length === 0) {
       throw new ToolError('No Codex transcript content for this session — has the CLI written any messages yet?', 404);
     }
-    const kept = messages.slice(-tailLines);
-    tail = kept.map(m => `[${m.role}] ${m.text}`).join('\n\n');
-    lineCount = kept.length;
+    tail = messages.slice(-tailLines).map(m => `[${m.role}] ${m.text}`).join('\n\n');
   } else {
     throw new ToolError(
       `session_resume_post_compact does not support cli_type "${cliType}" — supported: ${Object.keys(RESUME_PROMPTS).join(', ')}`,
@@ -455,12 +448,7 @@ handlers.session_resume_post_compact = async (args) => {
   // file (overwrite-on-call). Sweep is run upfront via _sweepStaleResumeFiles().
   const tailPath = join('/tmp', `workbench-resume-${args.session_id}.txt`);
   fs.writeFileSync(tailPath, tail, 'utf-8');
-  const byteCount = Buffer.byteLength(tail, 'utf-8');
-  return config.getPrompt(RESUME_PROMPTS[cliType], {
-    TAIL_PATH: tailPath,
-    LINE_COUNT: String(lineCount),
-    BYTE_COUNT: String(byteCount),
-  });
+  return config.getPrompt(RESUME_PROMPTS[cliType], { TAIL_PATH: tailPath });
 };
 
 handlers.session_export = async (args) => {

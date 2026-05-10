@@ -2396,29 +2396,21 @@ function registerCoreRoutes(
       }
       if (mode === 'resume') {
         let tail = '';
-        let lineCount = 0;
         try {
           const content = await readFile(sessionFile, 'utf-8');
           const lines = content.trim().split('\n').filter(Boolean);
-          const kept = lines.slice(-tailLines);
-          tail = kept.join('\n');
-          lineCount = kept.length;
+          tail = lines.slice(-tailLines).join('\n');
         } catch (err) {
           tail = '(could not read session file: ' + err.message + ')';
         }
         const tailPath = join('/tmp', `workbench-resume-${sessionId}-${Date.now()}.txt`);
         await writeFile(tailPath, tail, 'utf-8');
-        const byteCount = Buffer.byteLength(tail, 'utf-8');
         return res.json({
-          prompt: config.getPrompt('session-resume', {
-            TAIL_PATH: tailPath,
-            LINE_COUNT: String(lineCount),
-            BYTE_COUNT: String(byteCount),
-          }),
+          prompt: config.getPrompt('session-resume-claude', { TAIL_PATH: tailPath }),
         });
       }
       if (mode === 'transition') {
-        return res.json({ prompt: config.getPrompt('session-transition', {}) });
+        return res.json({ prompt: config.getPrompt('session-transition-claude', {}) });
       }
       return res.status(400).json({ error: 'Unknown mode. Use info, transition, or resume.' });
     } catch (err) {

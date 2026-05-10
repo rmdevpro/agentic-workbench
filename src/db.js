@@ -911,7 +911,13 @@ module.exports = {
     return stmts.getMcpServer.get(name);
   },
   registerMcp(name, transport, config, description = '') {
-    stmts.registerMcp.run(name, transport, JSON.stringify(config), description);
+    // Accept either a JSON string (e.g. from a route handler that already
+    // stringified) or an object. Pre-fix this was unconditional
+    // JSON.stringify(config), which double-stringified string inputs and
+    // produced malformed per-CLI MCP config files (#445 surfaced this when
+    // the new live test asserted Codex command/args were recorded).
+    const cfgStr = typeof config === 'string' ? config : JSON.stringify(config);
+    stmts.registerMcp.run(name, transport, cfgStr, description);
   },
   unregisterMcp(name) {
     stmts.unregisterMcp.run(name);

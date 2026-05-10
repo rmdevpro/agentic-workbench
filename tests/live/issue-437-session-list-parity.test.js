@@ -20,11 +20,11 @@ test('#437 session_list returns sessions for all 3 cli_types (claude+gemini+code
   await resetBaseline();
   const proj = await ensureProj('issue437_proj');
 
-  const claudeSess = await post('/api/sessions', { project: proj, name: '437-claude', prompt: '437-claude', cli: 'claude' });
+  const claudeSess = await post('/api/sessions', { project: proj, name: '437-claude', prompt: '437-claude', cli_type: 'claude' });
   assert.equal(claudeSess.status, 200, `claude session create: ${JSON.stringify(claudeSess.data)}`);
-  const geminiSess = await post('/api/sessions', { project: proj, name: '437-gemini', prompt: '437-gemini', cli: 'gemini' });
+  const geminiSess = await post('/api/sessions', { project: proj, name: '437-gemini', prompt: '437-gemini', cli_type: 'gemini' });
   assert.equal(geminiSess.status, 200, `gemini session create: ${JSON.stringify(geminiSess.data)}`);
-  const codexSess  = await post('/api/sessions', { project: proj, name: '437-codex',  prompt: '437-codex',  cli: 'codex'  });
+  const codexSess  = await post('/api/sessions', { project: proj, name: '437-codex',  prompt: '437-codex',  cli_type: 'codex'  });
   assert.equal(codexSess.status, 200,  `codex session create: ${JSON.stringify(codexSess.data)}`);
 
   // Brief settle so DB rows are durable before the MCP call.

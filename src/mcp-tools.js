@@ -378,7 +378,29 @@ handlers.session_prepare_pre_compact = async (args = {}) => {
   return config.getPrompt(promptName, { SESSION_ID: args.session_id });
 };
 
+function _sweepStaleResumeFiles() {
+  // #359 [D10] janitorial: drop /tmp resume files older than 24h. Runs on
+  // every session_resume_post_compact call regardless of whether the tail
+  // read succeeds (the sweep is a side-effect that shouldn't depend on
+  // session validity — D10-LIVE-02 pins this).
+  try {
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    for (const f of fs.readdirSync('/tmp')) {
+      if (!f.startsWith('workbench-resume-')) continue;
+      const fp = join('/tmp', f);
+      try {
+        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
+      } catch { /* ignore */ }
+    }
+  } catch { /* ignore */ }
+}
+
 handlers.session_resume_post_compact = async (args) => {
+  // Sweep stale tmp files upfront so it runs even if the dispatch below
+  // throws (#446 made tail-read failures hard 404s; D10's sweep contract
+  // pre-dated that and always ran).
+  _sweepStaleResumeFiles();
+
   requireSessionId(args);
   const session = db.getSessionFull(args.session_id);
   if (!session) throw new ToolError('session not found', 404);
@@ -430,20 +452,8 @@ handlers.session_resume_post_compact = async (args) => {
   // past the CLI's tool-result token cap on long sessions; the file path
   // pattern lets the model chunk-read with Read offset/limit at its own pace.
   // #359 [D10]: drop the timestamp suffix so each session_id reuses a single
-  // file (overwrite-on-call). Also sweep stale resume files older than 24h on
-  // every call so an offline session that never resumes doesn't leave a
-  // permanent file on disk.
+  // file (overwrite-on-call). Sweep is run upfront via _sweepStaleResumeFiles().
   const tailPath = join('/tmp', `workbench-resume-${args.session_id}.txt`);
-  try {
-    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
-    for (const f of fs.readdirSync('/tmp')) {
-      if (!f.startsWith('workbench-resume-')) continue;
-      const fp = join('/tmp', f);
-      try {
-        if (fs.statSync(fp).mtimeMs < cutoff) fs.unlinkSync(fp);
-      } catch { /* ignore */ }
-    }
-  } catch { /* ignore */ }
   fs.writeFileSync(tailPath, tail, 'utf-8');
   const byteCount = Buffer.byteLength(tail, 'utf-8');
   return config.getPrompt(RESUME_PROMPTS[cliType], {

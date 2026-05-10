@@ -20,9 +20,9 @@ async function ensureProj(name) {
 test('#446 session_prepare_pre_compact returns CLI-appropriate prompt for all 3 cli_types', async () => {
   await resetBaseline();
   const proj = await ensureProj('issue446_prep');
-  const claude = await post('/api/sessions', { project: proj, name: '446-prep-c', prompt: 'p', cli: 'claude' });
-  const gemini = await post('/api/sessions', { project: proj, name: '446-prep-g', prompt: 'p', cli: 'gemini' });
-  const codex  = await post('/api/sessions', { project: proj, name: '446-prep-x', prompt: 'p', cli: 'codex'  });
+  const claude = await post('/api/sessions', { project: proj, name: '446-prep-c', prompt: 'p', cli_type: 'claude' });
+  const gemini = await post('/api/sessions', { project: proj, name: '446-prep-g', prompt: 'p', cli_type: 'gemini' });
+  const codex  = await post('/api/sessions', { project: proj, name: '446-prep-x', prompt: 'p', cli_type: 'codex'  });
   assert.equal(claude.status, 200, `claude spawn: ${JSON.stringify(claude.data)}`);
   assert.equal(gemini.status, 200, `gemini spawn: ${JSON.stringify(gemini.data)}`);
   assert.equal(codex.status,  200, `codex spawn: ${JSON.stringify(codex.data)}`);
@@ -45,8 +45,8 @@ test('#446 session_prepare_pre_compact returns CLI-appropriate prompt for all 3 
 test('#446 session_resume_post_compact 404s cleanly with per-CLI message when no transcript', async () => {
   await resetBaseline();
   const proj = await ensureProj('issue446_resume');
-  const gemini = await post('/api/sessions', { project: proj, name: '446-resume-g', prompt: 'p', cli: 'gemini' });
-  const codex  = await post('/api/sessions', { project: proj, name: '446-resume-x', prompt: 'p', cli: 'codex'  });
+  const gemini = await post('/api/sessions', { project: proj, name: '446-resume-g', prompt: 'p', cli_type: 'gemini' });
+  const codex  = await post('/api/sessions', { project: proj, name: '446-resume-x', prompt: 'p', cli_type: 'codex'  });
   assert.equal(gemini.status, 200);
   assert.equal(codex.status,  200);
 

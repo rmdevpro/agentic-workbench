@@ -12,6 +12,7 @@ services:
     # which is already in use by the prod workbench on the same host).
     # Test container exposes port 7867 only — tests inside the container
     # use http://localhost:3000 (PORT=3000 env above).
+    # NOTE: !override syntax requires Compose v2.20+
     ports: !override
       - '7867:3000'
     volumes:

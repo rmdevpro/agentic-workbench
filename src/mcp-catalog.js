@@ -87,8 +87,10 @@ const TOOLS = [
   T('session_summarize', 'Return a structured summary of a session (recent transcript + token counts).', {
     session_id: P.session_id, project: P.project,
   }, ['session_id']),
-  T('session_prepare_pre_compact', 'Return the pre-compact checklist prompt — call before /compact in a long session.', {}),
-  T('session_resume_post_compact', 'Return the resume prompt for after a /compact. Writes the last N JSONL lines verbatim to a temp file under /tmp and returns a prompt that points at that path; the model reads the file with Read offset/limit. No truncation — tail_lines is honored exactly.', {
+  T('session_prepare_pre_compact', 'Return the per-CLI session-transition checklist prompt for the given session: Claude → pre-/compact, Gemini → pre-/compress, Codex → pre-exit-and-resume-in-new-session (Codex has no in-session compaction). Dispatches on the session\'s cli_type; #446.', {
+    session_id: P.session_id,
+  }, ['session_id']),
+  T('session_resume_post_compact', 'Return the per-CLI resume prompt after compaction (Claude /compact, Gemini /compress) or a fresh Codex session. Writes the last N transcript lines to a temp file under /tmp and returns a prompt pointing at that path. Per-CLI transcript readers: Claude reads the JSONL session file; Gemini uses the Gemini transcript reader; Codex uses the Codex rollout reader. No truncation — tail_lines honored exactly. #446.', {
     session_id: P.session_id,
     tail_lines: { type: 'number', description: 'Lines of session tail to write to the temp file (default 60). Honored exactly — no size cap. The model reads the file in chunks via Read offset/limit.' },
   }, ['session_id']),

@@ -40,13 +40,15 @@ test('MCP-06: task_add increments DB row count and task_find surfaces it (v2 con
     `DB task count must increment by 1 after task_add (before: ${countBefore}, after: ${countAfter})`,
   );
 
-  // task_list was consolidated into task_find in 980bb6c; v2 contract uses project_id
-  const projectIdRow = await post('/api/mcp/call', {
-    tool: 'project_find',
-    args: { name: 'wb-seed' },
+  // task_list was consolidated into task_find in 980bb6c; v2 contract uses project_id.
+  // project_find takes a `pattern` regex (not a `name` filter), so resolve via
+  // project_get which takes the project name directly.
+  const projectGetRow = await post('/api/mcp/call', {
+    tool: 'project_get',
+    args: { project: 'wb-seed' },
   });
-  const projectId = projectIdRow.data.result.projects?.[0]?.id;
-  assert.ok(projectId, `project_find for wb-seed must return id: ${JSON.stringify(projectIdRow.data)}`);
+  const projectId = projectGetRow.data.result?.id;
+  assert.ok(projectId, `project_get for wb-seed must return id: ${JSON.stringify(projectGetRow.data)}`);
   const listed = await post('/api/mcp/call', {
     tool: 'task_find',
     args: { project_id: projectId },

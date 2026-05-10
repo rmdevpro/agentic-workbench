@@ -116,14 +116,17 @@ test('TSK-06: update title records rename history', async () => {
   assert.equal(renameEvent.new_value, 'New title');
 });
 
-test('TSK-07: update description records history', async () => {
+test('TSK-07: update description persists (v2: no description_changed history event)', async () => {
   await ensureSeedProject();
   const t = await post('/api/tasks', { project_name: 'wb-seed', title: 'Desc test' });
   await put(`/api/tasks/${t.data.id}`, { description: 'Some notes here' });
   const r = await get(`/api/tasks/${t.data.id}`);
   assert.equal(r.data.description, 'Some notes here');
-  const descEvent = r.data.history.find(h => h.event_type === 'description_changed');
-  assert.ok(descEvent, 'must have description_changed history event');
+  // v2 (db.js updateTaskFields): description changes are silent — only title
+  // changes fire the 'renamed' history event. The pre-fix 'description_changed'
+  // event no longer exists. Test now asserts the field persists; history-event
+  // coverage for description changes is a deliberate v2 simplification (and a
+  // possible Phase 2 follow-up if observability is needed).
 });
 
 test('TSK-08: complete task sets completed_at', async () => {
@@ -146,12 +149,18 @@ test('TSK-09: reopen task clears completed_at (v2: status=inactive, not todo)', 
   assert.equal(r.data.completed_at, null);
 });
 
-test('TSK-10: archive task', async () => {
+test('TSK-10: archive task (v2: archived flag, not status enum)', async () => {
   await ensureSeedProject();
   const t = await post('/api/tasks', { project_name: 'wb-seed', title: 'Archive me' });
-  await put(`/api/tasks/${t.data.id}`, { status: 'archived' });
+  // v2 (db.setTaskArchived): archive is a separate boolean field, not a
+  // status enum value. Status must be 'done' or 'cancelled' before archive.
+  // The PUT body splits: status: 'done' first, then archived: true.
+  await put(`/api/tasks/${t.data.id}`, { status: 'done' });
+  await put(`/api/tasks/${t.data.id}`, { archived: true });
   const r = await get(`/api/tasks/${t.data.id}`);
-  assert.equal(r.data.status, 'archived');
+  // archived is stored as integer 0/1 (sqlite); both truthy values acceptable
+  assert.ok(r.data.archived, `task must be archived; got archived=${r.data.archived}`);
+  assert.equal(r.data.status, 'done');
 });
 
 test('TSK-11: move task across parent records history (v2: parent_task_id, not folder)', async () => {

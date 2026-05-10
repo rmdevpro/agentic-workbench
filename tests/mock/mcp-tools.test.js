@@ -292,6 +292,69 @@ test('MCP project_mcp_enable writes per-project config for claude+gemini+codex (
   }
 });
 
+// #445 follow-up: the original regex strip in _writeProjectMcpForAllCLIs
+// used `[^\[]*` after the section header to consume the body, which
+// terminated at the FIRST `[` character in the body. An MCP whose config
+// has `args = ["/tmp/x.js"]` (inline TOML array starting with `[`) made
+// the regex stop mid-block, leaving the rest of the body orphaned in the
+// file. Repro on M5:7860 left literal `["/tmp/x.js"]` content after a
+// disable. Line-based state machine fix; this test pins the round-trip.
+test('MCP project_mcp_disable strips inline-array Codex blocks cleanly (#445 follow-up)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const { join } = require('path');
+  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_445_followup');
+  fs.mkdirSync(projPath, { recursive: true });
+  const proj = db.ensureProject('mock_445_followup', projPath);
+  // Cleanup any prior state
+  try { fs.unlinkSync(join(projPath, '.mcp.json')); } catch { /* ignore */ }
+  try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
+  try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
+
+  // Pre-seed a non-mcp_servers section so we can verify it's preserved
+  // through the strip (real codex configs commonly have model_provider /
+  // [projects."<path>"] / etc.).
+  fs.mkdirSync(join(projPath, '.codex'), { recursive: true });
+  fs.writeFileSync(
+    join(projPath, '.codex', 'config.toml'),
+    'model = "gpt-5"\n\n[projects."/data/workspace/mock_445_followup"]\ntrust_level = "trusted"\n',
+  );
+
+  // Register an MCP whose config triggers the inline-array case.
+  db.registerMcp('mock-445-fu', 'stdio', { command: 'node', args: ['/tmp/x.js', '/tmp/y.js'] }, 'inline-array fixture');
+
+  try {
+    await withServer(startMcpApp(), async ({ port }) => {
+      // Enable: writes the [mcp_servers.mock-445-fu] block (with `args = [...]`)
+      const enableR = await call(port, { tool: 'project_mcp_enable', args: { mcp_name: 'mock-445-fu', project: 'mock_445_followup' } });
+      assert.equal(enableR.status, 200, JSON.stringify(enableR.body));
+      const afterEnable = fs.readFileSync(join(projPath, '.codex', 'config.toml'), 'utf-8');
+      assert.match(afterEnable, /\[mcp_servers\.mock-445-fu\]/, 'enable must add the block');
+      assert.match(afterEnable, /args = \["\/tmp\/x\.js", "\/tmp\/y\.js"\]/, 'enable must record the inline array');
+      assert.match(afterEnable, /\[projects\."/, 'pre-existing [projects."..."] section must survive enable');
+      assert.match(afterEnable, /^model = "gpt-5"/m, 'pre-existing top-level keys must survive enable');
+
+      // Disable: the buggy regex left `["/tmp/x.js", "/tmp/y.js"]` orphaned.
+      const disableR = await call(port, { tool: 'project_mcp_disable', args: { mcp_name: 'mock-445-fu', project: 'mock_445_followup' } });
+      assert.equal(disableR.status, 200, JSON.stringify(disableR.body));
+      const afterDisable = fs.readFileSync(join(projPath, '.codex', 'config.toml'), 'utf-8');
+      assert.doesNotMatch(afterDisable, /\[mcp_servers\.mock-445-fu\]/, 'disable must drop the block header');
+      // Critical orphan check: NO standalone array literal must remain.
+      assert.doesNotMatch(afterDisable, /^\s*\["\/tmp\/x\.js"/m, `disable must not orphan inline array; got:\n${afterDisable}`);
+      assert.doesNotMatch(afterDisable, /^\s*args =/m, `disable must not orphan key=value lines; got:\n${afterDisable}`);
+      // And pre-existing content must survive the round-trip.
+      assert.match(afterDisable, /\[projects\."/, 'pre-existing [projects."..."] section must survive disable');
+      assert.match(afterDisable, /^model = "gpt-5"/m, 'pre-existing top-level keys must survive disable');
+    });
+  } finally {
+    try { db.unregisterMcp('mock-445-fu'); } catch { /* ignore */ }
+    try { fs.rmSync(join(projPath, '.mcp.json'), { force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
+    try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+  }
+});
+
 // #446: session_prepare_pre_compact dispatches per cli_type so non-Claude
 // callers don't get the Claude-shaped prompt (which references /compact +
 // ~/.claude/plans/, neither of which apply to Gemini or Codex). The mock

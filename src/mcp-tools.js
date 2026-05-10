@@ -747,13 +747,43 @@ function _writeProjectMcpForAllCLIs(proj) {
       logger.warn('per-project Codex config read failed', { module: 'mcp-tools', project: proj.name, err: err.message });
     }
   }
-  // Strip every existing [mcp_servers.*] block + its trailing key=value lines
-  // up to the next [section] or EOF. A bit of a regex but TOML's grammar is
-  // strict enough that this is safe for our own write format.
-  const stripped = codexContent.replace(/\[mcp_servers\.[^\]]+\][^\[]*/g, '').trimEnd();
+  const stripped = _stripCodexMcpServersSections(codexContent).trimEnd();
   const tomlBlocks = _serializeMcpConfigToml(enabled);
   const newContent = stripped + (tomlBlocks ? '\n\n' + tomlBlocks : '\n');
   fs.writeFileSync(codexConfigPath, newContent);
+}
+
+// Line-based strip of every `[mcp_servers.*]` (and `[mcp_servers.*.env]`)
+// block from a TOML document. The previous regex (`[^\[]*` after the section
+// header) silently broke on inline TOML arrays — `args = ["/tmp/x.js"]`
+// contains `[`, which terminated the regex and left orphan content in the
+// file. State machine over lines avoids that entirely.
+//
+// Rule: enter "strip" mode on a line matching `^\[mcp_servers\b` (covers
+// the dotted `[mcp_servers.X]` we write plus any `[mcp_servers.X.env]`
+// sub-table). Exit "strip" mode on the next top-level section header
+// (`^\[` for anything that isn't mcp_servers). Lines in strip mode are
+// dropped; lines in keep mode (including the section header that ended
+// the strip) are kept.
+function _stripCodexMcpServersSections(content) {
+  if (!content) return '';
+  const lines = content.split('\n');
+  const out = [];
+  let stripping = false;
+  for (const line of lines) {
+    if (/^\s*\[mcp_servers\b/.test(line)) {
+      stripping = true;
+      continue;
+    }
+    if (stripping && /^\s*\[/.test(line)) {
+      // Different section starts — exit strip mode and keep this line.
+      stripping = false;
+      out.push(line);
+      continue;
+    }
+    if (!stripping) out.push(line);
+  }
+  return out.join('\n');
 }
 
 async function _restartCallingSession(args, projectPath) {

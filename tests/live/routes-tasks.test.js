@@ -16,9 +16,20 @@ const { get, post, put, del } = require('../helpers/http-client');
 // mismatch (a real signal) rather than a 400 from the handler.
 
 async function ensureSeedProject() {
-  // Idempotent: POST /api/projects creates wb-seed if absent; if present
-  // returns 200/409 either way. We don't care about the result body.
-  await post('/api/projects', { path: '/data/workspace/wb-seed', name: 'wb-seed' });
+  // Idempotent: POST /api/projects creates wb-seed if absent; 409 means already
+  // exists. R4-N4: validate the response so a 5xx (DB locked, migration broken,
+  // etc.) surfaces as a clear failure here rather than as confusing downstream
+  // assertion errors when subsequent posts can't find the project.
+  const r = await post('/api/projects', { path: '/data/workspace/wb-seed', name: 'wb-seed' });
+  if (r.status >= 500) {
+    throw new Error(`ensureSeedProject: server error ${r.status} — ${JSON.stringify(r.data)}`);
+  }
+  if (r.status !== 200 && r.status !== 409) {
+    // Unexpected (4xx other than 409). Don't throw — let downstream tests
+    // surface specific failures — but warn so the cause is visible in test output.
+    // eslint-disable-next-line no-console
+    console.warn(`ensureSeedProject: unexpected status ${r.status} — ${JSON.stringify(r.data)}`);
+  }
 }
 
 async function cleanAllTasks() {

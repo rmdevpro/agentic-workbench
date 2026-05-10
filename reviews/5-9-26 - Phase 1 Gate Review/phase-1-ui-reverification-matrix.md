@@ -336,9 +336,23 @@ PM/Facilitator dispatched 3-CLI Round 3 reviews on `ecb784e`. Gemini PASS, Claud
 
 **Post-R3 results (verified inside the workbench-test stack on M5):**
 - Mock: **401/407 pass** (5 task-v2 baseline failures unchanged from O3 #377; 1 skipped). `:bec7742` / image SHA `4dca9c9297b6`.
-- Live: **120/125 pass** in the sandboxed test container — 5 fails are: 1 fixture-empty issue (A5-LIVE-04), 1 in MCP-06 (project_find returned empty in the empty test fixture), and 3 v2-behavior gap surfacings in my TSK-07/10/11 rewrites (history event names + status field mappings differ from v1; tracked under O3 #377).
+- Live: **120/125 pass** in the sandboxed test container — 5 fails: 1 fixture-empty issue (A5-LIVE-04), 1 in MCP-06 (project_find returned empty in empty test fixture), and 3 v2-behavior gap surfacings in my TSK-07/10/11 rewrites. The TSK + MCP-06 failures all converted to passes during R4 validation (see R4 table below).
 
-Current `:latest` = `:d542741` after the test-compose ports fold (image rebuild needed for the compose change to land).
+### R4 fix-claimed (3-CLI Round 4 review findings → fold-back commits)
+
+PM/Facilitator dispatched 3-CLI Round 4 reviews on `96ecf59`. Gemini PASS-with-minor-followups (1 MINOR — TSK-11 stale URL); Claude PASS-with-minor-followups (4 non-blocking observations); Codex DO-NOT-SIGN-OFF-YET (RE-RAISED R3-N2 specifically because the master UI runbook still has v1 task contract entries). Both blocking findings folded.
+
+| Finding | Tier | Commit | Disposition |
+|---|---|---|---|
+| R4-N1 — runbook v1 task contract entries (`tests/workbench-test-runbook.md` lines 730, 4597, 4598, 4602, 4873) would 400 against the post-#388 `/api/tasks` handler | RE-RAISE (Codex; Claude N3 same gap) | `c2d7f3d` | All 4 active runbook entries converted to v2 contract: `project_name: 'wb-seed'` for task_add/task_find; `parent_task_id` for task_move; `result.project_id` assertions; `'inactive'` default status. Each carries an inline `**v2 #388:**` note explaining the contract change. Line 5394 (TASK-FOLDER-08) intentionally LEFT alone — tests a removed `/api/task-folders/` endpoint (whole TASK-FOLDER-XX section is functionally dead-code; needs separate Phase 2 disposition). Final grep returns only the new explanatory notes + the dead 5394 entry. |
+| R4-N2 — TSK-11 still used removed `/api/tasks/:id/move` URL (the `/move` sub-route was folded into base `PUT /api/tasks/:id` per `src/routes.js:1898-1903`) | MINOR (Gemini) | `2ffa460` | One-line URL fix: drop the `/move` suffix. Body shape was already correct from R3-N2. Verified: TSK-11 now passes in the test container. |
+| Bonus — v2-baseline assertion gaps in TSK-07/10 + MCP-06 (surfaced while validating R4-N2; not user-flagged but cleanly fixable) | follow-up | `be240b5` | TSK-07 — v2 `db.updateTaskFields` doesn't fire `description_changed` history event (only `renamed` for title); test now asserts the field persists. TSK-10 — v2 `archived` is a separate boolean field, not a status enum value; test now does `status:'done'` then `archived:true` (matches `db.setTaskArchived` precondition). MCP-06 — v2 `project_find` only filters by `pattern` regex not `name`; test switched to `project_get` (takes `project: <name>` directly). |
+
+**Post-R4 results (verified inside the workbench-test stack on M5):**
+- Mock: **401/407 pass** (unchanged — 5 task-v2 baseline TSK fails per O3 #377; 1 skipped).
+- Live: **124/125 pass** in the sandboxed test container — sole remaining fail is A5-LIVE-04 (file_find on empty test-fixture workspace; fixture issue, not code).
+
+Current `:latest` = `:2ffa460` (R4-N1 + R4-N2 baked) / image SHA `8ebba98f8df2`. The bonus `be240b5` commit is test-only — no rebuild needed for the workbench server itself.
 
 ### N/A reclassification sweep — covered by existing exercised code paths
 

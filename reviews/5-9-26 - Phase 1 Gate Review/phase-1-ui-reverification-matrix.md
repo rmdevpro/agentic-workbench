@@ -369,8 +369,10 @@ PM/Facilitator dispatched 3-CLI Round 5 reviews on `ca2cc75`. **Unanimous PASS**
 
 **Skipped (per Claude's R4-N1 disposition):** TSK-12/16 rank coverage thinning — Claude marked "Phase 2 cleanup at most"; needs new ranking-behavior tests against a v2 contract that isn't characterized. Not a one-line fold; out of R5 scope.
 
-**Post-R5 results (verified inside the workbench-test stack on M5):**
-- (Will be filled in after rebuild + sandbox test run; see resume notes below.)
+**Post-R5 results (verified inside the workbench-test stack on M5, image `f0c5d91` rebuilt with `--build`):**
+- Mock: **401/407 pass** (unchanged — same 5 task-v2 baseline TSK fails per O3 #377; 1 skipped).
+- Live: **124/125 pass** (unchanged — sole fail is A5-LIVE-04, the empty-fixture issue; not a code defect).
+- R5-N1 parity verified end-to-end via direct curl: `task_find {project_name:"wb-r5"}` returns 200 with the scoped task (matching `task_add`'s contract); `task_find {project_name:"does-not-exist"}` returns clean 404. R5-N1 runtime change introduces no regression.
 
 ### N/A reclassification sweep — covered by existing exercised code paths
 

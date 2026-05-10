@@ -56,6 +56,27 @@ test('MCP-06: task_add increments DB row count and task_find surfaces it (v2 con
   assert.ok(listed.data.result.tasks.some((t) => t.title === 'mcp-task-test'));
 });
 
+test('MCP-07: task_find 404s on bogus project_id/project_name (R5-N1 _resolveProject pin)', async () => {
+  // R6-N1 belt-and-suspenders: R5-N1 (commit 85f09ff) routed task_find through
+  // _resolveProject for parity with task_add. _resolveProject throws ToolError 404
+  // when the requested project doesn't exist; this test pins both code paths so
+  // a future refactor that silently falls back to getAllTasks (the pre-R5-N1
+  // behavior) would fail loudly.
+  const byId = await post('/api/mcp/call', {
+    tool: 'task_find',
+    args: { project_id: 999999 },
+  });
+  assert.equal(byId.status, 404, `bogus project_id must 404; got ${byId.status}`);
+  assert.match(byId.data.error || '', /project_id 999999 not found/);
+
+  const byName = await post('/api/mcp/call', {
+    tool: 'task_find',
+    args: { project_name: '__no-such-project__' },
+  });
+  assert.equal(byName.status, 404, `bogus project_name must 404; got ${byName.status}`);
+  assert.match(byName.data.error || '', /project "__no-such-project__" not found/);
+});
+
 test('MCP unknown tool returns 404', async () => {
   const r = await post('/api/mcp/call', { tool: 'nonexistent_tool', args: {} });
   assert.equal(r.status, 404);

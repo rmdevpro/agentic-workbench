@@ -1,7 +1,7 @@
 Context is getting full. Work through the following session end checklist now, before running `/compact`:
 
 **1. Update the plan file**
-Update your plan file at `/data/.workbench/plans/{{SESSION_ID}}.md` (workbench-managed, CLI-agnostic — same path works for Claude, Gemini, and Codex; create the directory if it doesn't exist). Include:
+Update your plan file (`~/.claude/plans/`) with:
 - Current status: what phase, what's done, what's next
 - Key decisions made this session and the rationale behind them (not just "we decided X" — the WHY)
 - Any deviations from the original plan and why

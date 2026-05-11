@@ -6,6 +6,14 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { post } = require('../helpers/http-client');
+const { dockerExec } = require('../helpers/reset-state');
+
+// #447: A5-LIVE-04 needs at least one .js file containing `module.exports`
+// in the search root. Empty workspace (sandbox default) → 0 matches → fail.
+// Seed a deterministic fixture under /data/workspace/ before this file runs.
+test.before(() => {
+  dockerExec("mkdir -p /data/workspace/a5-fixture && printf 'module.exports = { ok: true };\\n' > /data/workspace/a5-fixture/sample.js");
+});
 
 test('A5-LIVE-01: file_find rejects file_type with shell metachars (400)', async () => {
   const r = await post('/api/mcp/call', {

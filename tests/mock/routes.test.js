@@ -361,7 +361,7 @@ test('TSK-07: created_by field persists', async () => {
   await withFullServer(async ({ port }) => {
     const r = await (
       await req(port, 'POST', '/api/tasks', {
-        folder_path: '/',
+        project_name: 'test-project',
         title: 'task',
         created_by: 'agent',
       })
@@ -581,11 +581,12 @@ test('session config PUT with state=hidden updates DB state', async () => {
 
 test('task CRUD success paths with DB verification', async () => {
   await withFullServer(async ({ port, db, firedEvents }) => {
-    // Create
+    // Create — v2 contract takes project_name (or project_id / parent_task_id),
+    // default status is 'inactive'.
     const cr = await (
-      await req(port, 'POST', '/api/tasks', { folder_path: '/', title: 'My task' })
+      await req(port, 'POST', '/api/tasks', { project_name: 'test-project', title: 'My task' })
     ).json();
-    assert.equal(cr.status, 'todo');
+    assert.equal(cr.status, 'inactive');
     assert.equal(cr.title, 'My task');
     assert.ok(firedEvents.some((e) => e.event === 'task_added'));
     // Gray-box: verify DB has the task
@@ -596,7 +597,7 @@ test('task CRUD success paths with DB verification', async () => {
     );
     // List
     const lr = await (await req(port, 'GET', '/api/tasks/tree')).json();
-    assert.ok(lr.tree !== undefined);
+    assert.ok(Array.isArray(lr.programs), 'v2 tree shape is { programs: [...] }');
     // Complete
     const complR = await req(port, 'PUT', `/api/tasks/${cr.id}`, { status: 'done' });
     assert.equal(complR.status, 200);
@@ -604,11 +605,11 @@ test('task CRUD success paths with DB verification', async () => {
     const completedTask = db.getAllTasks().find((t) => t.id === cr.id);
     assert.equal(completedTask.status, 'done', 'Task status must be done after completion');
     assert.ok(completedTask.completed_at, 'completed_at must be set');
-    // Reopen
-    const reopenR = await req(port, 'PUT', `/api/tasks/${cr.id}`, { status: 'todo' });
+    // Reopen — v2 reopen state is 'inactive', not 'todo'.
+    const reopenR = await req(port, 'PUT', `/api/tasks/${cr.id}`, { status: 'inactive' });
     assert.equal(reopenR.status, 200);
     const reopenedTask = db.getAllTasks().find((t) => t.id === cr.id);
-    assert.equal(reopenedTask.status, 'todo', 'Task status must be todo after reopen');
+    assert.equal(reopenedTask.status, 'inactive', 'Task status must be inactive after reopen');
     assert.equal(reopenedTask.completed_at, null, 'completed_at must be cleared after reopen');
     // Delete
     const taskCountBefore = db.getAllTasks().length;
@@ -1595,7 +1596,7 @@ test('TSK-08: GET /api/tasks/tree returns tree object', async () => {
     const r = await req(port, 'GET', '/api/tasks/tree');
     assert.equal(r.status, 200);
     const body = await r.json();
-    assert.ok(body.tree !== undefined);
+    assert.ok(Array.isArray(body.programs), 'v2 tree shape is { programs: [...] }');
   });
 });
 
@@ -1604,7 +1605,7 @@ test('TSK-09: GET /api/tasks/tree accepts filter query param', async () => {
     const r = await req(port, 'GET', '/api/tasks/tree?filter=all');
     assert.equal(r.status, 200);
     const body = await r.json();
-    assert.ok(body.tree !== undefined);
+    assert.ok(Array.isArray(body.programs), 'v2 tree shape is { programs: [...] }');
   });
 });
 

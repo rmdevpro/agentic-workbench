@@ -27,19 +27,24 @@ test('#446 session_prepare_pre_compact returns CLI-appropriate prompt for all 3 
   assert.equal(gemini.status, 200, `gemini spawn: ${JSON.stringify(gemini.data)}`);
   assert.equal(codex.status,  200, `codex spawn: ${JSON.stringify(codex.data)}`);
 
+  // Corrected per-CLI design (2026-05-11): all 3 CLIs have in-session
+  // compaction. Only the compaction command name + plan-file path varies.
+  // Per-CLI plan-file paths differentiate Claude/Codex (both use /compact)
+  // from Gemini (uses /compress).
   const claudeR = await post('/api/mcp/call', { tool: 'session_prepare_pre_compact', args: { session_id: claude.data.id } });
   assert.equal(claudeR.status, 200, JSON.stringify(claudeR.data));
-  assert.match(claudeR.data.result, /\/compact/i, 'Claude prompt must reference /compact');
+  assert.match(claudeR.data.result, /\/compact/, 'Claude prompt must reference /compact');
+  assert.match(claudeR.data.result, /~\/\.claude\/plans\//, 'Claude prompt must reference ~/.claude/plans/');
 
   const geminiR = await post('/api/mcp/call', { tool: 'session_prepare_pre_compact', args: { session_id: gemini.data.id } });
   assert.equal(geminiR.status, 200, JSON.stringify(geminiR.data));
-  assert.match(geminiR.data.result, /\/compress/i, 'Gemini prompt must reference /compress');
+  assert.match(geminiR.data.result, /\/compress/, 'Gemini prompt must reference /compress');
+  assert.match(geminiR.data.result, /~\/\.gemini\/plans\//, 'Gemini prompt must reference ~/.gemini/plans/');
 
   const codexR = await post('/api/mcp/call', { tool: 'session_prepare_pre_compact', args: { session_id: codex.data.id } });
   assert.equal(codexR.status, 200, JSON.stringify(codexR.data));
-  assert.match(codexR.data.result, /Codex CLI does NOT/i, 'Codex prompt must call out the no-compaction caveat');
-  assert.match(codexR.data.result, /start a NEW Codex session/i, 'Codex prompt must direct user to a new session');
-  assert.match(codexR.data.result, /Do NOT run `\/clear`/, 'Codex prompt must explicitly warn against /clear');
+  assert.match(codexR.data.result, /\/compact/, 'Codex prompt must reference /compact (same compaction command as Claude)');
+  assert.match(codexR.data.result, /~\/\.codex\/plans\//, 'Codex prompt must reference ~/.codex/plans/ (per-CLI plan path differentiates from Claude)');
 });
 
 test('#446 session_resume_post_compact 404s cleanly with per-CLI message when no transcript', async () => {

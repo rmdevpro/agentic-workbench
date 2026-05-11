@@ -372,20 +372,24 @@ test('MCP session_prepare_pre_compact dispatches per cli_type (#446)', async () 
     db.upsertSession('mock-446-gemini-prep', proj.id, 'g', 'gemini');
     db.upsertSession('mock-446-codex-prep',  proj.id, 'x', 'codex');
     await withServer(startMcpApp(), async ({ port }) => {
+      // Corrected per-CLI design (2026-05-11): all 3 CLIs have in-session
+      // compaction. Only the compaction command name + plan-file path varies.
+      // Plan-file paths are how the test distinguishes Claude/Codex (both
+      // use /compact) from Gemini (uses /compress).
       const claudeR = await call(port, { tool: 'session_prepare_pre_compact', args: { session_id: 'mock-446-claude-prep' } });
       assert.equal(claudeR.status, 200, JSON.stringify(claudeR.body));
-      assert.match(claudeR.body.result, /\/compact/i, 'Claude prompt must reference /compact');
+      assert.match(claudeR.body.result, /\/compact/, 'Claude prompt must reference /compact');
+      assert.match(claudeR.body.result, /~\/\.claude\/plans\//, 'Claude prompt must reference ~/.claude/plans/');
 
       const geminiR = await call(port, { tool: 'session_prepare_pre_compact', args: { session_id: 'mock-446-gemini-prep' } });
       assert.equal(geminiR.status, 200, JSON.stringify(geminiR.body));
-      assert.match(geminiR.body.result, /\/compress/i, 'Gemini prompt must reference /compress (not /compact)');
+      assert.match(geminiR.body.result, /\/compress/, 'Gemini prompt must reference /compress (Gemini compaction command)');
+      assert.match(geminiR.body.result, /~\/\.gemini\/plans\//, 'Gemini prompt must reference ~/.gemini/plans/');
 
       const codexR = await call(port, { tool: 'session_prepare_pre_compact', args: { session_id: 'mock-446-codex-prep' } });
       assert.equal(codexR.status, 200, JSON.stringify(codexR.body));
-      assert.match(codexR.body.result, /Codex CLI does NOT/i, 'Codex prompt must call out the no-compaction caveat');
-      // Closing instruction must be "start a new Codex session" (not /clear).
-      assert.match(codexR.body.result, /start a NEW Codex session/i, 'Codex prompt closing instruction must direct user to a new session');
-      assert.match(codexR.body.result, /Do NOT run `\/clear`/, 'Codex prompt must explicitly warn against /clear');
+      assert.match(codexR.body.result, /\/compact/, 'Codex prompt must reference /compact (Codex compaction command — same name as Claude)');
+      assert.match(codexR.body.result, /~\/\.codex\/plans\//, 'Codex prompt must reference ~/.codex/plans/ (the per-CLI plan path that differentiates Codex from Claude)');
     });
   } finally {
     try { db.deleteSession('mock-446-claude-prep'); } catch { /* ignore */ }
@@ -408,6 +412,35 @@ test('MCP session_resume_post_compact 404s on missing session (#446 no-silent-fa
     assert.equal(r.status, 404, `expected 404; got ${r.status}: ${JSON.stringify(r.body)}`);
     assert.match(r.body.error || '', /session not found/i);
   });
+});
+
+// #450: session_summarize previously threw "path argument must be string" when
+// called without an explicit `project` arg (e.g. from a CLI tab calling
+// session_summarize {session_id: <sid>}). Root cause: db.getProject(undefined)
+// returned undefined, fallback hit join(WORKSPACE, undefined). Fix resolves
+// project from the session row's project_id when arg is omitted.
+test('MCP session_summarize resolves project from session row when arg missing (#450)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const { join } = require('path');
+  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_450_proj');
+  fs.mkdirSync(projPath, { recursive: true });
+  const proj = db.ensureProject('mock_450_proj', projPath);
+  try {
+    // Seed a codex session — Codex/Gemini branches don't need projectPath but
+    // the path resolution code at the top must not throw regardless of cli_type.
+    db.upsertSession('mock-450-session', proj.id, 'summarize-test', 'codex');
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, { tool: 'session_summarize', args: { session_id: 'mock-450-session' } });
+      // No "path must be string" TypeError. Either 200 with summary (if transcript
+      // exists) or 200 with empty result; never 500/path error.
+      assert.notEqual(r.status, 500, `summarize must not 500; got ${r.status}: ${JSON.stringify(r.body)}`);
+      assert.equal(r.status, 200, `summarize must return 200; got ${r.status}: ${JSON.stringify(r.body)}`);
+    });
+  } finally {
+    try { db.deleteSession('mock-450-session'); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+  }
 });
 
 // #437: session_list previously walked <project>/.claude/sessions/*.jsonl which

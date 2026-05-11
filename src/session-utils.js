@@ -399,12 +399,23 @@ function _readCodexTranscript(sessionId, maxTranscriptChars, maxMessageChars) {
 }
 
 async function summarizeSession(sessionId, project) {
-  const dbProj = db.getProject(project);
-  const projectPath = dbProj ? dbProj.path : join(WORKSPACE, project);
-
-  // Determine CLI type from DB
+  // Determine CLI type from DB. Resolve project path:
+  //   - explicit `project` arg → look up that project
+  //   - otherwise → fall back to the session row's project_id
+  // #450: callers using only session_id (e.g. session_summarize MCP tool from
+  // a CLI tab) hit join(WORKSPACE, undefined) → TypeError. Resolve from the
+  // session row first so the legacy explicit-`project` callers still work.
   const session = db.getSession(sessionId);
   const cliType = session?.cli_type || 'claude';
+
+  let projectPath = '';
+  if (project) {
+    const dbProj = db.getProject(project);
+    projectPath = dbProj ? dbProj.path : join(WORKSPACE, project);
+  } else if (session?.project_id) {
+    const dbProj = db.getProjectById(session.project_id);
+    projectPath = dbProj?.path || '';
+  }
 
   const maxTranscriptChars = config.get('session.summaryMaxTranscriptChars', 1500);
   const maxMessageChars = config.get('session.summaryMaxMessageChars', 500);

@@ -113,15 +113,22 @@ function makeApp(overrides = {}) {
     },
     getTasksByFolder: (fp) => [...tasks.values()].filter((t) => t.folder_path === fp),
     getTask: (id) => tasks.get(Number(id)) || null,
-    addTask: (fp, title, desc = '', so, cb = 'human') => {
+    getSubtasks: (id) => [...tasks.values()].filter((t) => t.parent_task_id === Number(id)),
+    // v2 contract: addTask takes an object { projectId, parentTaskId, githubIssue,
+    // title, description, status, createdBy }. Default status is 'inactive'.
+    addTask: ({ projectId, parentTaskId = null, githubIssue = null, title, description = '', status = 'inactive', createdBy = 'human' } = {}) => {
       const r = {
         id: tSeq++,
-        folder_path: fp,
+        project_id: projectId,
+        parent_task_id: parentTaskId,
+        github_issue: githubIssue,
         title,
-        description: desc,
-        status: 'todo',
-        sort_order: so ?? tasks.size,
-        created_by: cb,
+        description,
+        status,
+        archived: 0,
+        rank: tasks.size,
+        sort_order: tasks.size,
+        created_by: createdBy,
         completed_at: null,
       };
       tasks.set(r.id, r);
@@ -135,16 +142,31 @@ function makeApp(overrides = {}) {
       const t = tasks.get(Number(id));
       if (t) t.description = desc;
     },
-    updateTaskStatus: (id, status) => {
+    updateTaskFields: (id, { title, description, github_issue }) => {
+      const t = tasks.get(Number(id));
+      if (!t) return;
+      if (title !== undefined && title !== null) t.title = title;
+      if (description !== undefined && description !== null) t.description = description;
+      if (github_issue !== undefined && github_issue !== null) t.github_issue = github_issue;
+    },
+    setTaskStatus: (id, status) => {
       const t = tasks.get(Number(id));
       if (t) {
         t.status = status;
         t.completed_at = status === 'done' ? new Date().toISOString() : null;
       }
+      return t;
     },
-    moveTask: (id, fp, so) => {
+    setTaskArchived: (id, archived) => {
       const t = tasks.get(Number(id));
-      if (t) { t.folder_path = fp; t.sort_order = so ?? 0; }
+      if (t) t.archived = archived ? 1 : 0;
+    },
+    moveTask: (id, { parentTaskId, projectId, rank } = {}) => {
+      const t = tasks.get(Number(id));
+      if (!t) return;
+      if (parentTaskId !== undefined) t.parent_task_id = parentTaskId;
+      if (projectId !== undefined) t.project_id = projectId;
+      if (rank !== undefined) t.rank = rank;
     },
     reorderTasks: (orders) => {
       for (const { id, sort_order } of orders) {

@@ -793,7 +793,7 @@ test('WAT-451-02: registerGeminiSessionCommands is idempotent — preserves exis
   assert.match(resume, /session_resume_post_compact/);
 });
 
-test('WAT-451-03: registerCodexSessionPrompts writes MD files to ~/.codex/prompts/', async () => {
+test('WAT-451-03: registerCodexSessionSkills writes SKILL.md files to ~/.agents/skills/ (#449 corrected path)', async () => {
   const fsp = require('node:fs/promises');
   const path = require('node:path');
   const tmpHome = await fsp.mkdtemp(path.join(require('node:os').tmpdir(), 'wat-451-cod-'));
@@ -808,24 +808,26 @@ test('WAT-451-03: registerCodexSessionPrompts writes MD files to ~/.codex/prompt
     CLAUDE_HOME: tmpHome,
     logger: { info() {}, warn() {}, error() {}, debug() {} },
   });
-  await w2.registerCodexSessionPrompts();
-  const transition = await fsp.readFile(path.join(tmpHome, '.codex', 'prompts', 'session-transition.md'), 'utf-8');
-  const resume = await fsp.readFile(path.join(tmpHome, '.codex', 'prompts', 'session-resume.md'), 'utf-8');
-  assert.match(transition, /^---\ndescription:/, 'transition.md must have YAML frontmatter');
-  assert.match(transition, /session_prepare_pre_compact/, 'transition.md must instruct MCP tool call');
-  assert.match(transition, /WORKBENCH_SESSION_ID/, 'transition.md must reference the env var');
-  assert.match(resume, /^---\ndescription:/);
+  await w2.registerCodexSessionSkills();
+  const transition = await fsp.readFile(path.join(tmpHome, '.agents', 'skills', 'session-transition', 'SKILL.md'), 'utf-8');
+  const resume = await fsp.readFile(path.join(tmpHome, '.agents', 'skills', 'session-resume', 'SKILL.md'), 'utf-8');
+  // SKILL.md frontmatter requires name + description
+  assert.match(transition, /^---\nname: session-transition\n/, 'SKILL.md must declare name: session-transition');
+  assert.match(transition, /description:/, 'SKILL.md must have description');
+  assert.match(transition, /session_prepare_pre_compact/, 'SKILL.md must instruct MCP tool call');
+  assert.match(transition, /WORKBENCH_SESSION_ID/, 'SKILL.md must reference the env var');
+  assert.match(resume, /^---\nname: session-resume\n/);
   assert.match(resume, /session_resume_post_compact/);
 });
 
-test('WAT-451-04: registerCodexSessionPrompts is idempotent — preserves existing files', async () => {
+test('WAT-451-04: registerCodexSessionSkills is idempotent — preserves existing files', async () => {
   const fsp = require('node:fs/promises');
   const path = require('node:path');
   const tmpHome = await fsp.mkdtemp(path.join(require('node:os').tmpdir(), 'wat-451-codi-'));
-  const promptDir = path.join(tmpHome, '.codex', 'prompts');
-  await fsp.mkdir(promptDir, { recursive: true });
-  const userCustom = '---\ndescription: user custom\n---\n\ndo something else\n';
-  await fsp.writeFile(path.join(promptDir, 'session-transition.md'), userCustom);
+  const skillDir = path.join(tmpHome, '.agents', 'skills', 'session-transition');
+  await fsp.mkdir(skillDir, { recursive: true });
+  const userCustom = '---\nname: session-transition\ndescription: user custom\n---\n\ndo something else\n';
+  await fsp.writeFile(path.join(skillDir, 'SKILL.md'), userCustom);
 
   const w2 = createWatchers({
     db: { getSessionByPrefix: () => null, getProjectById: () => null, getProjects: () => [] },
@@ -838,10 +840,10 @@ test('WAT-451-04: registerCodexSessionPrompts is idempotent — preserves existi
     CLAUDE_HOME: tmpHome,
     logger: { info() {}, warn() {}, error() {}, debug() {} },
   });
-  await w2.registerCodexSessionPrompts();
-  const transition = await fsp.readFile(path.join(promptDir, 'session-transition.md'), 'utf-8');
-  assert.equal(transition, userCustom, 'pre-existing session-transition.md must NOT be overwritten');
-  const resume = await fsp.readFile(path.join(promptDir, 'session-resume.md'), 'utf-8');
+  await w2.registerCodexSessionSkills();
+  const transition = await fsp.readFile(path.join(skillDir, 'SKILL.md'), 'utf-8');
+  assert.equal(transition, userCustom, 'pre-existing SKILL.md must NOT be overwritten');
+  const resume = await fsp.readFile(path.join(tmpHome, '.agents', 'skills', 'session-resume', 'SKILL.md'), 'utf-8');
   assert.match(resume, /session_resume_post_compact/);
 });
 

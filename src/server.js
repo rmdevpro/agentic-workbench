@@ -381,8 +381,8 @@ if (require.main === module) {
             err: err.message,
           }),
         );
-        watchers.registerCodexSessionPrompts().catch((err) =>
-          logger.error('Post-startup Codex session prompts failed', {
+        watchers.registerCodexSessionSkills().catch((err) =>
+          logger.error('Post-startup Codex session skills failed', {
             module: 'server',
             err: err.message,
           }),

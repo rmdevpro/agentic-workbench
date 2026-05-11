@@ -39,17 +39,21 @@ test('#451 Gemini /session:transition + /session:resume TOML files installed', (
   assert.match(resume, /!\{echo -n \$WORKBENCH_SESSION_ID\}/);
 });
 
-test('#451 Codex /prompts:session-transition + /prompts:session-resume MD files installed', () => {
-  const transitionPath = '/data/.codex/prompts/session-transition.md';
-  const resumePath = '/data/.codex/prompts/session-resume.md';
+test('#451 Codex session-transition + session-resume skills installed at ~/.agents/skills/', () => {
+  // Codex CLI v0.130.0 doesn't support the deprecated /prompts:* mechanism.
+  // The non-deprecated path is skills at ~/.agents/skills/<name>/SKILL.md
+  // (per OpenAI Codex skills docs), invoked via $skill-name. #449.
+  const transitionPath = '/data/.agents/skills/session-transition/SKILL.md';
+  const resumePath = '/data/.agents/skills/session-resume/SKILL.md';
   assert.ok(fileExists(transitionPath), `${transitionPath} must exist`);
   assert.ok(fileExists(resumePath), `${resumePath} must exist`);
 
   const transition = readFile(transitionPath);
   const resume = readFile(resumePath);
-  assert.match(transition, /^---\ndescription:/, 'transition.md must have YAML frontmatter');
+  assert.match(transition, /^---\nname: session-transition\n/, 'SKILL.md must declare name');
+  assert.match(transition, /description:/);
   assert.match(transition, /session_prepare_pre_compact/);
   assert.match(transition, /WORKBENCH_SESSION_ID/);
-  assert.match(resume, /^---\ndescription:/);
+  assert.match(resume, /^---\nname: session-resume\n/);
   assert.match(resume, /session_resume_post_compact/);
 });

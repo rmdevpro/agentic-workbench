@@ -742,26 +742,38 @@ module.exports = function createWatchers({
     }
   }
 
-  async function registerCodexSessionPrompts() {
+  // Codex skill mechanism — `$skill-name` invocation in the composer, or the
+  // `/skills` picker. SKILL.md files live at ~/.agents/skills/<name>/SKILL.md
+  // (user-level). This replaces the original ~/.codex/prompts/ path: the
+  // custom-prompts mechanism is deprecated by OpenAI and verified non-functional
+  // in Codex CLI v0.130.0 — typing /prompts:session-transition returned
+  // "Unrecognized command" despite the files being installed. Skills work in
+  // the same version. Tracked: #449.
+  async function registerCodexSessionSkills() {
     const HOME = safe.HOME;
-    const dir = join(HOME, '.codex', 'prompts');
-    const transitionPath = join(dir, 'session-transition.md');
-    const resumePath = join(dir, 'session-resume.md');
-    const transitionMd =
+    const transitionDir = join(HOME, '.agents', 'skills', 'session-transition');
+    const resumeDir = join(HOME, '.agents', 'skills', 'session-resume');
+    const transitionSkill =
       '---\n' +
-      'description: Workbench end-of-session transition checklist (pre-/compact)\n' +
+      'name: session-transition\n' +
+      'description: Workbench end-of-session transition checklist. Use this skill before running /compact to capture state in the plan file at ~/.codex/plans/<session-id>.md plus GH issue updates and memory updates.\n' +
       '---\n' +
       '\n' +
       'Call the workbench MCP tool session_prepare_pre_compact with session_id set to the value of the WORKBENCH_SESSION_ID environment variable in your shell context. Use a shell tool to read that env var if needed (echo $WORKBENCH_SESSION_ID). Then follow the returned checklist exactly.\n';
-    const resumeMd =
+    const resumeSkill =
       '---\n' +
-      'description: Workbench restore context after /compact\n' +
+      'name: session-resume\n' +
+      'description: Workbench restore context after compaction. Use this skill immediately after /compact to read the tail file written by the workbench and restore prior session state.\n' +
       '---\n' +
       '\n' +
       'Call the workbench MCP tool session_resume_post_compact with session_id set to the value of the WORKBENCH_SESSION_ID environment variable in your shell context. Use a shell tool to read that env var if needed (echo $WORKBENCH_SESSION_ID). Then follow the returned resume instructions exactly.\n';
     try {
-      await fsp.mkdir(dir, { recursive: true });
-      for (const [path, content] of [[transitionPath, transitionMd], [resumePath, resumeMd]]) {
+      await fsp.mkdir(transitionDir, { recursive: true });
+      await fsp.mkdir(resumeDir, { recursive: true });
+      for (const [path, content] of [
+        [join(transitionDir, 'SKILL.md'), transitionSkill],
+        [join(resumeDir, 'SKILL.md'), resumeSkill],
+      ]) {
         try {
           await fsp.access(path);
           continue;
@@ -770,9 +782,9 @@ module.exports = function createWatchers({
         }
         await fsp.writeFile(path, content);
       }
-      logger.info('Registered Codex /prompts:session-* slash commands', { module: 'watchers' });
+      logger.info('Registered Codex session-transition + session-resume skills', { module: 'watchers' });
     } catch (err) {
-      logger.error('Could not write Codex session prompts', { module: 'watchers', err: err.message });
+      logger.error('Could not write Codex session skills', { module: 'watchers', err: err.message });
     }
   }
 
@@ -787,7 +799,7 @@ module.exports = function createWatchers({
     registerGeminiMcp,
     registerCodexMcp,
     registerGeminiSessionCommands,
-    registerCodexSessionPrompts,
+    registerCodexSessionSkills,
     registerCodexProvider,
     registerCodexAuth,
     trustProjectDirs,

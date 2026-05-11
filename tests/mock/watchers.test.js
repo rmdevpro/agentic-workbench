@@ -739,4 +739,110 @@ test('WAT-ES-04: ensureSettings logs error on non-ENOENT stat failure', async ()
   }
 });
 
+// ── #451: Gemini + Codex /session slash command installers ────────────────
+
+test('WAT-451-01: registerGeminiSessionCommands writes TOML files to ~/.gemini/commands/session/', async () => {
+  const fsp = require('node:fs/promises');
+  const path = require('node:path');
+  const tmpHome = await fsp.mkdtemp(path.join(require('node:os').tmpdir(), 'wat-451-gem-'));
+  const w2 = createWatchers({
+    db: { getSessionByPrefix: () => null, getProjectById: () => null, getProjects: () => [] },
+    safe: { findSessionsDir: () => '/tmp/sessions', HOME: tmpHome },
+    config: { get: (k, fb) => fb },
+    sessionUtils: { getTokenUsage: async () => ({}) },
+    sessionWsClients: new Map(),
+    tmuxName: (id) => `wb_${id}`,
+    tmuxExists: async () => false,
+    CLAUDE_HOME: tmpHome,
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+  });
+  await w2.registerGeminiSessionCommands();
+  const transition = await fsp.readFile(path.join(tmpHome, '.gemini', 'commands', 'session', 'transition.toml'), 'utf-8');
+  const resume = await fsp.readFile(path.join(tmpHome, '.gemini', 'commands', 'session', 'resume.toml'), 'utf-8');
+  assert.match(transition, /session_prepare_pre_compact/, 'transition.toml must call session_prepare_pre_compact');
+  assert.match(transition, /!\{echo -n \$WORKBENCH_SESSION_ID\}/, 'transition.toml must use shell substitution for session_id');
+  assert.match(resume, /session_resume_post_compact/, 'resume.toml must call session_resume_post_compact');
+  assert.match(resume, /!\{echo -n \$WORKBENCH_SESSION_ID\}/, 'resume.toml must use shell substitution for session_id');
+});
+
+test('WAT-451-02: registerGeminiSessionCommands is idempotent — preserves existing files', async () => {
+  const fsp = require('node:fs/promises');
+  const path = require('node:path');
+  const tmpHome = await fsp.mkdtemp(path.join(require('node:os').tmpdir(), 'wat-451-gemi-'));
+  const cmdDir = path.join(tmpHome, '.gemini', 'commands', 'session');
+  await fsp.mkdir(cmdDir, { recursive: true });
+  const userCustom = 'description = "user custom"\nprompt = "do something else"\n';
+  await fsp.writeFile(path.join(cmdDir, 'transition.toml'), userCustom);
+
+  const w2 = createWatchers({
+    db: { getSessionByPrefix: () => null, getProjectById: () => null, getProjects: () => [] },
+    safe: { findSessionsDir: () => '/tmp/sessions', HOME: tmpHome },
+    config: { get: (k, fb) => fb },
+    sessionUtils: { getTokenUsage: async () => ({}) },
+    sessionWsClients: new Map(),
+    tmuxName: (id) => `wb_${id}`,
+    tmuxExists: async () => false,
+    CLAUDE_HOME: tmpHome,
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+  });
+  await w2.registerGeminiSessionCommands();
+  const transition = await fsp.readFile(path.join(cmdDir, 'transition.toml'), 'utf-8');
+  assert.equal(transition, userCustom, 'pre-existing transition.toml must NOT be overwritten');
+  // resume.toml didn't exist — should be written
+  const resume = await fsp.readFile(path.join(cmdDir, 'resume.toml'), 'utf-8');
+  assert.match(resume, /session_resume_post_compact/);
+});
+
+test('WAT-451-03: registerCodexSessionPrompts writes MD files to ~/.codex/prompts/', async () => {
+  const fsp = require('node:fs/promises');
+  const path = require('node:path');
+  const tmpHome = await fsp.mkdtemp(path.join(require('node:os').tmpdir(), 'wat-451-cod-'));
+  const w2 = createWatchers({
+    db: { getSessionByPrefix: () => null, getProjectById: () => null, getProjects: () => [] },
+    safe: { findSessionsDir: () => '/tmp/sessions', HOME: tmpHome },
+    config: { get: (k, fb) => fb },
+    sessionUtils: { getTokenUsage: async () => ({}) },
+    sessionWsClients: new Map(),
+    tmuxName: (id) => `wb_${id}`,
+    tmuxExists: async () => false,
+    CLAUDE_HOME: tmpHome,
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+  });
+  await w2.registerCodexSessionPrompts();
+  const transition = await fsp.readFile(path.join(tmpHome, '.codex', 'prompts', 'session-transition.md'), 'utf-8');
+  const resume = await fsp.readFile(path.join(tmpHome, '.codex', 'prompts', 'session-resume.md'), 'utf-8');
+  assert.match(transition, /^---\ndescription:/, 'transition.md must have YAML frontmatter');
+  assert.match(transition, /session_prepare_pre_compact/, 'transition.md must instruct MCP tool call');
+  assert.match(transition, /WORKBENCH_SESSION_ID/, 'transition.md must reference the env var');
+  assert.match(resume, /^---\ndescription:/);
+  assert.match(resume, /session_resume_post_compact/);
+});
+
+test('WAT-451-04: registerCodexSessionPrompts is idempotent — preserves existing files', async () => {
+  const fsp = require('node:fs/promises');
+  const path = require('node:path');
+  const tmpHome = await fsp.mkdtemp(path.join(require('node:os').tmpdir(), 'wat-451-codi-'));
+  const promptDir = path.join(tmpHome, '.codex', 'prompts');
+  await fsp.mkdir(promptDir, { recursive: true });
+  const userCustom = '---\ndescription: user custom\n---\n\ndo something else\n';
+  await fsp.writeFile(path.join(promptDir, 'session-transition.md'), userCustom);
+
+  const w2 = createWatchers({
+    db: { getSessionByPrefix: () => null, getProjectById: () => null, getProjects: () => [] },
+    safe: { findSessionsDir: () => '/tmp/sessions', HOME: tmpHome },
+    config: { get: (k, fb) => fb },
+    sessionUtils: { getTokenUsage: async () => ({}) },
+    sessionWsClients: new Map(),
+    tmuxName: (id) => `wb_${id}`,
+    tmuxExists: async () => false,
+    CLAUDE_HOME: tmpHome,
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+  });
+  await w2.registerCodexSessionPrompts();
+  const transition = await fsp.readFile(path.join(promptDir, 'session-transition.md'), 'utf-8');
+  assert.equal(transition, userCustom, 'pre-existing session-transition.md must NOT be overwritten');
+  const resume = await fsp.readFile(path.join(promptDir, 'session-resume.md'), 'utf-8');
+  assert.match(resume, /session_resume_post_compact/);
+});
+
 // startCompactionMonitor removed — smart compaction stripped (#32)

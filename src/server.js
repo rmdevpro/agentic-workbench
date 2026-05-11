@@ -373,6 +373,20 @@ if (require.main === module) {
             err: err.message,
           }),
         );
+        // #451: install workbench /session slash command equivalents for
+        // Gemini (TOML) and Codex (Markdown) on every boot. Idempotent.
+        watchers.registerGeminiSessionCommands().catch((err) =>
+          logger.error('Post-startup Gemini session commands failed', {
+            module: 'server',
+            err: err.message,
+          }),
+        );
+        watchers.registerCodexSessionPrompts().catch((err) =>
+          logger.error('Post-startup Codex session prompts failed', {
+            module: 'server',
+            err: err.message,
+          }),
+        );
         watchers.registerCodexProvider().catch((err) =>
           logger.error('Post-startup Codex provider config failed', {
             module: 'server',

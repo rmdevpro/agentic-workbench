@@ -688,6 +688,94 @@ module.exports = function createWatchers({
     }
   }
 
+  // #451: Install workbench `/session` slash command equivalents for Gemini
+  // and Codex on every boot. Idempotent: only writes when file is absent
+  // (preserves user customizations).
+  //
+  // Claude has a native `/session` skill installed via the workbench's skill
+  // mechanism (separate path); these two helpers cover the Gemini + Codex
+  // equivalents so the keystroke UX is parallel across all 3 CLIs.
+  //
+  // Gemini: TOML files in ~/.gemini/commands/session/ become /session:transition
+  //   and /session:resume via the subdir → :namespace convention.
+  // Codex: Markdown files in ~/.codex/prompts/ become /prompts:session-transition
+  //   and /prompts:session-resume (fixed `prompts:` namespace prefix). NOTE:
+  //   Codex CLI v0.130.0 doesn't load these — feature gap tracked in #449.
+  //   Install them anyway so they're ready when the Codex side works.
+  //
+  // Both slash commands are thin wrappers that call the workbench MCP tool;
+  // the workbench dispatches per cli_type and returns the right per-CLI
+  // checklist prompt. The `!{echo $WORKBENCH_SESSION_ID}` shell substitution
+  // in the Gemini TOML pins the session_id at command-render time (verified
+  // necessary during #446 e2e — Gemini doesn't reliably read the env var
+  // itself from the prompt text).
+  async function registerGeminiSessionCommands() {
+    const HOME = safe.HOME;
+    const dir = join(HOME, '.gemini', 'commands', 'session');
+    const transitionPath = join(dir, 'transition.toml');
+    const resumePath = join(dir, 'resume.toml');
+    const transitionToml =
+      'description = "Workbench: end-of-session transition checklist (pre-/compress)"\n' +
+      'prompt = """\n' +
+      'Call the workbench MCP tool session_prepare_pre_compact with session_id = "!{echo -n $WORKBENCH_SESSION_ID}". Then follow the returned checklist exactly. Do not list or pick from sessions — the session_id above is your own session.\n' +
+      '"""\n';
+    const resumeToml =
+      'description = "Workbench: restore context after /compress"\n' +
+      'prompt = """\n' +
+      'Call the workbench MCP tool session_resume_post_compact with session_id = "!{echo -n $WORKBENCH_SESSION_ID}". Then follow the returned resume instructions exactly. Do not list or pick from sessions — the session_id above is your own session.\n' +
+      '"""\n';
+    try {
+      await fsp.mkdir(dir, { recursive: true });
+      // Idempotent: only write if missing
+      for (const [path, content] of [[transitionPath, transitionToml], [resumePath, resumeToml]]) {
+        try {
+          await fsp.access(path);
+          continue; // already exists, preserve user customizations
+        } catch (err) {
+          if (err.code !== 'ENOENT') throw err;
+        }
+        await fsp.writeFile(path, content);
+      }
+      logger.info('Registered Gemini /session slash commands', { module: 'watchers' });
+    } catch (err) {
+      logger.error('Could not write Gemini session commands', { module: 'watchers', err: err.message });
+    }
+  }
+
+  async function registerCodexSessionPrompts() {
+    const HOME = safe.HOME;
+    const dir = join(HOME, '.codex', 'prompts');
+    const transitionPath = join(dir, 'session-transition.md');
+    const resumePath = join(dir, 'session-resume.md');
+    const transitionMd =
+      '---\n' +
+      'description: Workbench end-of-session transition checklist (pre-/compact)\n' +
+      '---\n' +
+      '\n' +
+      'Call the workbench MCP tool session_prepare_pre_compact with session_id set to the value of the WORKBENCH_SESSION_ID environment variable in your shell context. Use a shell tool to read that env var if needed (echo $WORKBENCH_SESSION_ID). Then follow the returned checklist exactly.\n';
+    const resumeMd =
+      '---\n' +
+      'description: Workbench restore context after /compact\n' +
+      '---\n' +
+      '\n' +
+      'Call the workbench MCP tool session_resume_post_compact with session_id set to the value of the WORKBENCH_SESSION_ID environment variable in your shell context. Use a shell tool to read that env var if needed (echo $WORKBENCH_SESSION_ID). Then follow the returned resume instructions exactly.\n';
+    try {
+      await fsp.mkdir(dir, { recursive: true });
+      for (const [path, content] of [[transitionPath, transitionMd], [resumePath, resumeMd]]) {
+        try {
+          await fsp.access(path);
+          continue;
+        } catch (err) {
+          if (err.code !== 'ENOENT') throw err;
+        }
+        await fsp.writeFile(path, content);
+      }
+      logger.info('Registered Codex /prompts:session-* slash commands', { module: 'watchers' });
+    } catch (err) {
+      logger.error('Could not write Codex session prompts', { module: 'watchers', err: err.message });
+    }
+  }
+
   return {
     startJsonlWatcher,
     stopJsonlWatcher,
@@ -698,6 +786,8 @@ module.exports = function createWatchers({
     registerClaudeStatusLine,
     registerGeminiMcp,
     registerCodexMcp,
+    registerGeminiSessionCommands,
+    registerCodexSessionPrompts,
     registerCodexProvider,
     registerCodexAuth,
     trustProjectDirs,

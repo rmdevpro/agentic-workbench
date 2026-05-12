@@ -311,14 +311,23 @@ test('#468-LIVE-01: Gemini disk session claimed by exactly one project per /api/
   const FUTURE_TS = '2030-01-01T00:00:00.000Z'; // far future — unique across all test runs
   const GEM_SID = `gem-claim-live-${ts}`;        // unique sessionId in the header
 
-  // 0. CLEANUP: remove leftover p468-test-* dirs from prior test runs.
+  // 0a. CLEANUP: remove leftover p468-test-* dirs from prior test runs.
   // The persistent /data volume in workbench-test accumulates these across
   // gate-regression cycles; their FUTURE_TS timestamps collide with ours
   // and cause _matchFromList to pick a stale leftover instead of our plant.
-  // The 12s wait below ensures any in-flight discovery cache fully expires
-  // (TTL = 10s) so the next /api/state refresh re-reads disk and sees only
-  // our just-planted file.
   dockerExec('rm -rf /data/.gemini/tmp/p468-test-*');
+
+  // 0b. Force Gemini discovery cache invalidation. The 10s TTL alone is
+  // insufficient when concurrent watchers / prior tests have populated the
+  // cache with leftover entries; the cleanup deletes the files on disk but
+  // the cache holds them in memory for up to 10s past last refresh. The
+  // POST /api/projects/:name/remove endpoint explicitly invalidates the
+  // per-CLI discovery cache (#372 [E2]); we use it on a throwaway project
+  // to force a refresh before the test continues.
+  const flushName = `_p468_flush_${ts}`;
+  dockerExec(`mkdir -p /data/workspace/${flushName}`);
+  await post('/api/projects', { path: `/data/workspace/${flushName}`, name: flushName });
+  await post(`/api/projects/${flushName}/remove`);
 
   // 1. Create 2 projects
   for (const p of [`p468a_${ts}`, `p468b_${ts}`]) {

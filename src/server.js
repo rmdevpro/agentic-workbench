@@ -22,6 +22,7 @@ const createWatchers = require('./watchers');
 const createKbWatcher = require('./kb-watcher');
 const createWsTerminal = require('./ws-terminal');
 const registerCoreRoutes = require('./routes');
+const { createQdrantSync } = require('./qdrant-sync');
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -81,6 +82,8 @@ const watchers = createWatchers({
 });
 
 const kbWatcher = createKbWatcher({ db, logger, config });
+
+const qdrantSync = createQdrantSync({ db, safe, config, logger });
 
 const terminal = createWsTerminal({
   safe,
@@ -260,6 +263,7 @@ const { checkAuthStatus } = registerCoreRoutes(app, {
   trustGeminiProjectDirs: watchers.trustGeminiProjectDirs,
   trustCodexProjectDirs: watchers.trustCodexProjectDirs,
   kbWatcher,
+  qdrantSync,
   sleep: tmux.sleep,
 });
 
@@ -421,7 +425,7 @@ if (require.main === module) {
         );
 
         // Start Qdrant vector sync (non-blocking — skips if Qdrant unavailable)
-        require('./qdrant-sync').start().catch((err) =>
+        qdrantSync.start().catch((err) =>
           logger.error('Qdrant sync startup error', {
             module: 'server',
             err: err.message,

@@ -25,7 +25,6 @@ const { registerMcpRoutes } = require('./mcp-tools');
 const { registerWebhookRoutes } = require('./webhooks');
 const { KB_PATH, KB_UPSTREAM_URL, KB_UPSTREAM_OWNER_REPO, CODEX_ROLLOUT_UUID_RE } = require('./constants');
 const gitAuth = require('./git-auth');
-const qdrantSync = require('./qdrant-sync');
 const sessionUtilsMod = require('./session-utils');
 const { discoverGeminiSessions, discoverCodexSessions } = sessionUtilsMod;
 // File-tree directory listing endpoint. Returns folder-first sorted JSON
@@ -185,6 +184,7 @@ function registerCoreRoutes(
     trustGeminiProjectDirs,
     trustCodexProjectDirs,
     kbWatcher,
+    qdrantSync,
     sleep,
   },
 ) {
@@ -2007,7 +2007,7 @@ function registerCoreRoutes(
       const skipValidation = key === 'vector_embedding_provider' && value === 'none';
       if (!skipValidation) {
         const qdrant = qdrantSync;
-        const cfg = qdrant.buildCandidateConfig(key, value);
+        const cfg = await qdrant.buildCandidateConfig(key, value);
         const result = await qdrant.validateProviderConfig(cfg);
         if (!result.ok) {
           logger.warn('Settings validation failed', { module: 'routes', settingKey: key, provider: cfg.model, err: result.error });

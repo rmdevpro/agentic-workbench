@@ -1,6 +1,5 @@
-import { tabs, tabPanelAssignments, db_getSetting } from './state.js';
-import { _appendToOrder, _activeIdForPanel, _lastClickedProjectPath } from './state.js';
-import { switchTab, renderTabs } from './tabs.js';
+import { tabs, tabPanelAssignments, db_getSetting, _appendToOrder, _lastClickedProjectPath } from './state.js';
+import { switchTab, renderTabs, _activeIdForPanel } from './tabs.js';
 import { createFileTree } from './file-tree.js';
 
 let _openFileTabRef_self; // self-reference for recursion in save-as

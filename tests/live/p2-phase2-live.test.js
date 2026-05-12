@@ -301,8 +301,15 @@ test('#468-LIVE-01: Gemini disk session claimed by exactly one project per /api/
   // Pre-fix: module-level _claimedGemini Set was shared across projects, so both
   // sessions could claim the same file → double assignment.
   // Post-fix: per-request Set → file claimed by exactly 1 session.
+  //
+  // Robustness: both sessions and the file use FUTURE_TS (2030-01-01) as their
+  // timestamp. The _matchFromList time-proximity path (#2) matches sessions whose
+  // created_at is within 60s of the disk file's timestamp. Since no other test
+  // session/file ever uses 2030-01-01, the match is unambiguous regardless of
+  // leftover Gemini files from previous test runs on the persistent /data volume.
   const ts = Date.now();
-  const GEM_SID = `gem-claim-live-${ts}`;    // unique sessionId in the Gemini JSONL header
+  const FUTURE_TS = '2030-01-01T00:00:00.000Z'; // far future — unique across all test runs
+  const GEM_SID = `gem-claim-live-${ts}`;        // unique sessionId in the header
 
   // 1. Create 2 projects
   for (const p of [`p468a_${ts}`, `p468b_${ts}`]) {
@@ -314,34 +321,34 @@ test('#468-LIVE-01: Gemini disk session claimed by exactly one project per /api/
   const projBId = dockerExec(`sqlite3 /data/.workbench/workbench.db "SELECT id FROM projects WHERE name='p468b_${ts}'"`);
   assert.ok(projAId && projBId, `both projects must be findable; got A='${projAId}' B='${projBId}'`);
 
-  // 2. Plant 2 unbound Gemini sessions — NO cli_session_id
+  // 2. Plant 2 unbound Gemini sessions with created_at = FUTURE_TS (for time-proximity match)
   const sessA = `p468a_sess_${ts}`;
   const sessB = `p468b_sess_${ts}`;
-  const createdAt = new Date(ts).toISOString();
   for (const [sid, pid] of [[sessA, projAId], [sessB, projBId]]) {
     dockerExec(
       `sqlite3 /data/.workbench/workbench.db ` +
       `"INSERT OR REPLACE INTO sessions (id, project_id, name, cli_type, updated_at, created_at) ` +
-      `VALUES ('${sid}', ${pid}, 'gem-test', 'gemini', '${createdAt}', '${createdAt}')"`,
+      `VALUES ('${sid}', ${pid}, 'gem-test', 'gemini', '${FUTURE_TS}', '${FUTURE_TS}')"`,
     );
   }
 
-  // 3. Plant a Gemini chat JSONL in the discovery path (~/.gemini/tmp/<dir>/chats/)
+  // 3. Plant a Gemini chat JSONL with startTime/lastUpdated = FUTURE_TS
+  //    _matchFromList path #2 matches session.created_at ≈ disk.timestamp (within 60s)
   const gemDir = `/data/.gemini/tmp/p468-test-${ts}/chats`;
   dockerExec(`mkdir -p ${gemDir}`);
   dockerExec(
-    `printf '{"sessionId":"${GEM_SID}","startTime":"${createdAt}","lastUpdated":"${createdAt}"}\\n` +
+    `printf '{"sessionId":"${GEM_SID}","startTime":"${FUTURE_TS}","lastUpdated":"${FUTURE_TS}"}\\n` +
     `{"type":"user","content":"claim test"}\\n' > ${gemDir}/claim-${ts}.jsonl`,
   );
 
   // 4. Wait for discovery cache TTL to expire (10s) so next /api/state discovers the file
   await new Promise(r => setTimeout(r, 12000));
 
-  // 5. Call /api/state — claim algorithm runs for both projects in one request
+  // 5. Call /api/state — both projects processed; claimedGemini Set shared across them
   const r = await get('/api/state');
   assert.equal(r.status, 200, `/api/state must return 200; got ${r.status}`);
 
-  // 6. Assert: exactly one of the two sessions was assigned the disk sessionId
+  // 6. Assert: exactly one session claimed the file via time-proximity match
   const sidA = dockerExec(`sqlite3 /data/.workbench/workbench.db "SELECT cli_session_id FROM sessions WHERE id='${sessA}'"`);
   const sidB = dockerExec(`sqlite3 /data/.workbench/workbench.db "SELECT cli_session_id FROM sessions WHERE id='${sessB}'"`);
 

@@ -89,21 +89,26 @@ test('DB-04: session CRUD and state transitions', async () => {
 });
 
 test('DB-05: task CRUD lifecycle', async () => {
+  // #480: addTask v2 contract — { projectId, title, createdBy }.
+  // Status enum is inactive/active/blocked/done/cancelled (default inactive).
+  // Lookup is by project_id (not folder_path); folder_path is set automatically
+  // from the project's path via the addTaskV2 INSERT.
   await withDb(async (db) => {
-    const t = db.addTask('/workspace/proj', 'Do it', '', null, 'agent');
-    assert.equal(t.status, 'todo');
+    const proj = db.ensureProject('proj', '/workspace/proj');
+    const t = db.addTask({ projectId: proj.id, title: 'Do it', createdBy: 'agent' });
+    assert.equal(t.status, 'inactive');
     assert.equal(t.created_by, 'agent');
     assert.equal(t.folder_path, '/workspace/proj');
-    db.updateTaskStatus(t.id, 'done');
-    const completed = db.getTasksByFolder('/workspace/proj')[0];
+    db.setTaskStatus(t.id, 'done');
+    const completed = db.getTasksByProject(proj.id)[0];
     assert.equal(completed.status, 'done');
     assert.ok(completed.completed_at);
-    db.updateTaskStatus(t.id, 'todo');
-    const reopened = db.getTasksByFolder('/workspace/proj')[0];
-    assert.equal(reopened.status, 'todo');
+    db.setTaskStatus(t.id, 'inactive');
+    const reopened = db.getTasksByProject(proj.id)[0];
+    assert.equal(reopened.status, 'inactive');
     assert.equal(reopened.completed_at, null);
     db.deleteTask(t.id);
-    assert.equal(db.getTasksByFolder('/workspace/proj').length, 0);
+    assert.equal(db.getTasksByProject(proj.id).length, 0);
   });
 });
 

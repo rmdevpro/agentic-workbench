@@ -24,6 +24,33 @@ To interact with another CLI session, use the `session_*` tools — they handle 
 
 - `docs/guides/using-cli-sessions.md` — patterns for driving CLI sessions through the `session_*` tools (sending prompts, watching for startup dialogs, reading responses)
 
+# Deploy safety rule
+
+Before any deploy, two checks must pass in order:
+
+1. **Never deploy to yourself.** You are running inside a container. The target machine cannot be the one you are running on — it kills the current session.
+2. **Read `logo_variant` on the target first.** `production` = stop, do not deploy. `development` or `default` = may proceed.
+
+```
+docker exec workbench sqlite3 /data/.workbench/workbench.db \
+  "SELECT value FROM settings WHERE key = 'logo_variant'"
+```
+
+**Machine names are not environment designators.** M5, irina, hymie, HF — any of them can be production. The `logo_variant` value is the only authoritative signal.
+
+# Operating Modes
+
+You operate in one of two modes at any given moment. See [PROC-007 — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-007-agent-operating-modes.md) for the canonical statement.
+
+- **Conversational mode (default):** answer the user's message, wait for the next. Don't jump ahead. The user does the steering.
+- **Autonomous mode:** drive a multi-step process to completion. Poll continuously, run iterations back-to-back without waiting for user prompts, report only meaningful events. User messages are redirection, not loop triggers.
+
+**Inline foreground polling is the ONLY acceptable way to monitor a long-running job.** Two valid patterns — pick whichever fits the situation:
+- `session_wait {session_id, seconds}` + `session_read_screen` — for workbench-managed CLI sessions.
+- `start=$(date +%s); end=$((start + 60)); until [ $(date +%s) -ge $end ]; do sleep 2; done; <check>` — for anything else (deploys, file growth, external commands).
+
+The `Monitor` tool and `run_in_background` are forbidden for progress checks.
+
 # This Repository
 
 This repository is the source code for the Agentic Workbench application — the system you are running inside. You are using the workbench to develop the workbench. The application is a Node.js server (`server.js`) decomposed into focused modules using factory-based dependency injection. The full architecture, module responsibilities, and configuration reference are in `README.md`.
@@ -46,6 +73,7 @@ These documents define the standards and context this project must be reviewed a
 - `/data/workspace/repos/Admin/docs/process/PROC-002-small-feature-guide.md` — required feature development workflow. Read at the start of any new feature work.
 - `/data/workspace/repos/Admin/docs/process/PROC-003-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Read when running or interpreting UI test results.
 - `/data/workspace/repos/Admin/docs/process/PROC-004-test-execution-policy.md` — canonical policy for which tests run and when. Read when deciding test scope.
+- `/data/workspace/repos/Admin/docs/process/PROC-006-quorum-process.md` — quorum-driven milestone procedure. Replaces PROC-001/002 for milestone-scope work. Read at the start of any milestone.
 
 ## Deployment
 

@@ -6002,7 +6002,247 @@ land alongside that work, not by reviving these.
 Pre-fix the option label/value, indicator class, and any legacy DB rows would still read \`todo\`.
 
 ---
-## Troubleshooting
+## Phase 2 Milestone — UI Runbook Entries
+
+**`WORKBENCH_URL`** — executor binds this at run time to the Phase 2 sandbox container. Requirements: isolated workbench-test stack (not the production instance — confirm `logo_variant = development` before proceeding), container serving the `milestone/phase-2` branch. All entries below use `${WORKBENCH_URL}` as a placeholder.
+
+Branch: `milestone/phase-2` @ `d1cc89f`.
+
+---
+
+### P2-F0-01: F0 — ESM module load — no console errors on page open
+**Issue:** #364 (F0 frontend monolith decomposition)
+**Priority:** P0 — if this fails, all downstream P2 UI entries are invalid.
+
+**Setup:** Container running at `${WORKBENCH_URL}`.
+
+**Steps:**
+1. `browser_navigate` to `${WORKBENCH_URL}/`.
+2. `browser_wait` 2000 for page to settle.
+3. `browser_console_messages` — capture all console output from page load.
+4. `browser_evaluate`: `document.title`
+5. `browser_evaluate`: `document.querySelector('script[type="module"]')?.src`
+6. `browser_snapshot` — capture DOM.
+
+**Verify:**
+- `document.title` is `"Workbench"`.
+- `document.querySelector('script[type="module"]')?.src` ends with `/js/app.js` — proves `index.html` is a thin shell with a module entrypoint, not the old 6113-line monolith.
+- Console messages contain no `"SyntaxError"`, no `"Failed to resolve module"`, no `"Uncaught ReferenceError"` — proves all ESM imports resolved cleanly.
+- DOM snapshot shows `#sidebar` and `#terminal-area` visible — core layout intact.
+
+---
+
+### P2-F0-02: F0 — Sidebar renders and session list populates
+**Issue:** #364 (sidebar.js module wired; renderSidebar, loadState reachable)
+**Priority:** P0
+
+**Setup:** At least one project exists in the workbench-test DB (from prior live tests). Page loaded per P2-F0-01.
+
+**Steps:**
+1. `browser_evaluate`: `window._renderSidebarRef !== undefined`
+2. `browser_evaluate`: `typeof window.loadState`
+3. `browser_evaluate`: `document.getElementById('project-list')?.children.length`
+4. `browser_snapshot` — capture sidebar DOM.
+
+**Verify:**
+- `window._renderSidebarRef !== undefined` is `true` — app.js wired renderSidebar ref into state.js.
+- `typeof window.loadState` is `"function"` — loadState is exported on window.
+- `document.getElementById('project-list').children.length > 0` — at least one project row rendered (sidebar.js renderSidebar ran).
+- Snapshot shows `.project-group` elements in `#project-list`.
+
+---
+
+### P2-F0-03: F0 — Session create modal opens and submits (createSession in app.js)
+**Issue:** #364 (createSession, openSession, window.* exports)
+**Priority:** P0
+
+**Setup:** At least one project visible in the sidebar. Use the project created by live tests (`ts460_live_proj` or similar).
+
+**Steps:**
+1. `browser_evaluate`: `typeof window.openSettings` — verify export present.
+2. `browser_evaluate`: `typeof window.renderSidebar` — verify export present.
+3. `browser_evaluate`: `typeof window.sessionSortBy` — verify defineProperty getter returns a string.
+4. Click the `+` button on any project row: `browser_click` on `.project-group .new-btn` (first visible one).
+5. `browser_click` on `.new-session-menu[style*="block"] .context-menu-item[data-cli="claude"]` — select Claude immediately (no wait — the menu opens synchronously; a wait would let an async re-render destroy it).
+6. `browser_wait` 500.
+7. `browser_evaluate`: `document.getElementById('new-session-name') !== null` — modal opened.
+8. `browser_type` into `#new-session-name`: `P2-F0-03-test`.
+9. `browser_click` `#new-session-submit`.
+10. `browser_wait` 3000.
+11. `browser_snapshot`.
+
+**Verify:**
+- Steps 1–3: `openSettings` is a function, `renderSidebar` is a function, `sessionSortBy` is a string (not undefined). Proves key window.* exports from app.js are live.
+- Step 5: `.context-menu-item[data-cli="claude"]` clicked immediately — `+` button opens CLI picker synchronously.
+- Step 7: `new-session-name` input found → modal opened via createSession from app.js.
+- Step 11 snapshot: a new `.tab` element appears in `#tab-bar` — createTab (createTerminalTab wrapper) executed. Check `document.querySelectorAll('#tab-bar .tab').length > 0`.
+
+---
+
+### P2-F0-04: F0 — Tab switch works (tabs.js module)
+**Issue:** #364 (tabs.js switchTab, renderTabs reachable via window.switchTab)
+**Priority:** P1
+
+**Setup:** Run P2-F0-03 first to create a session tab. If P2-F0-03 left a tab open, this entry can proceed. If 0 tabs remain, create a second session via the same `+` → CLI picker → claude modal flow before step 3.
+
+**Steps:**
+1. `browser_evaluate`: `typeof window.switchTab`
+2. `browser_evaluate`: `document.querySelectorAll('#tab-bar .tab').length` — record count. (Tab elements have class `.tab`, not `.tab-btn`.)
+3. If count ≥ 2: `browser_click` the second `#tab-bar .tab` element. If count is 1: create a second session (same flow as P2-F0-03 steps 4–11) then click the second tab.
+4. `browser_wait` 500.
+5. `browser_evaluate`: `document.querySelector('#tab-bar .tab.active')?.dataset?.tabId`
+6. `browser_snapshot`.
+
+**Verify:**
+- `window.switchTab` is a function — tabs.js export wired.
+- Step 3–5: the clicked tab has `active` class — switchTab executed correctly, DOM updated.
+- Snapshot shows only one tab active in `#tab-bar`.
+
+---
+
+### P2-F0-05: F0 — Settings modal opens and closes (window.openSettings / closeSettings)
+**Issue:** #364 (openSettings, closeSettings, switchSettingsTab in app.js)
+**Priority:** P1
+
+**Setup:** Page loaded.
+
+**Steps:**
+1. `browser_click` on the `⚙ Settings` button in the sidebar footer: `button[onclick="openSettings()"]` (selector within `#sidebar-footer`).
+2. `browser_wait` 500.
+3. `browser_evaluate`: `document.getElementById('settings-modal').classList.contains('visible')`.
+4. `browser_snapshot`.
+5. `browser_click` on `.settings-close` (the ✕ close button inside the settings modal).
+6. `browser_wait` 200.
+7. `browser_evaluate`: `document.getElementById('settings-modal').classList.contains('visible')`.
+
+**Verify:**
+- Step 3: `true` — modal became visible when user clicked the Settings button.
+- Step 4 snapshot: `#settings-modal` visible with tabs (General, Claude Code, Git, Vector Search, System Prompts).
+- Step 7: `false` — modal hidden after clicking the close button.
+
+---
+
+### P2-F0-06: F0 — File panel renders tree (file-tree.js + files.js modules)
+**Issue:** #364 (createFileTree from file-tree.js, loadFiles from files.js)
+**Priority:** P1
+
+**Setup:** Right panel available, files exist in `/data/workspace`.
+
+**Steps:**
+1. `browser_click` on `#panel-toggle` (the ☰ hamburger button that opens the right panel).
+2. `browser_wait` 300.
+3. `browser_click` on `button.panel-tab[data-panel="files"]` (the "Files" tab in the panel header).
+4. `browser_wait` 1500 — wait for `loadFiles` to populate the tree.
+5. `browser_evaluate`: `document.querySelectorAll('#panel-files .ft-row').length`.
+6. `browser_snapshot`.
+
+**Verify:**
+- Step 5: count > 0 — `createFileTree` from file-tree.js rendered the tree; `loadFiles` from files.js fetched the directory listing.
+- Snapshot shows `.ft-row` elements in `#panel-files`.
+
+---
+
+### P2-F0-07: F0 — Tasks panel loads (tasks.js module)
+**Issue:** #364 (loadTaskTree, setTaskFilter, initTaskEventListeners from tasks.js)
+**Priority:** P1
+
+**Setup:** Right panel open from P2-F0-06 (or click `#panel-toggle` first if starting fresh). At least one project has tasks (from live tests: `wb-seed` or `ts460_live_proj`).
+
+**Steps:**
+1. `browser_click` on `button.panel-tab[data-panel="tasks"]` (the "Tasks" tab in the right panel header).
+2. `browser_wait` 1500 — wait for `loadTaskTree` to populate the panel.
+3. `browser_evaluate`: `typeof window.setTaskFilter`.
+4. `browser_evaluate`: `typeof window.openTaskDetail`.
+5. `browser_evaluate`: `document.getElementById('panel-tasks') !== null && document.getElementById('panel-tasks').style.display !== 'none'`.
+6. `browser_snapshot`.
+
+**Verify:**
+- Step 3: `"function"` — tasks.js `setTaskFilter` export wired to `window.*`.
+- Step 4: `"function"` — tasks.js `openTaskDetail` export wired to `window.*`.
+- Step 5: `true` — `#panel-tasks` is present and visible after clicking the Tasks tab.
+- Snapshot shows the task panel DOM (container present, no JS error in console).
+
+---
+
+### P2-452-01: #452/#457 — window.sessionSortBy setter routes through state.js
+**Issue:** #452/#457 (sessionSortBy defined via Object.defineProperty setter)
+**Priority:** P1
+
+**Setup:** Sidebar visible with at least one project that has multiple sessions.
+
+**Steps:**
+1. `browser_evaluate`: `document.getElementById('session-sort').value` — read the current value from the DOM select element.
+2. `browser_select_option` on `#session-sort` with value `"name"` — selects "Name" in the sort dropdown; the `onchange` handler fires: `sessionSortBy=this.value;renderSidebar()`.
+3. `browser_wait` 500.
+4. `browser_evaluate`: `document.getElementById('session-sort').value` — read the select value back to confirm it changed.
+5. `browser_snapshot` — capture sidebar to verify re-render with name sort.
+6. `browser_select_option` on `#session-sort` with value `"date"` — restore default via the same DOM select.
+
+**Verify:**
+- Step 1: a string (`"date"` or `"name"`) — the select element is present and reflects current sort state.
+- Step 4: `"name"` — the `onchange` handler propagated the value through the `Object.defineProperty` setter into `state.js` and the select reflects it.
+- Snapshot: sidebar re-rendered (session rows re-ordered by name).
+
+---
+
+### P2-452-02: #452/#457 — window.refreshFileTree callable from file panel refresh button
+**Issue:** #452/#457 (window.refreshFileTree export)
+**Priority:** P1
+
+**Setup:** File panel open (from P2-F0-06). Files visible.
+
+**Steps:**
+1. `browser_evaluate`: `typeof window.refreshFileTree`
+2. `browser_click` on `#panel-refresh-files` button.
+3. `browser_wait` 1000.
+4. `browser_evaluate`: `document.querySelectorAll('#panel-files .ft-row').length`
+
+**Verify:**
+- Step 1: `"function"` — export present.
+- Step 4: count ≥ 0 and no JS error thrown — `window.refreshFileTree` was invoked by the button's onclick handler and completed without throwing.
+
+---
+
+### P2-460-01: #460 — Sidebar renders relative timestamps via timeAgo (not raw strings)
+**Issue:** #460 (renderSidebar hashes timeAgo(s.timestamp) not raw s.timestamp)
+**Priority:** P1
+
+**Setup:** Page loaded with at least one session visible in the sidebar (from previous entries or live test data).
+
+**Steps:**
+1. `browser_evaluate`: `typeof window.timeAgo` — verify the timeAgo function is exported.
+2. `browser_evaluate`: collect all `.session-item .session-meta` timestamp span texts.
+   ```js
+   [...document.querySelectorAll('.session-item')].map(el => {
+     const spans = el.querySelectorAll('.session-meta span');
+     return spans[1]?.textContent || spans[0]?.textContent || '';
+   }).filter(Boolean)
+   ```
+3. `browser_wait` 500.
+4. `browser_snapshot`.
+5. `browser_evaluate` (console errors): `0 console errors` about undefined `timeAgo`.
+
+**Verify:**
+- Step 1: `"function"` — `timeAgo` is wired to `window.*` from app.js.
+- Step 2: All observed timestamp texts match the pattern `/^(just now|\d+[smhd] ago)$/` — the sidebar shows relative human-readable strings, not raw ISO-8601 timestamps. This proves `renderSidebar()` calls `window.timeAgo(s.timestamp)` in its hash computation (the fix for #460) and not the raw timestamp string.
+- Step 4 snapshot: sidebar shows relative timestamps in session rows.
+- Step 5: 0 console errors.
+
+**Note:** The stub-CLI test environment keeps all sessions active (via `sleep infinity`), which means active sessions always display "just now". The structural proof that the hash uses `timeAgo()` (not raw timestamp) is provided by `s8-reg` mock test S8-REG-03 and by the live test `#460-LIVE-01` which plants a future `updated_at` and a past `session_meta.timestamp` to prove the correct source wins.
+
+---
+
+### P2-461-01: #461 — file_find paren patterns (REMOVED — covered by live integration tests)
+
+`file_find` is an MCP tool invoked from Claude sessions; the workbench UI has no dedicated search surface for it. The ERE fix is fully covered by live integration tests:
+
+- `#461-LIVE-01` — paren pattern `_seedRole\(cliType` succeeds (200, array with match)
+- `#461-LIVE-02` — paren pattern `Object\.defineProperty\(window` succeeds (200, empty array — no crash)
+- `#461-LIVE-03` — fixture file created in workspace; match confirmed
+
+Per STD-003 §8: N/A with live coverage. No UI runbook entry needed.
+
+---
 
 | Symptom | Likely Cause | Action |
 |---------|-------------|--------|

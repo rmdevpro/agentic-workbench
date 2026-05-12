@@ -410,14 +410,148 @@ No actual conflicts found. IDs are consistent across documents.
 
 ---
 
-## 7. Statistics
+## 7. Phase 2 Milestone Mock-Test Coverage Notes
+
+### F0 (#364) — Frontend monolith decomposition (N/A for unit tests)
+
+F0 is a structural HTML/JavaScript reorganisation: `public/index.html` shrinks from
+6 113 lines to a 591-line thin shell by extracting the inline `<script>` to
+`public/js/app.js` and 10 ESM sub-modules (`state.js`, `sidebar.js`, `tabs.js`, …).
+
+**Why no dedicated mock unit tests:**
+
+- No server-side logic was added or changed. The extracted modules are pure browser
+  code (DOM manipulation, `fetch`, `WebSocket`) that requires a real browser DOM to
+  execute — `node:test` / Node.js cannot meaningfully run them without a headless
+  browser.
+- The structural invariants (CSS extracted to `main.css`, inline script replaced by
+  `<script type="module" src="/js/app.js">`, all `window.*` exports present) are
+  verified by `e3-pending-lock.test.js` (E3-PEND-03/04 updated in commit `6dd504a`)
+  and the Phase 2 reviewer-findings test (`p2-reviewer-fixes.test.js` #452/#457 notes).
+- Full end-to-end functional verification happens in **Stage 8 (UI runbook)** via
+  Playwright headless browser tests against the deployed `workbench-test` container.
+
+**Traceability:** F0 → UI runbook entries P2-F0-01 through P2-F0-07 (Stage 8, all PASS,
+2026-05-12, container 16b33e1). Mock: S8-REG-01/02/03 in `p2-stage8-regressions.test.js`
+cover three F0 extraction regressions found during Stage 8 and fixed in commits
+08ee6db/e60e59b/16b33e1.
+
+---
+
+### M1 (#368) — KB watcher clone-if-missing: live test gap
+
+**What M1 changed:** `_cloneIfMissing()` and the KB sync poller were extracted
+from `server.js` into `kb-watcher.js start()`. The structural proof lives in
+`m1-kb-watcher-clone.test.js` (M1-KB-01 through M1-KB-08): static checks verify
+`_cloneIfMissing` is declared, calls `git clone`, is ordered before the chokidar
+watch, and that `server.js` no longer contains the inline clone block.
+
+**Why `_cloneIfMissing` is not exercised by live tests:**
+
+The sandbox test container (`workbench-test-workbench-1`) has no outbound network
+access to `github.com`. When the container starts, kb-watcher `start()` calls
+`_cloneIfMissing()`, which attempts `git clone https://github.com/rmdevpro/workbench-kb`
+and fails with `"fatal: unable to access … Could not resolve host: github.com"`.
+The clone failure is logged to container stdout (confirmed via `docker logs`), but
+the structured logger's batch writer does not flush these early startup messages to
+the SQLite DB — `/api/logs?module=kb-watcher` returns 0 rows. Inside the container,
+`docker logs` is not callable (no Docker socket bind-mount in `docker-compose.test.yml`).
+
+**Coverage status:**
+
+| Layer | Test | Covers |
+|---|---|---|
+| Mock structural | M1-KB-01 through M1-KB-08 | `_cloneIfMissing` declared, ordered before watcher, git clone present, server.js clean |
+| Live behavioral | M1-LIVE-01/02 | `/api/kb/status` + `/api/kb/roles` respond without crash (watcher init path ran) |
+| Live clone path | **GAP** | Clone attempt + clone failure recovery not exercisable without network |
+
+Live behavioral verification of the clone path requires either a network-capable
+test environment (real `github.com` access) or a local git server fixture. Neither
+is available in the current sandbox. File under "infrastructure gap" — not a product
+gap.
+
+---
+
+### G0 (#365) — Routes monolith decomposition
+
+`routes.js` shrank from ~5,800 lines to ~36 lines (a thin composer that requires each
+`src/routes/*.js` module and calls its `register({ app, ... })` function). The per-domain
+handlers live in `src/routes/`: `auth.js`, `health.js`, `projects.js`, `sessions.js`,
+`tasks.js`, `files.js`, `kb.js`, `settings.js`, `git-accounts.js`. Common helpers
+(including the `createTrustDir()` factory deduplicated from `sessions.js` + `projects.js`)
+live in `src/routes/_shared.js`.
+
+**Coverage:**
+
+| Layer | Test | Covers |
+|---|---|---|
+| Mock structural | `g0-routes-composition.test.js` (G0-RT-01..09) | thin composer present, each `src/routes/*.js` exports `register`, `createTrustDir` factory exported and used by both `sessions.js` + `projects.js` |
+| Live behavioral | `p2-phase2-live.test.js` G0-LIVE-01/02/03 | per-domain endpoints reachable end-to-end with correct method + status |
+| Adjacent | `a8-auth-login.test.js` A8-LIVE-02 | code inspection reads `src/routes/auth.js` (path-updated post-G0) |
+
+---
+
+### H0 (#366) — Session-utils factory decomposition
+
+`session-utils.js` shrank from ~800 lines to a thin factory adapter. The
+`createSessionUtils({ safe, db, config, logger })` factory composes sub-modules
+in `src/session-utils/`: `claude-jsonl.js`, `gemini.js`, `codex.js`, `info.js`,
+`search.js`. The original import surface is preserved via a backward-compat shim
+so existing callers (routes, watchers) do not need to change.
+
+**Coverage:**
+
+| Layer | Test | Covers |
+|---|---|---|
+| Mock structural | `h0-session-utils-factory.test.js` (H0-SU-01..06) | factory exported, API shape, instance independence, backward-compat adapter |
+| Live behavioral | `p2-phase2-live.test.js` H0-LIVE-01/02 | session-utils factory exposes the expected API surface end-to-end |
+
+---
+
+### J1 (#367) — qdrant-sync factory-DI conversion
+
+`qdrant-sync.js` was converted from a direct-import module to a factory-DI module.
+All existing callers (`watchers.js`, KB sync) now receive the qdrant instance via
+injection through `server.js`.
+
+**Coverage:**
+
+| Layer | Test | Covers |
+|---|---|---|
+| Live behavioral | `p2-phase2-live.test.js` J1-LIVE-01/02 | qdrant factory wired correctly; `/api/kb/*` endpoints still respond |
+
+Mock structural is N/A — the conversion is a wiring change with no new code paths;
+the live tests prove the wiring is correct.
+
+---
+
+### Phase 2 reviewer findings (Stage 5 R1–R3, Stage 7 R1–R2, Stage 9 R1–R3)
+
+All findings filed during the Phase 2 review rounds have corresponding mock and/or
+live coverage. Test IDs are stable; issue numbers map 1:1 to test cases:
+
+| Round | Issues | Test coverage |
+|---|---|---|
+| Stage 5 R1 | #452..#459 | `p2-reviewer-fixes.test.js` covers #453, #454, #455, #456 (#458 via existing `require-hoist.test.js`; #452/#457/#459 are frontend-only — UI Stage 8) |
+| Stage 5 R2 | #462..#465, #467 | `p2-timestamp-claim-behavioral.test.js` |
+| Stage 5 R3 | #466 | `p2-reviewer-fixes.test.js` |
+| Cherry-picks | #460, #461 | `p2-reviewer-fixes.test.js` (mock) + `p2-phase2-live.test.js` (#460-LIVE-01, #461-LIVE-01/02/03) |
+| Stage 7 R1 | #468..#473 | `p2-phase2-live.test.js` (#468-LIVE-01); other R1 issues are documentation/comment updates |
+| Stage 7 R2 | #473 (re-raise) | matrix §7 M1 documentation; covered |
+| Stage 8 regressions | (no GH issue — fixed in-stage) | `p2-stage8-regressions.test.js` S8-REG-01/02/03 — F0 extraction omissions (`files.js` wrong import, `createTab` missing steps, sidebar re-render guard) |
+| Stage 9 R1 | #474..#477 | Runbook entries P2-F0-05/06/07, P2-452-01, P2-460-01 rewritten (real clicks, parameterized URL); P2-461-01 removed |
+
+---
+
+## 8. Statistics
 
 | Metric | Count |
 |--------|-------|
-| Runbook active scenarios | 144 |
-| UI plan active scenarios | 281 |
-| Backend plan active scenarios | ~378 |
+| Runbook active scenarios | 154 (+10 Phase 2: P2-F0-01..07, P2-452-01/02, P2-460-01) |
+| UI plan active scenarios | 281 (Phase 2 entries documented in plan's "Phase 2 Milestone Coverage" section) |
+| Backend plan active scenarios | ~378 + Phase 2 test classes (G0/H0/M1/J1, p2-reviewer-fixes, p2-timestamp-claim-behavioral, p2-stage8-regressions, p2-phase2-live) |
 | Runbook → plan gaps | 33 |
 | Plan → runbook high-priority gaps | 5 categories (ESC, FAIL, KEY, VAL, HR) |
 | Stale REMOVED entries in backend plan | ~30+ (MSG, MCX, UI refs, BRW refs, CMP pipeline) |
+| Phase 2 GitHub issues with full coverage | 4 milestone (#364 F0, #365 G0, #366 H0, #367 J1, #368 M1) + 22 reviewer findings (#452..#477) |
 | ID collisions | 0 |

@@ -44,8 +44,10 @@ test('A8-LIVE-02: code inspection — /api/auth/login handler does NOT call clau
   // production source — safer than mutating real credentials, and
   // catches future regressions where someone accidentally restores
   // the CLI fork pattern.
+  // G0 decomposed src/routes.js into domain modules; /api/auth/login is now
+  // in src/routes/auth.js. Read that file instead of the thin dispatcher.
   const routesSrc = fs.readFileSync(
-    path.join(__dirname, '..', '..', 'src', 'routes.js'),
+    path.join(__dirname, '..', '..', 'src', 'routes', 'auth.js'),
     'utf-8',
   );
   // Find the /api/auth/login handler block. Allow either app.post or

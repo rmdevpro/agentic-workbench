@@ -13,7 +13,8 @@ const sessionUtils = require('./session-utils');
 const logger = require('./logger');
 const db = require('./db');
 const config = require('./config');
-const qdrantSync = require('./qdrant-sync');
+const { createQdrantSync } = require('./qdrant-sync');
+const qdrantSync = createQdrantSync({ db, safe, config, logger });
 
 const WORKSPACE = safe.WORKSPACE;
 const CLAUDE_HOME = safe.CLAUDE_HOME;

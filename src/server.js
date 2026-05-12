@@ -22,6 +22,7 @@ const createWatchers = require('./watchers');
 const createKbWatcher = require('./kb-watcher');
 const createWsTerminal = require('./ws-terminal');
 const registerCoreRoutes = require('./routes');
+const { createQdrantSync } = require('./qdrant-sync');
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -81,6 +82,8 @@ const watchers = createWatchers({
 });
 
 const kbWatcher = createKbWatcher({ db, logger, config });
+
+const qdrantSync = createQdrantSync({ db, safe, config, logger });
 
 const terminal = createWsTerminal({
   safe,
@@ -260,6 +263,7 @@ const { checkAuthStatus } = registerCoreRoutes(app, {
   trustGeminiProjectDirs: watchers.trustGeminiProjectDirs,
   trustCodexProjectDirs: watchers.trustCodexProjectDirs,
   kbWatcher,
+  qdrantSync,
   sleep: tmux.sleep,
 });
 
@@ -421,65 +425,13 @@ if (require.main === module) {
         );
 
         // Start Qdrant vector sync (non-blocking — skips if Qdrant unavailable)
-        require('./qdrant-sync').start().catch((err) =>
+        qdrantSync.start().catch((err) =>
           logger.error('Qdrant sync startup error', {
             module: 'server',
             err: err.message,
           }),
         );
 
-        // Auto-clone Knowledge Base on first run (non-blocking)
-        const { execFile } = require('child_process');
-        const { promisify } = require('util');
-        const execFileAsync = promisify(execFile);
-        const { KB_PATH, KB_UPSTREAM_URL } = require('./constants');
-        const { stat: fsStat } = require('fs/promises');
-        fsStat(KB_PATH).catch(async () => {
-          const rawUrl = db.getSetting('kb_repo_url', `"${KB_UPSTREAM_URL}"`);
-          let kbRepoUrl;
-          try { kbRepoUrl = JSON.parse(rawUrl); } catch { kbRepoUrl = rawUrl; }
-          logger.info('Cloning Knowledge Base', { module: 'server', url: kbRepoUrl });
-          try {
-            await execFileAsync('git', ['clone', kbRepoUrl, KB_PATH]);
-            // Always set up `upstream` pointing at the public KB so
-            // `Sync from upstream` works whether or not the user has forked.
-            // After fork, /api/kb/fork rewrites `origin` and leaves `upstream`
-            // unchanged.
-            await execFileAsync('git', ['-C', KB_PATH, 'remote', 'add', 'upstream', KB_UPSTREAM_URL]).catch(() => {});
-            logger.info('Knowledge Base cloned', { module: 'server' });
-          } catch (err) {
-            logger.error('Knowledge Base clone failed', { module: 'server', err: err.message });
-          }
-        });
-
-        // KB polling sync — fetch + ff-merge on configurable interval
-        let _kbSyncTimer = null;
-        function startKbSyncPoller() {
-          if (_kbSyncTimer) clearInterval(_kbSyncTimer);
-          let rawInterval = db.getSetting('kb_sync_interval_minutes', '5');
-          let minutes;
-          try { minutes = parseInt(JSON.parse(rawInterval), 10); } catch { minutes = 5; }
-          if (!minutes || minutes < 1) minutes = 5;
-          _kbSyncTimer = setInterval(async () => {
-            try {
-              await fsStat(join(KB_PATH, '.git'));
-            } catch (_e) { return; }
-            // #317: KB account lookup via the centralized helper. Token used
-            // per-call via http.extraheader; never embedded in remote URL.
-            const gitAuth = require('./git-auth');
-            const acc = gitAuth.kbAccount(db);
-            if (!acc) return;
-            const authArgs = gitAuth.gitAuthArgs(acc.token || '');
-            try {
-              await execFileAsync('git', ['-C', KB_PATH, ...authArgs, 'fetch', 'origin']);
-              await execFileAsync('git', ['-C', KB_PATH, 'merge', '--ff-only', 'origin/main']);
-              logger.debug('KB sync: pulled from origin', { module: 'server' });
-            } catch (err) {
-              logger.warn('KB sync: ff-merge skipped', { module: 'server', err: err.message });
-            }
-          }, minutes * 60 * 1000);
-        }
-        startKbSyncPoller();
       });
     } catch (err) {
       logger.error('Fatal startup error', {

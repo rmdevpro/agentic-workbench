@@ -40,23 +40,83 @@ Workbench stores all data (database, sessions, workspace) under `/data`. To pers
 
 ## Architecture & Internals
 
-The monolithic `server.js` is decomposed into focused modules using factory-based dependency injection:
+`server.js` is the wiring layer. Domain logic lives in focused modules composed via factory-based dependency injection. Two top-level monoliths have been decomposed since Phase 2:
 
-| Module                | Responsibility                                                                   |
-| --------------------- | -------------------------------------------------------------------------------- |
-| `server.js`           | Wiring layer: constructs modules, injects deps, starts server                    |
-| `routes.js`           | HTTP boundary: all 40+ route handlers with input validation                      |
-| `watchers.js`         | Filesystem monitoring: JSONL watchers, settings sync, MCP registration           |
-| `tmux-lifecycle.js`   | tmux session creation, cleanup, limit enforcement                                |
-| `ws-terminal.js`      | WebSocket ↔ PTY terminal bridge with backpressure handling                       |
-| `session-resolver.js` | Async temp→real session ID resolution                                            |
-| `shared-state.js`     | Shared runtime state (WebSocket client map, browser count)                       |
-| `db.js`               | SQLite-backed persistent storage with WAL mode                                   |
-| `config.js`           | Externalized configuration with in-memory cache and hot-reload via file watchers |
-| `logger.js`           | Structured JSON logging (stdout/stderr)                                          |
-| `keepalive.js`        | OAuth token refresh with configurable timing (fully async)                       |
+- `routes.js` (was ~5,800 lines) is now a thin composition layer; per-domain handlers live in `src/routes/`.
+- `session-utils.js` (was ~800 lines) is now a thin factory adapter; helpers live in `src/session-utils/`.
+- `public/index.html` (was 6,113 lines) is now a 591-line shell; the inline `<script>` block is extracted to `public/js/app.js` plus 11 ESM sub-modules.
+- `kb-watcher.js` was extracted from `server.js` so KB clone + watch + Qdrant sync own their own lifecycle.
 
-Supporting modules: `mcp-server.js`, `mcp-tools.js`, `webhooks.js`, `safe-exec.js`, `session-utils.js`, `qdrant-sync.js`.
+### Top-level modules
+
+| Module                | Responsibility                                                                                          |
+| --------------------- | ------------------------------------------------------------------------------------------------------- |
+| `server.js`           | Wiring layer: constructs modules, injects deps, starts server                                           |
+| `routes.js`           | Thin composition layer: requires & wires per-domain handlers from `src/routes/`                         |
+| `kb-watcher.js`       | KB repo `_cloneIfMissing()` + chokidar watcher + Qdrant sync poller (M1)                                |
+| `watchers.js`         | Filesystem monitoring: JSONL watchers, settings sync, MCP registration                                  |
+| `tmux-lifecycle.js`   | tmux session creation, cleanup, limit enforcement                                                       |
+| `ws-terminal.js`      | WebSocket ↔ PTY terminal bridge with backpressure handling                                              |
+| `session-resolver.js` | Async temp→real session ID resolution                                                                   |
+| `session-utils.js`    | Thin factory adapter; delegates to `src/session-utils/`                                                 |
+| `shared-state.js`     | Shared runtime state (WebSocket client map, browser count)                                              |
+| `db.js`               | SQLite-backed persistent storage with WAL mode                                                          |
+| `config.js`           | Externalized configuration with in-memory cache and hot-reload via file watchers                        |
+| `logger.js`           | Structured JSON logging (stdout/stderr)                                                                 |
+| `keepalive.js`        | OAuth token refresh with configurable timing (fully async)                                              |
+| `qdrant-sync.js`      | Qdrant vector sync, embedding pipeline (factory-DI; J1)                                                 |
+| `git-auth.js`         | Git account credential helper                                                                           |
+| `gate-page.js`        | Public-Space gate HTML                                                                                  |
+
+Supporting: `mcp-server.js`, `mcp-tools.js`, `mcp-catalog.js`, `webhooks.js`, `safe-exec.js`, `session-seeder.js`, `constants.js`.
+
+### `src/routes/` — domain handlers (G0)
+
+Each file exports a `register({ app, ... })` function called by the thin `routes.js` composer:
+
+| File              | Routes                                                            |
+| ----------------- | ----------------------------------------------------------------- |
+| `auth.js`         | `/api/auth/login`, `/api/auth/status`, `/api/auth/logout`          |
+| `health.js`       | `/health`, `/api/errors` summary                                   |
+| `projects.js`     | `/api/projects/*` CRUD, MCP enable/disable                         |
+| `sessions.js`     | `/api/sessions/*`, `/api/state`, session resume/restart/archive    |
+| `tasks.js`        | `/api/tasks/*` CRUD, comments                                      |
+| `files.js`        | `/api/browse`, `/api/file` (filesystem access per AD-001)          |
+| `kb.js`           | `/api/kb/*` (roles, status, search)                                |
+| `settings.js`     | `/api/settings/*`, claude-md prompts, themes                       |
+| `git-accounts.js` | `/api/git-accounts/*` CRUD                                         |
+| `_shared.js`      | Internal helpers (e.g. `createTrustDir()` factory, common imports) |
+
+### `src/session-utils/` — session helpers (H0)
+
+The `createSessionUtils()` factory in `session-utils.js` composes these into a single API surface:
+
+| File              | Responsibility                                                  |
+| ----------------- | --------------------------------------------------------------- |
+| `claude-jsonl.js` | Claude JSONL parsing, message counting, last-message timestamp  |
+| `gemini.js`       | Gemini session discovery, time-proximity matching               |
+| `codex.js`        | Codex session discovery, UUID parsing                           |
+| `info.js`         | `/api/sessions/:id/info` payload assembly                       |
+| `search.js`       | Session name/content search                                     |
+
+### `public/js/` — frontend ESM modules (F0)
+
+`public/index.html` is now a 591-line shell loading `<script type="module" src="/js/app.js">`. CSS is in `public/css/main.css`.
+
+| File                | Role                                                                           |
+| ------------------- | ------------------------------------------------------------------------------ |
+| `app.js`            | Entrypoint: imports modules, wires deps, exposes `window.*` for inline onclick |
+| `state.js`          | Shared state (tabs Map, projectState, sessionFilter, sessionSortBy, …)         |
+| `sidebar.js`        | `loadState`, `renderSidebar`, project/program/session row builders             |
+| `tabs.js`           | Tab Map management, `switchTab`, `closeTab`, `renderTabs`, drop-zone wiring    |
+| `terminal.js`       | xterm.js setup, WebSocket lifecycle, scrollback replay                         |
+| `file-tree.js`      | DOM-diffing file tree renderer                                                 |
+| `files.js`          | File browser: load, refresh, open as tab                                       |
+| `tasks.js`          | Task panel render, filter, detail modal                                        |
+| `issue-picker.js`   | GitHub issue picker overlay                                                    |
+| `oauth-detector.js` | Auth-URL detection in terminal output                                          |
+| `modal.js`          | Reusable modal primitives (loaded as classic UMD)                              |
+| `util.js`           | `escapeHtml`, `timeAgo`, `db_getSetting`, formatters (classic UMD)             |
 
 ### Dependency Graph
 
@@ -67,16 +127,20 @@ logger.js, shared-state.js          (leaf — no deps)
 config.js                           (leaf — reads config files, caches in memory, hot-reloads via watchers)
 db.js                               (leaf — SQLite)
 safe-exec.js                        (leaf — child process wrappers, async tmux operations)
-session-utils.js                    (imports: safe, db, config, logger)
+session-utils.js                    (factory adapter — composes src/session-utils/* sub-modules)
+                                    (imports: safe, db, config, logger)
 keepalive.js                        (factory — deps: safe, config, logger; fully async token reads)
 tmux-lifecycle.js                   (factory — deps: safe, logger)
 session-resolver.js                 (factory — deps: tmux fns, db, safe, config, logger)
 watchers.js                         (factory — deps: shared-state, db, safe, config, session-utils, logger)
+kb-watcher.js                       (factory — deps: db, safe, config, logger; owns _cloneIfMissing + chokidar)
+qdrant-sync.js                      (factory — deps: db, safe, config, logger; embedding pipeline)
 ws-terminal.js                      (factory — deps: shared-state, safe, keepalive, config, logger)
                                     (receives tmux fns and watcher fns via injection)
-routes.js                           (deps: db, safe, config, session-utils, keepalive, logger)
-                                    (receives tmux, resolver fns via injection)
-server.js                           (wiring — constructs all, injects deps, calls config.init(), starts server)
+src/routes/*.js                     (each registers handlers on the Express app via .register({ app, ... }))
+                                    (deps wired by the per-domain register call from routes.js)
+routes.js                           (thin composer — requires each src/routes/*.js and calls register())
+server.js                           (wiring — constructs all factories, injects deps, calls config.init(), starts server)
 ```
 
 ### Local docker-compose
@@ -109,7 +173,7 @@ All tunables are externalized in `.env` (see `.env.example` for complete list) a
 
 ### Logo Variant (dev/prod safety affordance)
 
-Six logos ship in `public/`, each in a `-light.png` (for light themes) and `-dark.png` (for dark themes) pair: canonical `logo-light.png`/`logo-dark.png`, plus warning variants `dev-light.png`/`dev-dark.png` (green, "Dev") and `prod-light.png`/`prod-dark.png` (red, "Prod"). Which pair renders is driven by the DB-backed `logo_variant` setting (values: `default`, `development`, `production`) and resolved inside `applyTheme()` in `public/index.html`. There is intentionally no UI — swap it per deployment via `PUT /api/settings` or by editing the settings row directly.
+Six logos ship in `public/`, each in a `-light.png` (for light themes) and `-dark.png` (for dark themes) pair: canonical `logo-light.png`/`logo-dark.png`, plus warning variants `dev-light.png`/`dev-dark.png` (green, "Dev") and `prod-light.png`/`prod-dark.png` (red, "Prod"). Which pair renders is driven by the DB-backed `logo_variant` setting (values: `default`, `development`, `production`) and resolved inside `applyTheme()` in `public/js/app.js`. There is intentionally no UI — swap it per deployment via `PUT /api/settings` or by editing the settings row directly.
 
 ## Input Validation
 
@@ -145,7 +209,7 @@ Auth status is informational only — it does not affect the overall healthy/deg
 
 ## Filesystem Access
 
-Workbench is a single-user, Docker-containerized IDE. Per AD-001, it intentionally provides full filesystem access to the user through two backend endpoints — `GET /api/browse` (directory listing) and `GET /api/file` (file content) — consumed by the vanilla `createFileTree` frontend (in `public/index.html`). No path containment checks are applied to these endpoints to support external file mounts (NFS, bind mounts) that may reside outside the workspace directory.
+Workbench is a single-user, Docker-containerized IDE. Per AD-001, it intentionally provides full filesystem access to the user through two backend endpoints — `GET /api/browse` (directory listing) and `GET /api/file` (file content) — consumed by the vanilla `createFileTree` frontend (in `public/js/file-tree.js`). No path containment checks are applied to these endpoints to support external file mounts (NFS, bind mounts) that may reside outside the workspace directory.
 
 Plan file operations (`workbench_read_plan`, `workbench_update_plan`) do enforce path containment within `WORKBENCH_DATA/plans` using symlink-aware async validation, as these are internal data structures.
 

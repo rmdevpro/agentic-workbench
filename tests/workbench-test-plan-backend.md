@@ -25,18 +25,41 @@
 - `mcp-server.js` — tool definitions updated to match
 - `db.js` — added `cli_type` column, `mcp_registry` and `mcp_project_enabled` tables, `searchSessionsByName()`
 - `safe-exec.js` — added `tmuxCreateGemini()`, `tmuxCreateCodex()`, user `workbench` (was `hopper`)
-- `routes.js` — `POST /api/sessions` accepts `cli_type`, resume launches correct CLI
+- `routes.js` — **Phase 2 (G0):** decomposed from ~5,800-line monolith into a thin composition layer that wires per-domain handlers from `src/routes/`. `POST /api/sessions` accepts `cli_type`, resume launches correct CLI.
+- `session-utils.js` — **Phase 2 (H0):** decomposed into a `createSessionUtils()` factory that composes sub-modules in `src/session-utils/`. Backward-compat shim preserves the existing import surface.
+- `qdrant-sync.js` — **Phase 2 (J1):** converted to factory-DI pattern.
 - `tmux-lifecycle.js` — periodic scan, idle timeouts, session limits
-- `qdrant-sync.js` — new module for vector search
-- `server.js` — MAX_TMUX_SESSIONS default 10, periodic scan startup
+- `server.js` — **Phase 2 (M1):** KB-watcher clone-if-missing and chokidar lifecycle extracted to `kb-watcher.js`. MAX_TMUX_SESSIONS default 10, periodic scan startup.
 
-### New modules
-- `qdrant-sync.js` — Qdrant vector sync, embedding pipeline, file watching
+### New modules (Phase 2)
+- `src/routes/{auth,health,projects,sessions,tasks,files,kb,settings,git-accounts}.js` — domain handlers (G0)
+- `src/routes/_shared.js` — common helpers, including `createTrustDir()` factory
+- `src/session-utils/{claude-jsonl,gemini,codex,info,search}.js` — session helpers (H0)
+- `kb-watcher.js` — KB clone-if-missing + chokidar watcher + Qdrant sync poller (M1)
 
 ### Path changes
 - Container user: `workbench` (was `hopper`)
 - Workspace: `/home/workbench/workspace` (was `/mnt/workspace`)
 - No `CLAUDE_HOME` override — uses `$HOME/.claude` naturally
+
+### Phase 2 test classes
+- **Mock structural** (`tests/mock/`):
+  - `g0-routes-composition.test.js` — G0-RT-01..09 — verifies thin composer wiring, all domain modules present, `createTrustDir` factory exported
+  - `h0-session-utils-factory.test.js` — H0-SU-01..06 — verifies `createSessionUtils` factory API, backward-compat adapter
+  - `m1-kb-watcher-clone.test.js` — M1-KB-01..08 — verifies `_cloneIfMissing` declared, ordered before watcher, git clone present
+  - `p2-reviewer-fixes.test.js` — covers reviewer findings #453, #454, #455, #456, #460, #461, #466
+  - `p2-timestamp-claim-behavioral.test.js` — behavioral tests for #462 (per-request claimed Sets), #463/#465 (timestamp priority), #467 (Codex-specific)
+  - `p2-stage8-regressions.test.js` — S8-REG-01/02/03 — structural guards for three F0 regressions found during Stage 8 (wrong `_activeIdForPanel` import, missing `createTab` registration steps, missing open-dropdown guard in `renderSidebar`)
+- **Live behavioral** (`tests/live/p2-phase2-live.test.js`):
+  - G0-LIVE-01/02/03 — domain handlers reachable end-to-end via HTTP
+  - H0-LIVE-01/02 — session-utils factory exposes the expected API surface
+  - J1-LIVE-01/02 — qdrant-sync factory wired correctly
+  - M1-LIVE-01/02 — `/api/kb/status` + `/api/kb/roles` respond without crash
+  - #460-LIVE-01 — `session_meta.timestamp` wins over `db.updated_at` for Claude sessions
+  - #461-LIVE-01/02/03 — `file_find` paren patterns (ERE fix)
+  - #468-LIVE-01 — Gemini session disambiguation via per-request claimed Set
+  - #453-LIVE-01, #454-LIVE-01 — reviewer fix behavioral confirmation
+  - A8-LIVE-01/02 — `/api/auth/login` no-CLI-fork fast path (code inspection now reads `src/routes/auth.js` after G0)
 **Reviewed by (R1):** Claude (Sonnet 4.6), Gemini, Grok, GPT
 **Reviewed by (R2):** Claude (Sonnet 4.6), Gemini, Grok, GPT
 **Review disposition:** R1 incorporated into Revision 2.0/3.0; R2 incorporated into Revision 4.0; see Appendix A and Appendix B

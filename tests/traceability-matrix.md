@@ -472,14 +472,86 @@ gap.
 
 ---
 
+### G0 (#365) — Routes monolith decomposition
+
+`routes.js` shrank from ~5,800 lines to ~36 lines (a thin composer that requires each
+`src/routes/*.js` module and calls its `register({ app, ... })` function). The per-domain
+handlers live in `src/routes/`: `auth.js`, `health.js`, `projects.js`, `sessions.js`,
+`tasks.js`, `files.js`, `kb.js`, `settings.js`, `git-accounts.js`. Common helpers
+(including the `createTrustDir()` factory deduplicated from `sessions.js` + `projects.js`)
+live in `src/routes/_shared.js`.
+
+**Coverage:**
+
+| Layer | Test | Covers |
+|---|---|---|
+| Mock structural | `g0-routes-composition.test.js` (G0-RT-01..09) | thin composer present, each `src/routes/*.js` exports `register`, `createTrustDir` factory exported and used by both `sessions.js` + `projects.js` |
+| Live behavioral | `p2-phase2-live.test.js` G0-LIVE-01/02/03 | per-domain endpoints reachable end-to-end with correct method + status |
+| Adjacent | `a8-auth-login.test.js` A8-LIVE-02 | code inspection reads `src/routes/auth.js` (path-updated post-G0) |
+
+---
+
+### H0 (#366) — Session-utils factory decomposition
+
+`session-utils.js` shrank from ~800 lines to a thin factory adapter. The
+`createSessionUtils({ safe, db, config, logger })` factory composes sub-modules
+in `src/session-utils/`: `claude-jsonl.js`, `gemini.js`, `codex.js`, `info.js`,
+`search.js`. The original import surface is preserved via a backward-compat shim
+so existing callers (routes, watchers) do not need to change.
+
+**Coverage:**
+
+| Layer | Test | Covers |
+|---|---|---|
+| Mock structural | `h0-session-utils-factory.test.js` (H0-SU-01..06) | factory exported, API shape, instance independence, backward-compat adapter |
+| Live behavioral | `p2-phase2-live.test.js` H0-LIVE-01/02 | session-utils factory exposes the expected API surface end-to-end |
+
+---
+
+### J1 (#367) — qdrant-sync factory-DI conversion
+
+`qdrant-sync.js` was converted from a direct-import module to a factory-DI module.
+All existing callers (`watchers.js`, KB sync) now receive the qdrant instance via
+injection through `server.js`.
+
+**Coverage:**
+
+| Layer | Test | Covers |
+|---|---|---|
+| Live behavioral | `p2-phase2-live.test.js` J1-LIVE-01/02 | qdrant factory wired correctly; `/api/kb/*` endpoints still respond |
+
+Mock structural is N/A — the conversion is a wiring change with no new code paths;
+the live tests prove the wiring is correct.
+
+---
+
+### Phase 2 reviewer findings (Stage 5 R1–R3, Stage 7 R1–R2, Stage 9 R1–R3)
+
+All findings filed during the Phase 2 review rounds have corresponding mock and/or
+live coverage. Test IDs are stable; issue numbers map 1:1 to test cases:
+
+| Round | Issues | Test coverage |
+|---|---|---|
+| Stage 5 R1 | #452..#459 | `p2-reviewer-fixes.test.js` covers #453, #454, #455, #456 (#458 via existing `require-hoist.test.js`; #452/#457/#459 are frontend-only — UI Stage 8) |
+| Stage 5 R2 | #462..#465, #467 | `p2-timestamp-claim-behavioral.test.js` |
+| Stage 5 R3 | #466 | `p2-reviewer-fixes.test.js` |
+| Cherry-picks | #460, #461 | `p2-reviewer-fixes.test.js` (mock) + `p2-phase2-live.test.js` (#460-LIVE-01, #461-LIVE-01/02/03) |
+| Stage 7 R1 | #468..#473 | `p2-phase2-live.test.js` (#468-LIVE-01); other R1 issues are documentation/comment updates |
+| Stage 7 R2 | #473 (re-raise) | matrix §7 M1 documentation; covered |
+| Stage 8 regressions | (no GH issue — fixed in-stage) | `p2-stage8-regressions.test.js` S8-REG-01/02/03 — F0 extraction omissions (`files.js` wrong import, `createTab` missing steps, sidebar re-render guard) |
+| Stage 9 R1 | #474..#477 | Runbook entries P2-F0-05/06/07, P2-452-01, P2-460-01 rewritten (real clicks, parameterized URL); P2-461-01 removed |
+
+---
+
 ## 8. Statistics
 
 | Metric | Count |
 |--------|-------|
-| Runbook active scenarios | 144 |
-| UI plan active scenarios | 281 |
-| Backend plan active scenarios | ~378 |
+| Runbook active scenarios | 154 (+10 Phase 2: P2-F0-01..07, P2-452-01/02, P2-460-01) |
+| UI plan active scenarios | 281 (Phase 2 entries documented in plan's "Phase 2 Milestone Coverage" section) |
+| Backend plan active scenarios | ~378 + Phase 2 test classes (G0/H0/M1/J1, p2-reviewer-fixes, p2-timestamp-claim-behavioral, p2-stage8-regressions, p2-phase2-live) |
 | Runbook → plan gaps | 33 |
 | Plan → runbook high-priority gaps | 5 categories (ESC, FAIL, KEY, VAL, HR) |
 | Stale REMOVED entries in backend plan | ~30+ (MSG, MCX, UI refs, BRW refs, CMP pipeline) |
+| Phase 2 GitHub issues with full coverage | 4 milestone (#364 F0, #365 G0, #366 H0, #367 J1, #368 M1) + 22 reviewer findings (#452..#477) |
 | ID collisions | 0 |

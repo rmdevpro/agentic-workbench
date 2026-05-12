@@ -180,7 +180,9 @@ handlers.file_find = async (args) => {
   // -m 50: cap matches per file. Without this a common pattern like
   // "deployment" overflows the buffer in seconds on a busy workspace.
   // We post-slice to 200 lines anyway, so matches beyond that aren't useful.
-  const grepArgs = ['-rn', '--color=never', `-C${ctx}`, '-m', '50'];
+  // -E: extended regex so callers can pass patterns like _seedRole\(cliType
+  // where \( is a literal '(' (BRE would treat \( as an unmatched group start).
+  const grepArgs = ['-E', '-rn', '--color=never', `-C${ctx}`, '-m', '50'];
   if (args.file_type) grepArgs.push(`--include=*.${args.file_type}`);
   grepArgs.push('--', String(args.pattern), WORKSPACE);
   // #330 [A5] (Codex Phase 1 gate fold-back): async execFile, not

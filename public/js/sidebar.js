@@ -462,8 +462,12 @@ export async function loadState() {
       }
     }
 
-    renderSidebar();
-    _hydrateVisibleSessionInfo();
+    // Skip DOM rebuild while a CLI-picker dropdown is open; re-render will
+    // happen naturally on the next loadState() cycle (10s).
+    if (!document.querySelector('.new-session-menu[style*="block"]')) {
+      renderSidebar();
+      _hydrateVisibleSessionInfo();
+    }
   } catch (err) {
     console.error('Failed to load state:', err);
   }

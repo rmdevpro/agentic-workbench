@@ -410,7 +410,33 @@ No actual conflicts found. IDs are consistent across documents.
 
 ---
 
-## 7. Statistics
+## 7. Phase 2 Milestone Mock-Test Coverage Notes
+
+### F0 (#364) — Frontend monolith decomposition (N/A for unit tests)
+
+F0 is a structural HTML/JavaScript reorganisation: `public/index.html` shrinks from
+6 113 lines to a 591-line thin shell by extracting the inline `<script>` to
+`public/js/app.js` and 10 ESM sub-modules (`state.js`, `sidebar.js`, `tabs.js`, …).
+
+**Why no dedicated mock unit tests:**
+
+- No server-side logic was added or changed. The extracted modules are pure browser
+  code (DOM manipulation, `fetch`, `WebSocket`) that requires a real browser DOM to
+  execute — `node:test` / Node.js cannot meaningfully run them without a headless
+  browser.
+- The structural invariants (CSS extracted to `main.css`, inline script replaced by
+  `<script type="module" src="/js/app.js">`, all `window.*` exports present) are
+  verified by `e3-pending-lock.test.js` (E3-PEND-03/04 updated in commit `6dd504a`)
+  and the Phase 2 reviewer-findings test (`p2-reviewer-fixes.test.js` #452/#457 notes).
+- Full end-to-end functional verification happens in **Stage 8 (UI runbook)** via
+  Playwright headless browser tests against the deployed `workbench-test` container.
+
+**Traceability:** F0 → UI runbook entry TBD (Stage 8). Mock: N/A — documented here
+per STD-003 §8 ("N/A must be justified").
+
+---
+
+## 8. Statistics
 
 | Metric | Count |
 |--------|-------|

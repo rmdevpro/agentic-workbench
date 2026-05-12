@@ -217,3 +217,43 @@ test('#461-03: file_find grep args include -E flag (ERE mode)', () => {
     "file_find handler must pass '-E' to grep for ERE mode",
   );
 });
+
+// ── #466 — writeFile in _shared + settings.js fallback chain ─────────────────
+
+test('#466-01: writeFile is exported from _shared.js', () => {
+  const shared = require('../../src/routes/_shared');
+  assert.equal(typeof shared.writeFile, 'function',
+    '_shared.js must export writeFile (fs/promises.writeFile); sessions.js and settings.js depend on it');
+});
+
+test('#466-02: sessions.js imports writeFile from _shared (regression guard)', () => {
+  // The writeFile import was accidentally dropped in the #454 fix and caused
+  // SESSION-03 to fail. This static check pins it so the regression can't recur.
+  assert.ok(
+    /writeFile,/.test(SESSIONS_SRC) || /writeFile\b/.test(SESSIONS_SRC.slice(0, 600)),
+    'sessions.js must destructure writeFile from _shared in its top-level require',
+  );
+  // The actual import block
+  const importBlock = SESSIONS_SRC.slice(0, SESSIONS_SRC.indexOf("require('./_shared')") + 40);
+  assert.ok(
+    /\bwriteFile\b/.test(importBlock),
+    'writeFile must appear in the _shared destructuring block at the top of sessions.js',
+  );
+});
+
+test('#466-03: settings.js claude-md routes use WORKSPACE with safe.WORKSPACE fallback', () => {
+  const settingsSrc = fs.readFileSync(
+    path.join(__dirname, '..', '..', 'src', 'routes', 'settings.js'), 'utf-8');
+  // The fix (#463/#454 regression) introduced WORKSPACE || safe.WORKSPACE || '' fallback
+  // so that both prod (WORKSPACE from deps) and test (safe.WORKSPACE from safe-exec) work.
+  assert.ok(
+    /WORKSPACE \|\| safe\.WORKSPACE/.test(settingsSrc) || /WORKSPACE,/.test(settingsSrc.slice(0, 500)),
+    'settings.js must accept WORKSPACE from register() deps; claude-md routes must not rely solely on safe.WORKSPACE',
+  );
+  // The WORKSPACE param must be in the register() destructuring
+  const registerBlock = settingsSrc.slice(settingsSrc.indexOf('function register('), settingsSrc.indexOf(') {') + 5);
+  assert.ok(
+    /\bWORKSPACE\b/.test(registerBlock),
+    'settings.js register() must destructure WORKSPACE from deps',
+  );
+});

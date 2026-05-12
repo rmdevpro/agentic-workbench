@@ -60,6 +60,11 @@ export async function _hydrateVisibleSessionInfo() {
                 row.model = info.model;
                 row.tmux = info.tmux;
                 row.active = info.active;
+                // Active sessions haven't finished writing their current
+                // turn to JSONL yet — their session_meta timestamp is the
+                // last *completed* turn. Stamp now so the sidebar shows
+                // "just now" while the agent is running.
+                if (info.active) row.timestamp = new Date().toISOString();
                 break;
               }
             }

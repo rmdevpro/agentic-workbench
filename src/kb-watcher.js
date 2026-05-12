@@ -20,10 +20,21 @@ const chokidar = require('chokidar');
 const simpleGit = require('simple-git');
 const { join } = require('path');
 const { stat } = require('fs/promises');
+const { execFile } = require('child_process');
+const { promisify } = require('util');
+const execFileAsync = promisify(execFile);
 const gitAuth = require('./git-auth');
-const { KB_PATH, KB_UPSTREAM_URL } = require('./constants');
+const { KB_PATH: DEFAULT_KB_PATH, KB_UPSTREAM_URL: DEFAULT_KB_UPSTREAM_URL } = require('./constants');
 
-module.exports = function createKbWatcher({ db, logger, config }) {
+module.exports = function createKbWatcher({
+  db,
+  logger,
+  config,
+  kbPath = DEFAULT_KB_PATH,
+  kbUpstreamUrl = DEFAULT_KB_UPSTREAM_URL,
+}) {
+  const KB_PATH = kbPath;
+  const KB_UPSTREAM_URL = kbUpstreamUrl;
   // #317: KB ops authenticate via http.extraheader — token never embedded in
   // remote URL. _kbAuthArgs() returns the per-call git args that inject the
   // header, looked up fresh each time so token rotation takes effect without
@@ -41,6 +52,7 @@ module.exports = function createKbWatcher({ db, logger, config }) {
   let pendingPaths = new Set();
   let pendingTimer = null;
   let pullTimer = null;
+  let originSyncTimer = null;
   // #357 [D8]: split single `busy` into separate push/pull mutexes.
   // Previously a periodic-pull would skip if a commit was in-flight (and
   // vice-versa), starving the pull. Now each waits only on its own lock.
@@ -251,12 +263,58 @@ module.exports = function createKbWatcher({ db, logger, config }) {
     }
   }
 
+  // Clone KB from the configured repo URL if KB_PATH is not yet a git repo.
+  // Idempotent — safe to call every startup; fsStat check is O(1).
+  async function _cloneIfMissing() {
+    if (await _kbExists()) return false; // already present
+    const rawUrl = db.getSetting('kb_repo_url', `"${KB_UPSTREAM_URL}"`);
+    let kbRepoUrl;
+    try { kbRepoUrl = JSON.parse(rawUrl); } catch { kbRepoUrl = rawUrl; }
+    logger.info('kb-watcher: cloning Knowledge Base', { url: kbRepoUrl });
+    try {
+      await execFileAsync('git', ['clone', kbRepoUrl, KB_PATH]);
+      // Always set up `upstream` pointing at the public KB so `Sync from upstream`
+      // works whether or not the user has forked. /api/kb/fork rewrites `origin`
+      // and leaves `upstream` unchanged.
+      await execFileAsync('git', ['-C', KB_PATH, 'remote', 'add', 'upstream', KB_UPSTREAM_URL]).catch(() => {});
+      logger.info('kb-watcher: Knowledge Base cloned');
+      return true;
+    } catch (err) {
+      logger.error('kb-watcher: clone failed', { err: err.message });
+      return false;
+    }
+  }
+
+  // Sync local repo from origin (user's fork). Complements _periodicPull which
+  // syncs from upstream. Handles the case where someone pushes directly to the
+  // user's fork without going through the watcher's commit+push flow.
+  async function _syncFromOrigin() {
+    if (!await _kbExists()) return;
+    const acc = gitAuth.kbAccount(db);
+    if (!acc) return;
+    const authArgs = gitAuth.gitAuthArgs(acc.token || '');
+    try {
+      await execFileAsync('git', ['-C', KB_PATH, ...authArgs, 'fetch', 'origin']);
+      await execFileAsync('git', ['-C', KB_PATH, 'merge', '--ff-only', 'origin/main']);
+      logger.debug('kb-watcher: synced from origin', { module: 'kb-watcher' });
+    } catch (err) {
+      logger.warn('kb-watcher: origin sync skipped', { err: err.message });
+    }
+  }
+
   async function start() {
     if (watcher) return; // idempotent
+
+    // Clone if not present; if clone fails, bail — can't watch a missing repo.
+    const wasCloned = await _cloneIfMissing();
     if (!await _kbExists()) {
-      logger.info(`kb-watcher: not starting — ${KB_PATH} is not a git repo yet`);
+      logger.info(`kb-watcher: not starting — ${KB_PATH} is not a git repo`);
       return;
     }
+    if (wasCloned) {
+      logger.info('kb-watcher: clone complete, attaching watcher');
+    }
+
     await _ensureGitIdentity();
     await _refreshAheadBehind();
     watcher = chokidar.watch(KB_PATH, {
@@ -271,15 +329,30 @@ module.exports = function createKbWatcher({ db, logger, config }) {
     watcher.on('addDir', p => { pendingPaths.add(p); _scheduleCommit(); });
     watcher.on('unlinkDir', p => { pendingPaths.add(p); _scheduleCommit(); });
     watcher.on('error', err => logger.warn('kb-watcher: chokidar error', { err: err.message }));
+
+    // Upstream pull timer (syncs from public KB upstream).
     pullTimer = setInterval(_periodicPull, pullIntervalMs);
     // Kick off an initial pull so the status is fresh on startup.
     _periodicPull().catch(() => {});
+
+    // Origin sync timer — reads interval from DB in minutes (default 5).
+    const _startOriginSync = () => {
+      if (originSyncTimer) clearInterval(originSyncTimer);
+      let rawInterval = db.getSetting('kb_sync_interval_minutes', '5');
+      let minutes;
+      try { minutes = parseInt(JSON.parse(rawInterval), 10); } catch { minutes = 5; }
+      if (!minutes || minutes < 1) minutes = 5;
+      originSyncTimer = setInterval(_syncFromOrigin, minutes * 60 * 1000);
+    };
+    _startOriginSync();
+
     logger.info('kb-watcher: started', { debounceMs, pullIntervalMs });
   }
 
   async function stop() {
     if (pendingTimer) { clearTimeout(pendingTimer); pendingTimer = null; }
     if (pullTimer) { clearInterval(pullTimer); pullTimer = null; }
+    if (originSyncTimer) { clearInterval(originSyncTimer); originSyncTimer = null; }
     if (watcher) { await watcher.close(); watcher = null; }
   }
 

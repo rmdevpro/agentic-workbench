@@ -6074,7 +6074,7 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 - Steps 1–3: `openSettings` is a function, `renderSidebar` is a function, `sessionSortBy` is a string (not undefined). Proves key window.* exports from app.js are live.
 - Step 5: `.context-menu-item[data-cli="claude"]` clicked immediately — `+` button opens CLI picker synchronously.
 - Step 7: `new-session-name` input found → modal opened via createSession from app.js.
-- Step 11 snapshot: a new tab appears in `#tab-bar` — createTab (createTerminalTab wrapper) executed.
+- Step 11 snapshot: a new `.tab` element appears in `#tab-bar` — createTab (createTerminalTab wrapper) executed. Check `document.querySelectorAll('#tab-bar .tab').length > 0`.
 
 ---
 
@@ -6086,10 +6086,10 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 
 **Steps:**
 1. `browser_evaluate`: `typeof window.switchTab`
-2. `browser_evaluate`: `document.querySelectorAll('#tab-bar .tab-btn').length` — record count.
-3. If count ≥ 2: `browser_click` the second `.tab-btn`. If count is 1: create a second session (same flow as P2-F0-03 steps 4–12) then click the second tab.
+2. `browser_evaluate`: `document.querySelectorAll('#tab-bar .tab').length` — record count. (Tab elements have class `.tab`, not `.tab-btn`.)
+3. If count ≥ 2: `browser_click` the second `#tab-bar .tab` element. If count is 1: create a second session (same flow as P2-F0-03 steps 4–11) then click the second tab.
 4. `browser_wait` 500.
-5. `browser_evaluate`: `document.querySelector('#tab-bar .tab-btn.active')?.dataset?.tabId`
+5. `browser_evaluate`: `document.querySelector('#tab-bar .tab.active')?.dataset?.tabId`
 6. `browser_snapshot`.
 
 **Verify:**

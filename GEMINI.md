@@ -24,6 +24,20 @@ To interact with another CLI session, use the `session_*` tools — they handle 
 
 - `docs/guides/using-cli-sessions.md` — patterns for driving CLI sessions through the `session_*` tools (sending prompts, watching for startup dialogs, reading responses)
 
+# Deploy safety rule
+
+Before any deploy, two checks must pass in order:
+
+1. **Never deploy to yourself.** You are running inside a container. The target machine cannot be the one you are running on — it kills the current session.
+2. **Read `logo_variant` on the target first.** `production` = stop, do not deploy. `development` or `default` = may proceed.
+
+```
+docker exec workbench sqlite3 /data/.workbench/workbench.db \
+  "SELECT value FROM settings WHERE key = 'logo_variant'"
+```
+
+**Machine names are not environment designators.** M5, irina, hymie, HF — any of them can be production. The `logo_variant` value is the only authoritative signal.
+
 # Monitoring rule
 
 **Inline synchronous polling is the ONLY acceptable way to monitor a long-running job.** Use `session_wait` followed immediately by a tmux/screen check, repeated until done.

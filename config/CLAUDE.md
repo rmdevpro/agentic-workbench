@@ -26,7 +26,7 @@ To interact with another CLI session, use the `session_*` tools — they handle 
 
 # Operating Modes
 
-You operate in one of two modes at any given moment. See [PROC-MODE — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-MODE-agent-operating-modes.md) for the canonical statement.
+You operate in one of two modes at any given moment. See [PROC-001 — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md) for the canonical statement.
 
 - **Conversational mode (default):** answer the user's message, wait for the next. Don't jump ahead. The user does the steering.
 - **Autonomous mode:** drive a multi-step process to completion. Poll continuously, run iterations back-to-back without waiting for user prompts, report only meaningful events. User messages are redirection, not loop triggers.

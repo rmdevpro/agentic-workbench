@@ -40,7 +40,7 @@ docker exec workbench sqlite3 /data/.workbench/workbench.db \
 
 # Operating Modes
 
-You operate in one of two modes at any given moment. See [PROC-MODE — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-MODE-agent-operating-modes.md) for the canonical statement.
+You operate in one of two modes at any given moment. See [PROC-001 — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md) for the canonical statement.
 
 - **Conversational mode (default):** answer the user's message, wait for the next. Don't jump ahead. The user does the steering.
 - **Autonomous mode:** drive a multi-step process to completion. Poll continuously, run iterations back-to-back without waiting for user prompts, report only meaningful events. User messages are redirection, not loop triggers.
@@ -73,10 +73,10 @@ These documents define the standards and context this project must be reviewed a
 - `/data/workspace/repos/Admin/docs/process/SDLC-2-release-planning.md` — populate the open `rN` Project with milestones + issues + release-specific scope matrix. Read at planning time.
 - `/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md` — 13-stage pipeline for one milestone (covers normal multi-issue milestones AND single-issue urgent patches via the patch path). Read whenever you're executing a milestone.
 - `/data/workspace/repos/Admin/docs/process/SDLC-4-release-close.md` — full-regression release gate, prod deploy, close `rN` Project, open `rN+1`. Read at release close.
-- `/data/workspace/repos/Admin/docs/process/PROC-RUN-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Used by SDLC-3 (UI test stages) and SDLC-4 (release-gate UI run).
-- `/data/workspace/repos/Admin/docs/process/PROC-TEST-test-execution-policy.md` — canonical policy for which tests run and when.
-- `/data/workspace/repos/Admin/docs/process/PROC-MATRIX-test-scope-matrix.md` — global test scope matrix (consumed during SDLC-2 to produce the release-specific matrix).
-- `/data/workspace/repos/Admin/docs/process/PROC-MODE-agent-operating-modes.md` — conversational vs autonomous mode rules. Read at session start.
+- `/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md` — conversational vs autonomous mode rules. Read at session start.
+- `/data/workspace/repos/Admin/docs/process/PROC-002-test-execution-policy.md` — canonical policy for which tests run and when.
+- `/data/workspace/repos/Admin/docs/process/PROC-003-test-scope-matrix.md` — global test scope matrix (consumed during SDLC-2 to produce the release-specific matrix).
+- `/data/workspace/repos/Admin/docs/process/PROC-004-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Used by SDLC-3 (UI test stages) and SDLC-4 (release-gate UI run).
 
 ## Deployment
 

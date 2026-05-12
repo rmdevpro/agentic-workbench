@@ -390,3 +390,141 @@ test('#463-TS-04: sessions sorted newest-first in response', async () => {
       `second session must be the older one; got ${project.sessions[1].id}`);
   });
 });
+
+// ── #467 — Codex rollout timestamp behavioral tests ───────────────────────────
+//
+// CODEX_ROLLOUT_UUID_RE = /([0-9a-f]{8}-[0-9a-f]{4}-…)$/i
+// _getCodexTs: strips .jsonl → matches UUID at end of stem → key in Map.
+// The session must carry cli_session_id equal to the UUID extracted from the filename.
+
+const CODEX_UUID = '550e8400-e29b-41d4-a716-446655440000';
+// Rollout filename: <prefix>-<uuid>.jsonl — UUID must be at the stem's end
+const CODEX_FILE = `/fake/rollout-1234-${CODEX_UUID}.jsonl`;
+
+test('#467-CDX-01: Codex session uses rollout discovery timestamp when it is newer than db.updated_at', async () => {
+  const DB_UPDATED = '2026-05-01T00:00:00.000Z';  // stale — frozen at session creation
+  const ROLLOUT_TS = '2026-05-10T18:00:00.000Z';  // newer: written during conversation
+
+  const { app, rawDb, WORKSPACE } = makeStateTestApp({
+    discoverCodexSessions: () => [{ filePath: CODEX_FILE, timestamp: ROLLOUT_TS }],
+  });
+
+  const projPath = path.join(WORKSPACE, 'codex-proj');
+  fs.mkdirSync(projPath, { recursive: true });
+  plantProject(rawDb, {
+    name: 'codex-proj', path: projPath,
+    sessions: [{
+      id: 'sess-cdx-1', cli_type: 'codex',
+      cli_session_id: CODEX_UUID,
+      updated_at: DB_UPDATED,
+    }],
+  });
+
+  await withServer(app, async ({ port }) => {
+    const body = await (await req(port, 'GET', '/api/state')).json();
+    const project = body.projects.find(p => p.name === 'codex-proj');
+    assert.ok(project, 'codex-proj must appear in /api/state response');
+    const session = project?.sessions?.find(s => s.id === 'sess-cdx-1');
+    assert.ok(session, 'sess-cdx-1 must appear in project sessions');
+    assert.equal(
+      session.timestamp, ROLLOUT_TS,
+      `Codex session must use rollout discovery timestamp (${ROLLOUT_TS}) when newer than db.updated_at (${DB_UPDATED}). Got: ${session.timestamp}`,
+    );
+  });
+});
+
+test('#467-CDX-02: Codex session keeps db.updated_at when rollout discovery timestamp is older', async () => {
+  const DB_UPDATED = '2026-05-10T18:00:00.000Z';  // newer
+  const ROLLOUT_TS = '2026-05-01T00:00:00.000Z';  // older — stale rollout file
+
+  const { app, rawDb, WORKSPACE } = makeStateTestApp({
+    discoverCodexSessions: () => [{ filePath: CODEX_FILE, timestamp: ROLLOUT_TS }],
+  });
+
+  const projPath = path.join(WORKSPACE, 'codex-stale');
+  fs.mkdirSync(projPath, { recursive: true });
+  plantProject(rawDb, {
+    name: 'codex-stale', path: projPath,
+    sessions: [{
+      id: 'sess-cdx-stale', cli_type: 'codex',
+      cli_session_id: CODEX_UUID,
+      updated_at: DB_UPDATED,
+    }],
+  });
+
+  await withServer(app, async ({ port }) => {
+    const body = await (await req(port, 'GET', '/api/state')).json();
+    const project = body.projects.find(p => p.name === 'codex-stale');
+    const session = project?.sessions?.find(s => s.id === 'sess-cdx-stale');
+    assert.ok(session, 'sess-cdx-stale must appear in response');
+    assert.equal(
+      session.timestamp, DB_UPDATED,
+      `When rollout timestamp (${ROLLOUT_TS}) is older than db.updated_at (${DB_UPDATED}), db.updated_at must win. Got: ${session.timestamp}`,
+    );
+  });
+});
+
+test('#467-CDX-03: mixed Claude + Gemini + Codex in one project — all three timestamp sources + final ordering', async () => {
+  // Three distinct timestamps in descending order: Codex newest, Claude middle, Gemini oldest.
+  const TS_CODEX  = '2026-05-12T10:00:00.000Z';  // Codex rollout file (newest)
+  const TS_CLAUDE = '2026-05-12T06:00:00.000Z';  // Claude session_meta
+  const TS_GEMINI = '2026-05-12T02:00:00.000Z';  // Gemini disk file (oldest)
+  const TS_DB_STALE = '2026-05-01T00:00:00.000Z'; // all three have stale db.updated_at
+
+  const GEM_UUID = 'gemini-sess-xyz';
+  const CDX_UUID2 = '660f9511-f3ac-52e5-b827-557766551111';
+  const CDX_FILE2 = `/fake/rollout-9999-${CDX_UUID2}.jsonl`;
+
+  const { app, rawDb, WORKSPACE } = makeStateTestApp({
+    discoverGeminiSessions: () => [{ sessionId: GEM_UUID, filePath: `/fake/${GEM_UUID}.jsonl`, timestamp: TS_GEMINI }],
+    discoverCodexSessions: () => [{ filePath: CDX_FILE2, timestamp: TS_CODEX }],
+  });
+
+  const projPath = path.join(WORKSPACE, 'mixed-proj');
+  fs.mkdirSync(projPath, { recursive: true });
+  plantProject(rawDb, {
+    name: 'mixed-proj', path: projPath,
+    sessions: [
+      {
+        id: 'sess-claude-m', cli_type: 'claude',
+        updated_at: TS_DB_STALE,
+        meta: { timestamp: TS_CLAUDE },
+      },
+      {
+        id: 'sess-gemini-m', cli_type: 'gemini',
+        cli_session_id: GEM_UUID,
+        updated_at: TS_DB_STALE,
+      },
+      {
+        id: 'sess-codex-m', cli_type: 'codex',
+        cli_session_id: CDX_UUID2,
+        updated_at: TS_DB_STALE,
+      },
+    ],
+  });
+
+  await withServer(app, async ({ port }) => {
+    const body = await (await req(port, 'GET', '/api/state')).json();
+    const project = body.projects.find(p => p.name === 'mixed-proj');
+    assert.ok(project, 'mixed-proj must appear in response');
+
+    const byId = Object.fromEntries(project.sessions.map(s => [s.id, s]));
+
+    // Each session must use the correct timestamp source
+    assert.equal(byId['sess-claude-m']?.timestamp, TS_CLAUDE,
+      `Claude must use session_meta.timestamp. Got: ${byId['sess-claude-m']?.timestamp}`);
+    assert.equal(byId['sess-gemini-m']?.timestamp, TS_GEMINI,
+      `Gemini must use discovery timestamp. Got: ${byId['sess-gemini-m']?.timestamp}`);
+    assert.equal(byId['sess-codex-m']?.timestamp, TS_CODEX,
+      `Codex must use rollout discovery timestamp. Got: ${byId['sess-codex-m']?.timestamp}`);
+
+    // Final ordering: Codex (newest) → Claude → Gemini (oldest)
+    const ids = project.sessions.map(s => s.id);
+    assert.equal(ids[0], 'sess-codex-m',
+      `First (newest) must be Codex; got ${ids[0]}`);
+    assert.equal(ids[1], 'sess-claude-m',
+      `Second must be Claude; got ${ids[1]}`);
+    assert.equal(ids[2], 'sess-gemini-m',
+      `Third (oldest) must be Gemini; got ${ids[2]}`);
+  });
+});

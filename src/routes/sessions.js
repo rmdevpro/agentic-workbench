@@ -3,6 +3,7 @@
 const {
   readdir,
   readFile,
+  writeFile,
   stat,
   appendFile,
   access,

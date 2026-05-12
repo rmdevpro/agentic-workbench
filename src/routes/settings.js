@@ -16,6 +16,7 @@ function register(app, {
   logger,
   getBrowserCount,
   CLAUDE_HOME,
+  WORKSPACE,
   keepalive,
   registerGeminiMcp,
   registerCodexProvider,
@@ -276,7 +277,7 @@ function register(app, {
   app.get('/api/projects/:name/claude-md', async (req, res) => {
     try {
       const dbProj = db.getProject(req.params.name);
-      const projectPath = dbProj ? dbProj.path : join(safe.WORKSPACE, req.params.name);
+      const projectPath = dbProj ? dbProj.path : join(WORKSPACE || safe.WORKSPACE || '', req.params.name);
       const file = join(projectPath, 'CLAUDE.md');
       let content = '';
       try {
@@ -309,7 +310,7 @@ function register(app, {
   app.put('/api/projects/:name/claude-md', async (req, res) => {
     try {
       const dbProj = db.getProject(req.params.name);
-      const projectPath = dbProj ? dbProj.path : join(safe.WORKSPACE, req.params.name);
+      const projectPath = dbProj ? dbProj.path : join(WORKSPACE || safe.WORKSPACE || '', req.params.name);
       const file = join(projectPath, 'CLAUDE.md');
       await writeFile(file, req.body.content || '');
       res.json({ saved: true });

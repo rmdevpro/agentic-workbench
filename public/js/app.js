@@ -1856,6 +1856,7 @@ window.addProject = addProject;
 window.applyTheme = applyTheme;
 window.applyFontSize = applyFontSize;
 window.applyFontFamily = applyFontFamily;
+window.timeAgo = timeAgo;
 window.loadState = loadState;
 window.renderSidebar = renderSidebar;
 window.refreshFileTree = refreshFileTree;

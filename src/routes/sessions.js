@@ -240,19 +240,55 @@ function register(app, {
     }
 
     // #371 [E1]: minimal sidebar payload — id, name, timestamp, cli_type,
-    // archived, state. NO messageCount / model / tmux / active in this list:
-    // those required N JSONL parses per /api/state poll (5-7s p95 on M5).
-    // Heavy fields move to GET /api/sessions/:sessionId/info, called only for
-    // the active session + visible sessions (project expanded). Sort by
-    // db updated_at (the timestamp we have without parsing JSONLs).
-    const sessions = dbSessions.map(s => ({
-      id: s.id,
-      name: s.name,
-      timestamp: s.updated_at || s.created_at,
-      cli_type: s.cli_type || 'claude',
-      archived: s.state === 'archived',
-      state: s.state,
-    }));
+    // archived, state. NO messageCount / model / tmux / active in this list.
+    // #408 [Q5]: use real activity timestamps, not db.updated_at which is
+    // bumped to NOW on every /api/state poll (upsertSession side-effect).
+    let _geminiBySessionId = null;
+    let _codexByFileStem = null;
+    const _getGeminiTs = (cliSessionId) => {
+      if (!_geminiBySessionId) {
+        _geminiBySessionId = new Map();
+        try {
+          for (const d of sessionUtils.discoverGeminiSessions()) {
+            if (d.sessionId) _geminiBySessionId.set(d.sessionId, d.timestamp);
+          }
+        } catch { /* discovery unavailable */ }
+      }
+      return _geminiBySessionId.get(cliSessionId) || null;
+    };
+    const _getCodexTs = (cliSessionId) => {
+      if (!_codexByFileStem) {
+        _codexByFileStem = new Map();
+        try {
+          for (const d of sessionUtils.discoverCodexSessions()) {
+            const stem = basename(d.filePath, '.jsonl');
+            const m = stem.match(CODEX_ROLLOUT_UUID_RE);
+            const id = m ? m[1] : stem;
+            if (id) _codexByFileStem.set(id, d.timestamp);
+          }
+        } catch { /* discovery unavailable */ }
+      }
+      return _codexByFileStem.get(cliSessionId) || null;
+    };
+
+    const sessions = dbSessions.map(s => {
+      const cliType = s.cli_type || 'claude';
+      let ts = s.updated_at || s.created_at;
+      if (cliType === 'claude') {
+        // session_meta.timestamp holds the actual last-message timestamp from
+        // the JSONL parse; use it when available so sidebar shows real activity.
+        try {
+          const meta = db.getSessionMeta(s.id);
+          if (meta?.timestamp) ts = meta.timestamp;
+        } catch { /* session_meta may not exist yet for new sessions */ }
+      } else if (s.cli_session_id) {
+        const fileTs = cliType === 'gemini'
+          ? _getGeminiTs(s.cli_session_id)
+          : _getCodexTs(s.cli_session_id);
+        if (fileTs && new Date(fileTs) > new Date(ts)) ts = fileTs;
+      }
+      return { id: s.id, name: s.name, timestamp: ts, cli_type: cliType, archived: s.state === 'archived', state: s.state };
+    });
     sessions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     return sessions;
   }

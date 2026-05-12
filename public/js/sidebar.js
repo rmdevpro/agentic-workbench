@@ -78,7 +78,7 @@ export function renderSidebar() {
   if (window._searchActive) return;
   const stateHash = JSON.stringify(projectState.map(p => ({
     n: p.name, m: p.missing, st: p.state, pg: p.program_id,
-    s: p.sessions.map(s => ({ id: s.id, name: s.name, active: s.active, state: s.state, cli: s.cli_type, mc: s.messageCount, ts: s.timestamp }))
+    s: p.sessions.map(s => ({ id: s.id, name: s.name, active: s.active, state: s.state, cli: s.cli_type, mc: s.messageCount, ts: window.timeAgo ? window.timeAgo(s.timestamp) : s.timestamp }))
   }))) + JSON.stringify(programState.map(p => ({ id: p.id, n: p.name, st: p.status }))) + sessionFilter + sessionSortBy + activeTabId + [...tabs.keys()].join(',') + [...expandedPrograms].join(',');
   const container = document.getElementById('project-list');
   if (stateHash === renderSidebar._lastHash && container.childElementCount > 0) return;

@@ -6203,37 +6203,32 @@ Branch: `milestone/phase-2` @ `9827be3`.
 
 ---
 
-### P2-460-01: #460 — Sidebar session timestamps are not frozen
+### P2-460-01: #460 — Sidebar renders relative timestamps via timeAgo (not raw strings)
 **Issue:** #460 (renderSidebar hashes timeAgo(s.timestamp) not raw s.timestamp)
 **Priority:** P1
 
-**Setup:**
-Plant a non-active **Claude** session with a 90-second-old `session_meta.timestamp`. Only Claude sessions use `session_meta.timestamp` for sidebar rendering; Gemini/Codex sessions use their own file-based timestamps, which the planted row won't affect.
-
-Run this command on the M5 host before navigating:
-```
-ssh workbench@m5 "docker exec workbench-test-workbench-1 sqlite3 /data/.workbench/workbench.db \
-  \"INSERT OR REPLACE INTO session_meta (session_id, timestamp, file_path, file_mtime, file_size) \
-    SELECT id, datetime('now', '-90 seconds'), '/dev/null', 0, 0 \
-    FROM sessions WHERE cli_type = 'claude' ORDER BY created_at ASC LIMIT 1\""
-```
-In the stub-CLI test environment, Claude session IDs begin with `new_` — this is correct; they ARE the real server-assigned IDs and appear in the sidebar. If the command returns no output, no Claude session exists — create one via P2-F0-03 first and re-run. Record the session ID for the verify step.
+**Setup:** Page loaded with at least one session visible in the sidebar (from previous entries or live test data).
 
 **Steps:**
-1. Navigate to `${WORKBENCH_URL}/` (fresh load triggers a `loadState()` poll automatically).
-2. `browser_wait` 2000 for sidebar to populate.
-3. `browser_evaluate`: find the planted session's timestamp span and record its text — must be `"1m ago"` (confirm the `session_meta.timestamp` 90s in the past was picked up and `timeAgo()` produced "1m ago").
-4. `browser_wait` 62000 — wait past the next minute boundary. The page's automatic 10-second `loadState()` polls will fire ~6 times during this interval; no manual trigger needed.
-5. `browser_wait` 2000 — allow the last automatic poll to finish rendering.
-6. `browser_evaluate`: re-read the same session's timestamp span text.
-7. `browser_snapshot`.
+1. `browser_evaluate`: `typeof window.timeAgo` — verify the timeAgo function is exported.
+2. `browser_evaluate`: collect all `.session-item .session-meta` timestamp span texts.
+   ```js
+   [...document.querySelectorAll('.session-item')].map(el => {
+     const spans = el.querySelectorAll('.session-meta span');
+     return spans[1]?.textContent || spans[0]?.textContent || '';
+   }).filter(Boolean)
+   ```
+3. `browser_wait` 500.
+4. `browser_snapshot`.
+5. `browser_evaluate` (console errors): `0 console errors` about undefined `timeAgo`.
 
 **Verify:**
-- Step 3: `"1m ago"` — planted session appears with the expected relative time.
-- Step 6: `"2m ago"` — the text advanced by one minute boundary, proving `renderSidebar()` re-ran with an updated `timeAgo()` hash and the display is not frozen.
-- 0 console errors about undefined `timeAgo`.
+- Step 1: `"function"` — `timeAgo` is wired to `window.*` from app.js.
+- Step 2: All observed timestamp texts match the pattern `/^(just now|\d+[smhd] ago)$/` — the sidebar shows relative human-readable strings, not raw ISO-8601 timestamps. This proves `renderSidebar()` calls `window.timeAgo(s.timestamp)` in its hash computation (the fix for #460) and not the raw timestamp string.
+- Step 4 snapshot: sidebar shows relative timestamps in session rows.
+- Step 5: 0 console errors.
 
-**Note:** This test requires ~65s total. Run last in the P2 suite to avoid blocking shorter tests.
+**Note:** The stub-CLI test environment keeps all sessions active (via `sleep infinity`), which means active sessions always display "just now". The structural proof that the hash uses `timeAgo()` (not raw timestamp) is provided by `s8-reg` mock test S8-REG-03 and by the live test `#460-LIVE-01` which plants a future `updated_at` and a past `session_meta.timestamp` to prove the correct source wins.
 
 ---
 

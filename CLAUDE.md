@@ -2,6 +2,17 @@
 
 This repository is the source code for the Agentic Workbench application — the system you are running inside. You are using the workbench to develop the workbench. The application is a Node.js server (`server.js`) decomposed into focused modules using factory-based dependency injection. The full architecture, module responsibilities, and configuration reference are in `README.md`.
 
+# Monitoring rule
+
+**Inline synchronous polling is the ONLY acceptable way to monitor a long-running job.** Use `session_wait` followed immediately by a tmux/screen check, repeated until done.
+
+**Forbidden — never use these for progress monitoring:**
+- The `Monitor` tool
+- `run_in_background: true` on any Bash command used for polling
+- Any background process or event-driven approach for progress checks
+
+This applies to monitoring Lead sessions, deploys, test runs, sub-agents, and any other long-running work. See PROC-003 §"Foreground polling only" for the canonical statement.
+
 # Testing rule (UI features)
 
 **Every UI-facing test runs in a headless browser against the deployed UI. Always.** Playwright (or equivalent) on the deployed URL. Click the real buttons, drag the real elements, read the rendered DOM.

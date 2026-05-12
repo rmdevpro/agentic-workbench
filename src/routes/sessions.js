@@ -44,26 +44,6 @@ function register(app, {
   trustCodexProjectDirs,
   sleep,
 }) {
-  const fileLocks = new Map();
-  async function _lockedAppend(path, data) {
-    const current = fileLocks.get(path) || Promise.resolve();
-    const next = current
-      .then(() => appendFile(path, data))
-      .catch((err) => {
-        logger.error('Append write failed', {
-          module: 'routes',
-          op: 'lockedAppend',
-          err: err.message,
-          path,
-        });
-      })
-      .finally(() => {
-        if (fileLocks.get(path) === next) fileLocks.delete(path);
-      });
-    fileLocks.set(path, next);
-    return next;
-  }
-
   async function checkAuthStatus() {
     const credsFile = join(CLAUDE_HOME, '.credentials.json');
     try {

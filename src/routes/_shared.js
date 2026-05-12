@@ -66,6 +66,48 @@ function _parseSince(input) {
   return new Date(Date.now() - 3600 * 1000).toISOString();
 }
 
+// Factory: returns a trustDir(dirPath) function with CLAUDE_HOME + logger
+// bound. Shared by sessions.js and projects.js (previously duplicated).
+function createTrustDir({ CLAUDE_HOME, logger }) {
+  let _lock = Promise.resolve();
+  return async function trustDir(dirPath) {
+    const prev = _lock;
+    let unlock;
+    _lock = new Promise((r) => { unlock = r; });
+    await prev;
+    try {
+      const configFile = join(CLAUDE_HOME, '.claude.json');
+      let cfg = {};
+      try {
+        cfg = JSON.parse(await readFile(configFile, 'utf-8'));
+      } catch (err) {
+        if (err.code === 'ENOENT') {
+          /* first run */
+        } else if (err instanceof SyntaxError) {
+          logger.error('.claude.json is corrupt — skipping trustDir', { module: 'routes' });
+          return;
+        } else {
+          logger.warn('Failed to parse .claude.json', {
+            module: 'routes',
+            op: 'trustDir',
+            err: err.message,
+          });
+        }
+      }
+      if (!cfg.projects) cfg.projects = {};
+      if (cfg.projects[dirPath] && cfg.projects[dirPath].hasTrustDialogAccepted) return;
+      cfg.projects[dirPath] = {
+        hasTrustDialogAccepted: true,
+        enabledMcpjsonServers: [],
+        disabledMcpjsonServers: [],
+      };
+      await writeFile(configFile, JSON.stringify(cfg, null, 2));
+    } finally {
+      unlock();
+    }
+  };
+}
+
 module.exports = {
   // fs/promises named imports
   readdir,
@@ -116,4 +158,5 @@ module.exports = {
   // helpers
   validateSessionId,
   _parseSince,
+  createTrustDir,
 };

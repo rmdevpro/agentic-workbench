@@ -9,6 +9,7 @@ import {
   _settingsCache, setSettingsCache, db_getSetting,
   REFRESH_MS, TERM_THEME, setFilter,
   _lastClickedProjectPath, sessionSortBy, setSessionSortBy,
+  _appendToOrder,
 } from './state.js';
 
 import {
@@ -123,7 +124,22 @@ function createTab(tabId, tmuxSession, name, project, cliType) {
     const emptyState = document.getElementById('empty-state');
     if (emptyState) emptyState.remove();
   }
-  return createTerminalTab(tabId, tmuxSession, name, project, cliType, targetPanel, targetAreaId);
+  const { term, fitAddon, paneEl } = createTerminalTab(tabId, tmuxSession, name, project, cliType, targetPanel, targetAreaId);
+  const tab = {
+    id: tabId, tmux: tmuxSession, name, project, cli_type: cliType || 'claude',
+    term, fitAddon, ws: null, status: 'disconnected',
+    paneEl, reconnectTimer: null, reconnectDelay: 1000, heartbeat: null,
+    dataDisposable: null, resizeDisposable: null,
+    panel: targetPanel,
+  };
+  tabs.set(tabId, tab);
+  _appendToOrder(targetPanel, tabId);
+  switchTab(tabId);
+  connectTab(tabId);
+  renderTabs();
+  renderSidebar();
+  setTimeout(pollTokenUsage, 3000);
+  return tab;
 }
 
 // ── _getActiveProjectPath (used by files.js and tasks.js via window.*) ──────

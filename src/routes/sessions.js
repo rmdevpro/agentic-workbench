@@ -225,11 +225,13 @@ function register(app, {
     return null;
   }
 
-  async function buildSessionList(dbSessions, _sessDir) {
-    // #156: disambiguation pre-pass — per-request Sets prevent cross-request
-    // contamination under concurrent /api/state polls (#453).
-    const claimedGemini = new Set();
-    const claimedCodex = new Set();
+  // claimedGemini / claimedCodex are passed in from the /api/state handler so
+  // they span the full project loop — Gemini/Codex disk sessions are global,
+  // not per-project, so the Sets must be shared across all buildSessionList
+  // calls within a single request (#453).
+  async function buildSessionList(dbSessions, _sessDir, claimedGemini, claimedCodex) {
+    // #156: disambiguation pre-pass — write cli_session_id into DB for any
+    // unbound non-Claude sessions so subsequent /info fetches resolve by ID.
     for (const s of dbSessions) {
       const cliType = s.cli_type || 'claude';
       if (cliType !== 'claude' && !s.cli_session_id) {
@@ -261,6 +263,10 @@ function register(app, {
     try {
       const projects = [];
       const dbProjects = db.getProjects();
+      // Allocate once per request so the claim sets span all projects.
+      // Gemini/Codex disk sessions are global, not scoped per project.
+      const claimedGemini = new Set();
+      const claimedCodex = new Set();
 
       for (const dbProject of dbProjects) {
         const projectName = dbProject.name;
@@ -321,7 +327,7 @@ function register(app, {
         }
 
         const dbSessions = db.getSessionsForProject(project.id);
-        const sessions = await buildSessionList(dbSessions, sessDir);
+        const sessions = await buildSessionList(dbSessions, sessDir, claimedGemini, claimedCodex);
 
         for (const s of sessions) {
           s.project_missing = dirMissing;

@@ -431,8 +431,10 @@ F0 is a structural HTML/JavaScript reorganisation: `public/index.html` shrinks f
 - Full end-to-end functional verification happens in **Stage 8 (UI runbook)** via
   Playwright headless browser tests against the deployed `workbench-test` container.
 
-**Traceability:** F0 → UI runbook entry TBD (Stage 8). Mock: N/A — documented here
-per STD-003 §8 ("N/A must be justified").
+**Traceability:** F0 → UI runbook entries P2-F0-01 through P2-F0-07 (Stage 8, all PASS,
+2026-05-12, container 16b33e1). Mock: S8-REG-01/02/03 in `p2-stage8-regressions.test.js`
+cover three F0 extraction regressions found during Stage 8 and fixed in commits
+08ee6db/e60e59b/16b33e1.
 
 ---
 

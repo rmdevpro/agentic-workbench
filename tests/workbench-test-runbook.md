@@ -6215,9 +6215,9 @@ Run this command on the M5 host before navigating:
 ssh workbench@m5 "docker exec workbench-test-workbench-1 sqlite3 /data/.workbench/workbench.db \
   \"INSERT OR REPLACE INTO session_meta (session_id, timestamp, file_path, file_mtime, file_size) \
     SELECT id, datetime('now', '-90 seconds'), '/dev/null', 0, 0 \
-    FROM sessions WHERE id NOT LIKE 'new_%' AND cli_type = 'claude' ORDER BY created_at ASC LIMIT 1\""
+    FROM sessions WHERE cli_type = 'claude' ORDER BY created_at ASC LIMIT 1\""
 ```
-If the command returns no output, no Claude session exists — create one via the UI first (P2-F0-03 flow) and re-run. Record the session ID for the verify step.
+In the stub-CLI test environment, Claude session IDs begin with `new_` — this is correct; they ARE the real server-assigned IDs and appear in the sidebar. If the command returns no output, no Claude session exists — create one via P2-F0-03 first and re-run. Record the session ID for the verify step.
 
 **Steps:**
 1. Navigate to `${WORKBENCH_URL}/` (fresh load triggers a `loadState()` poll automatically).

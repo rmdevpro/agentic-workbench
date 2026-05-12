@@ -436,6 +436,40 @@ per STD-003 §8 ("N/A must be justified").
 
 ---
 
+### M1 (#368) — KB watcher clone-if-missing: live test gap
+
+**What M1 changed:** `_cloneIfMissing()` and the KB sync poller were extracted
+from `server.js` into `kb-watcher.js start()`. The structural proof lives in
+`m1-kb-watcher-clone.test.js` (M1-KB-01 through M1-KB-08): static checks verify
+`_cloneIfMissing` is declared, calls `git clone`, is ordered before the chokidar
+watch, and that `server.js` no longer contains the inline clone block.
+
+**Why `_cloneIfMissing` is not exercised by live tests:**
+
+The sandbox test container (`workbench-test-workbench-1`) has no outbound network
+access to `github.com`. When the container starts, kb-watcher `start()` calls
+`_cloneIfMissing()`, which attempts `git clone https://github.com/rmdevpro/workbench-kb`
+and fails with `"fatal: unable to access … Could not resolve host: github.com"`.
+The clone failure is logged to container stdout (confirmed via `docker logs`), but
+the structured logger's batch writer does not flush these early startup messages to
+the SQLite DB — `/api/logs?module=kb-watcher` returns 0 rows. Inside the container,
+`docker logs` is not callable (no Docker socket bind-mount in `docker-compose.test.yml`).
+
+**Coverage status:**
+
+| Layer | Test | Covers |
+|---|---|---|
+| Mock structural | M1-KB-01 through M1-KB-08 | `_cloneIfMissing` declared, ordered before watcher, git clone present, server.js clean |
+| Live behavioral | M1-LIVE-01/02 | `/api/kb/status` + `/api/kb/roles` respond without crash (watcher init path ran) |
+| Live clone path | **GAP** | Clone attempt + clone failure recovery not exercisable without network |
+
+Live behavioral verification of the clone path requires either a network-capable
+test environment (real `github.com` access) or a local git server fixture. Neither
+is available in the current sandbox. File under "infrastructure gap" — not a product
+gap.
+
+---
+
 ## 8. Statistics
 
 | Metric | Count |

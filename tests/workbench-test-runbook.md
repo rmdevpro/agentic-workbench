@@ -6004,8 +6004,9 @@ Pre-fix the option label/value, indicator class, and any legacy DB rows would st
 ---
 ## Phase 2 Milestone — UI Runbook Entries
 
-Target: `http://192.168.1.120:7867` (workbench-test sandbox container `workbench-test-workbench-1`).
-Branch: `milestone/phase-2` @ `ad4ee69`.
+**`WORKBENCH_URL`** for this phase: `http://192.168.1.120:7867` (workbench-test sandbox container `workbench-test-workbench-1`). All entries below use `${WORKBENCH_URL}` as a placeholder — substitute the value above when navigating.
+
+Branch: `milestone/phase-2` @ `9827be3`.
 
 ---
 
@@ -6013,10 +6014,10 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 **Issue:** #364 (F0 frontend monolith decomposition)
 **Priority:** P0 — if this fails, all downstream P2 UI entries are invalid.
 
-**Setup:** Container running at `http://192.168.1.120:7867`.
+**Setup:** Container running at `${WORKBENCH_URL}`.
 
 **Steps:**
-1. `browser_navigate` to `http://192.168.1.120:7867/`.
+1. `browser_navigate` to `${WORKBENCH_URL}/`.
 2. `browser_wait` 2000 for page to settle.
 3. `browser_console_messages` — capture all console output from page load.
 4. `browser_evaluate`: `document.title`
@@ -6106,18 +6107,18 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 **Setup:** Page loaded.
 
 **Steps:**
-1. `browser_evaluate`: `window.openSettings()` — directly invoke.
+1. `browser_click` on the `⚙ Settings` button in the sidebar footer: `button[onclick="openSettings()"]` (selector within `#sidebar-footer`).
 2. `browser_wait` 500.
-3. `browser_evaluate`: `document.getElementById('settings-modal').classList.contains('visible')`
+3. `browser_evaluate`: `document.getElementById('settings-modal').classList.contains('visible')`.
 4. `browser_snapshot`.
-5. `browser_evaluate`: `window.closeSettings()`
+5. `browser_click` on `.settings-close` (the ✕ close button inside the settings modal).
 6. `browser_wait` 200.
-7. `browser_evaluate`: `document.getElementById('settings-modal').classList.contains('visible')`
+7. `browser_evaluate`: `document.getElementById('settings-modal').classList.contains('visible')`.
 
 **Verify:**
-- Step 3: `true` — modal visible after openSettings().
-- Step 4 snapshot: `#settings-modal` visible with tabs (General, Git, Claude, Vector, Prompts).
-- Step 7: `false` — modal hidden after closeSettings().
+- Step 3: `true` — modal became visible when user clicked the Settings button.
+- Step 4 snapshot: `#settings-modal` visible with tabs (General, Claude Code, Git, Vector Search, System Prompts).
+- Step 7: `false` — modal hidden after clicking the close button.
 
 ---
 
@@ -6128,15 +6129,15 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 **Setup:** Right panel available, files exist in `/data/workspace`.
 
 **Steps:**
-1. `browser_evaluate`: `window.togglePanel()` — open the right panel.
-2. `browser_wait` 500.
-3. `browser_evaluate`: `window.switchPanel('files')` — switch to files tab.
-4. `browser_wait` 1500 — wait for loadFiles to populate the tree.
-5. `browser_evaluate`: `document.querySelectorAll('#panel-files .ft-row').length`
+1. `browser_click` on `#panel-toggle` (the ☰ hamburger button that opens the right panel).
+2. `browser_wait` 300.
+3. `browser_click` on `button.panel-tab[data-panel="files"]` (the "Files" tab in the panel header).
+4. `browser_wait` 1500 — wait for `loadFiles` to populate the tree.
+5. `browser_evaluate`: `document.querySelectorAll('#panel-files .ft-row').length`.
 6. `browser_snapshot`.
 
 **Verify:**
-- Step 5: file tree rows count > 0 — `createFileTree` from file-tree.js rendered the tree, `loadFiles` from files.js fetched the directory listing.
+- Step 5: count > 0 — `createFileTree` from file-tree.js rendered the tree; `loadFiles` from files.js fetched the directory listing.
 - Snapshot shows `.ft-row` elements in `#panel-files`.
 
 ---
@@ -6145,21 +6146,21 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 **Issue:** #364 (loadTaskTree, setTaskFilter, initTaskEventListeners from tasks.js)
 **Priority:** P1
 
-**Setup:** Right panel available. At least one project has tasks (from live tests: `wb-seed` or `ts460_live_proj`).
+**Setup:** Right panel open from P2-F0-06 (or click `#panel-toggle` first if starting fresh). At least one project has tasks (from live tests: `wb-seed` or `ts460_live_proj`).
 
 **Steps:**
-1. `browser_evaluate`: `window.switchPanel('tasks')` (or panel already on tasks).
-2. `browser_wait` 1500.
-3. `browser_evaluate`: `typeof window.setTaskFilter`
-4. `browser_evaluate`: `typeof window.openTaskDetail`
-5. `browser_evaluate`: `document.getElementById('panel-tasks') !== null`
+1. `browser_click` on `button.panel-tab[data-panel="tasks"]` (the "Tasks" tab in the right panel header).
+2. `browser_wait` 1500 — wait for `loadTaskTree` to populate the panel.
+3. `browser_evaluate`: `typeof window.setTaskFilter`.
+4. `browser_evaluate`: `typeof window.openTaskDetail`.
+5. `browser_evaluate`: `document.getElementById('panel-tasks') !== null && document.getElementById('panel-tasks').style.display !== 'none'`.
 6. `browser_snapshot`.
 
 **Verify:**
-- Step 3: `window.setTaskFilter` is a function — tasks.js export via window.* live.
-- Step 4: `window.openTaskDetail` is a function.
-- Step 5: `#panel-tasks` exists.
-- Snapshot shows the task panel DOM (even if empty, the container must be present without JS error).
+- Step 3: `"function"` — tasks.js `setTaskFilter` export wired to `window.*`.
+- Step 4: `"function"` — tasks.js `openTaskDetail` export wired to `window.*`.
+- Step 5: `true` — `#panel-tasks` is present and visible after clicking the Tasks tab.
+- Snapshot shows the task panel DOM (container present, no JS error in console).
 
 ---
 
@@ -6170,16 +6171,17 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 **Setup:** Sidebar visible with at least one project that has multiple sessions.
 
 **Steps:**
-1. `browser_evaluate`: `sessionSortBy` — read the current value.
-2. `browser_evaluate`: `sessionSortBy = 'name'; renderSidebar(); sessionSortBy` — simulate the HTML onchange handler, then read back the value.
+1. `browser_evaluate`: `document.getElementById('session-sort').value` — read the current value from the DOM select element.
+2. `browser_select_option` on `#session-sort` with value `"name"` — selects "Name" in the sort dropdown; the `onchange` handler fires: `sessionSortBy=this.value;renderSidebar()`.
 3. `browser_wait` 500.
-4. `browser_snapshot` — capture sidebar to verify re-render happened.
-5. `browser_evaluate`: `sessionSortBy = 'date'; renderSidebar()` — restore default.
+4. `browser_evaluate`: `document.getElementById('session-sort').value` — read the select value back to confirm it changed.
+5. `browser_snapshot` — capture sidebar to verify re-render with name sort.
+6. `browser_select_option` on `#session-sort` with value `"date"` — restore default via the same DOM select.
 
 **Verify:**
-- Step 1: returns a string (`"date"` or `"name"`) — setter is live.
-- Step 2: returns `"name"` — the defineProperty setter propagated the value into state.js AND back out via the getter. If window.sessionSortBy was a plain property this would still work, but the key is it doesn't throw and renderSidebar() runs without error.
-- Snapshot shows sidebar re-rendered (session rows updated).
+- Step 1: a string (`"date"` or `"name"`) — the select element is present and reflects current sort state.
+- Step 4: `"name"` — the `onchange` handler propagated the value through the `Object.defineProperty` setter into `state.js` and the select reflects it.
+- Snapshot: sidebar re-rendered (session rows re-ordered by name).
 
 ---
 
@@ -6205,57 +6207,43 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 **Issue:** #460 (renderSidebar hashes timeAgo(s.timestamp) not raw s.timestamp)
 **Priority:** P1
 
-**Setup:** At least one session visible in the sidebar with a recent timestamp.
+**Setup:**
+Plant a non-active session with a 90-second-old `session_meta.timestamp` so the sidebar will display "1m ago" and then advance to "2m ago" after the wait. Run this command on the M5 host before navigating:
+```
+ssh workbench@m5 "docker exec workbench-test-workbench-1 sqlite3 /data/.workbench/workbench.db \
+  \"INSERT OR REPLACE INTO session_meta (session_id, timestamp, file_path, file_mtime, file_size) \
+    SELECT id, datetime('now', '-90 seconds'), '/dev/null', 0, 0 \
+    FROM sessions WHERE id NOT LIKE 'new_%' ORDER BY created_at ASC LIMIT 1\""
+```
+Record the session ID for use in the verify step.
 
 **Steps:**
-1. `browser_evaluate`: `document.querySelector('.session-item .session-meta span')?.textContent`
-2. Note the timestamp text (e.g., "2m ago", "just now").
-3. `browser_wait` 62000` — wait past a 1-minute boundary.
-4. `browser_evaluate`: `loadState()` — trigger a poll.
-5. `browser_wait` 2000`.
-6. `browser_evaluate`: `document.querySelector('.session-item .session-meta span')?.textContent`
+1. Navigate to `${WORKBENCH_URL}/` (fresh load triggers a `loadState()` poll automatically).
+2. `browser_wait` 2000 for sidebar to populate.
+3. `browser_evaluate`: find the planted session's timestamp span and record its text — must be `"1m ago"` (confirm the `session_meta.timestamp` 90s in the past was picked up and `timeAgo()` produced "1m ago").
+4. `browser_wait` 62000 — wait past the next minute boundary. The page's automatic 10-second `loadState()` polls will fire ~6 times during this interval; no manual trigger needed.
+5. `browser_wait` 2000 — allow the last automatic poll to finish rendering.
+6. `browser_evaluate`: re-read the same session's timestamp span text.
 7. `browser_snapshot`.
 
 **Verify:**
-- Step 6 text differs from step 1 text (e.g., "3m ago" vs "2m ago"), proving the hash changes at minute boundaries and renderSidebar re-runs.
-- No console error about undefined timeAgo.
+- Step 3: `"1m ago"` — planted session appears with the expected relative time.
+- Step 6: `"2m ago"` — the text advanced by one minute boundary, proving `renderSidebar()` re-ran with an updated `timeAgo()` hash and the display is not frozen.
+- 0 console errors about undefined `timeAgo`.
 
-**Note:** This test requires ~64s total. Run last in the P2 suite to avoid blocking shorter tests. If session timestamp was "just now" in step 1, the test still passes if step 6 shows "1m ago" or "just now" for an active session.
+**Note:** This test requires ~65s total. Run last in the P2 suite to avoid blocking shorter tests.
 
 ---
 
-### P2-461-01: #461 — file_find paren patterns via browser fetch (ERE fix end-to-end)
-**Issue:** #461 (file_find -E grep flag)
-**Priority:** P1
+### P2-461-01: #461 — file_find paren patterns (REMOVED — covered by live integration tests)
 
-**Setup:** Page loaded, workbench-test accessible at `http://192.168.1.120:7867`.
+`file_find` is an MCP tool invoked from Claude sessions; the workbench UI has no dedicated search surface for it. The ERE fix is fully covered by live integration tests:
 
-**Steps:**
-1. `browser_evaluate`:
-   ```js
-   const r = await fetch('/api/mcp/call', {
-     method: 'POST',
-     headers: {'Content-Type':'application/json'},
-     body: JSON.stringify({ tool: 'file_find', args: { pattern: String.raw`_seedRole\(cliType` } })
-   });
-   const j = await r.json();
-   return { status: r.status, isArray: Array.isArray(j.result?.matches), error: j.error };
-   ```
-2. `browser_evaluate` (second pattern):
-   ```js
-   const r = await fetch('/api/mcp/call', {
-     method: 'POST',
-     headers: {'Content-Type':'application/json'},
-     body: JSON.stringify({ tool: 'file_find', args: { pattern: String.raw`Object\.defineProperty\(window` } })
-   });
-   const j = await r.json();
-   return { status: r.status, isArray: Array.isArray(j.result?.matches) };
-   ```
+- `#461-LIVE-01` — paren pattern `_seedRole\(cliType` succeeds (200, array with match)
+- `#461-LIVE-02` — paren pattern `Object\.defineProperty\(window` succeeds (200, empty array — no crash)
+- `#461-LIVE-03` — fixture file created in workspace; match confirmed
 
-**Verify:**
-- Step 1: `status === 200` AND `isArray === true` AND `error === undefined` — paren pattern does not crash grep (no BRE unmatched group error), returns an array.
-- Step 2: same — second real-world paren pattern succeeds.
-- Pre-fix: both calls would return `status: 500` with `"grep: Unmatched ( or \\("` in the error.
+Per STD-003 §8: N/A with live coverage. No UI runbook entry needed.
 
 ---
 

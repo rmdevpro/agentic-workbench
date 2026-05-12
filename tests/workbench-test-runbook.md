@@ -6062,21 +6062,19 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 2. `browser_evaluate`: `typeof window.renderSidebar` — verify export present.
 3. `browser_evaluate`: `typeof window.sessionSortBy` — verify defineProperty getter returns a string.
 4. Click the `+` button on any project row: `browser_click` on `.project-group .new-btn` (first visible one).
-5. `browser_wait` 300.
-6. `browser_evaluate`: `document.querySelector('.new-session-menu[style*="block"]') !== null` — CLI picker menu opened.
-7. `browser_click` on `.new-session-menu[style*="block"] .context-menu-item[data-cli="claude"]` — select Claude.
-8. `browser_wait` 500.
-9. `browser_evaluate`: `document.getElementById('new-session-name') !== null` — modal opened.
-10. `browser_type` into `#new-session-name`: `P2-F0-03-test`.
-11. `browser_click` `#new-session-submit`.
-12. `browser_wait` 3000.
-13. `browser_snapshot`.
+5. `browser_click` on `.new-session-menu[style*="block"] .context-menu-item[data-cli="claude"]` — select Claude immediately (no wait — the menu opens synchronously; a wait would let an async re-render destroy it).
+6. `browser_wait` 500.
+7. `browser_evaluate`: `document.getElementById('new-session-name') !== null` — modal opened.
+8. `browser_type` into `#new-session-name`: `P2-F0-03-test`.
+9. `browser_click` `#new-session-submit`.
+10. `browser_wait` 3000.
+11. `browser_snapshot`.
 
 **Verify:**
 - Steps 1–3: `openSettings` is a function, `renderSidebar` is a function, `sessionSortBy` is a string (not undefined). Proves key window.* exports from app.js are live.
-- Step 6: `.new-session-menu` is visible — `+` button opens CLI picker before calling createSession.
-- Step 9: `new-session-name` input found → modal opened via createSession from app.js.
-- Step 13 snapshot: a new tab appears in `#tab-bar` — createTab (createTerminalTab wrapper) executed.
+- Step 5: `.context-menu-item[data-cli="claude"]` clicked immediately — `+` button opens CLI picker synchronously.
+- Step 7: `new-session-name` input found → modal opened via createSession from app.js.
+- Step 11 snapshot: a new tab appears in `#tab-bar` — createTab (createTerminalTab wrapper) executed.
 
 ---
 

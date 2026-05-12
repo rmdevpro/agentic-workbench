@@ -75,6 +75,11 @@ export async function _hydrateVisibleSessionInfo() {
   }
   if (fetches.length === 0) return;
   await Promise.allSettled(fetches);
+  // Don't destroy an open CLI-picker dropdown by re-rendering the sidebar
+  // while the user (or Playwright) has it open. The re-render resets all
+  // inline styles to display:none. We skip here; the next loadState() cycle
+  // (10s later) will pick up any state changes.
+  if (document.querySelector('.new-session-menu[style*="block"]')) return;
   renderSidebar._lastHash = '';
   renderSidebar();
 }

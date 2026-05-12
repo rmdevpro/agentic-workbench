@@ -69,11 +69,10 @@ These documents define the standards and context this project must be reviewed a
 
 ## Process
 
-- `/data/workspace/repos/Admin/docs/process/PROC-001-debugging-guide.md` — required debugging and investigation workflow. Read at the start of any bug investigation.
-- `/data/workspace/repos/Admin/docs/process/PROC-002-small-feature-guide.md` — required feature development workflow. Read at the start of any new feature work.
+- `/data/workspace/repos/Admin/docs/process/PROC-001-debugging-guide.md` — patch release procedure for single-issue bug fixes. Read at the start of any bug investigation.
 - `/data/workspace/repos/Admin/docs/process/PROC-003-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Read when running or interpreting UI test results.
 - `/data/workspace/repos/Admin/docs/process/PROC-004-test-execution-policy.md` — canonical policy for which tests run and when. Read when deciding test scope.
-- `/data/workspace/repos/Admin/docs/process/PROC-006-quorum-process.md` — quorum-driven milestone procedure. Replaces PROC-001/002 for milestone-scope work. Read at the start of any milestone.
+- `/data/workspace/repos/Admin/docs/process/PROC-006-quorum-process.md` — quorum-driven release procedure (releases with milestones). Anything bigger than a single-issue patch goes through PROC-006.
 
 ## Deployment
 

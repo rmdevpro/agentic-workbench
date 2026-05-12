@@ -1835,7 +1835,6 @@ window.submitAuthCode = submitAuthCode;
 window.dismissAuthModal = dismissAuthModal;
 window.togglePanel = togglePanel;
 window.switchPanel = switchPanel;
-window.openSettings = openSettings;
 window.saveSessionConfig = saveSessionConfig;
 window.openProjectPrompt = openProjectPrompt;
 window.saveProjectConfig = saveProjectConfig;

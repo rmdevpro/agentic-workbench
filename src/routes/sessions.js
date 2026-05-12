@@ -200,21 +200,6 @@ function register(app, {
   // #372 [E2]: per-CLI discovery cache lives in session-utils now (10s TTL,
   // shared across all callers). Routes calls discoverGeminiSessions /
   // discoverCodexSessions directly; the cache dedupes parallel polls.
-  const NONCLAUD_CACHE_TTL = 10000; // claim-reset window only
-
-  // Track which disk sessions have been claimed so we don't double-assign
-  const _claimedGemini = new Set();
-  const _claimedCodex = new Set();
-  let _claimResetTime = 0;
-
-  function _resetClaims() {
-    const now = Date.now();
-    if (now - _claimResetTime > NONCLAUD_CACHE_TTL) {
-      _claimedGemini.clear();
-      _claimedCodex.clear();
-      _claimResetTime = now;
-    }
-  }
 
   function _matchFromList(diskSessions, claimed, session, getIdFn, storeIdFn) {
     // 1. Match by cli_session_id
@@ -250,10 +235,11 @@ function register(app, {
   // lookups (in session-utils.getSessionInfo) can find the file by ID directly.
   // Callers that just want the side-effect (buildSessionList pre-pass) can ignore
   // the return value.
-  function _getNonClaudeMetadata(session) {
+  // claimedGemini / claimedCodex are per-request Sets (not module-level) to
+  // avoid cross-request contamination under concurrent /api/state polls.
+  function _getNonClaudeMetadata(session, claimedGemini, claimedCodex) {
     const cliType = session.cli_type || 'claude';
     if (cliType === 'claude') return null;
-    _resetClaims();
 
     if (cliType === 'gemini') {
       const sorted = sessionUtils.discoverGeminiSessions().sort((a, b) => {
@@ -261,7 +247,7 @@ function register(app, {
         const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return ta - tb;
       });
-      return _matchFromList(sorted, _claimedGemini, session,
+      return _matchFromList(sorted, claimedGemini, session,
         (d) => d.sessionId,
         (sess, match) => {
           if (match.sessionId) {
@@ -277,7 +263,7 @@ function register(app, {
         const tb = b.timestamp ? new Date(b.timestamp).getTime() : 0;
         return ta - tb;
       });
-      return _matchFromList(sorted, _claimedCodex, session,
+      return _matchFromList(sorted, claimedCodex, session,
         (d) => {
           // Codex files: /sessions/YYYY/MM/DD/rollout-{timestamp}-{uuid}.jsonl
           // Extract the UUID from the filename for resume
@@ -300,13 +286,14 @@ function register(app, {
   }
 
   async function buildSessionList(dbSessions, _sessDir) {
-    // #156: disambiguation pre-pass — for non-Claude sessions whose cli_session_id
-    // hasn't been stored yet, run the claim algorithm so the DB has the right
-    // pointer before any per-session lazy /info fetch resolves the file by ID.
+    // #156: disambiguation pre-pass — per-request Sets prevent cross-request
+    // contamination under concurrent /api/state polls (#453).
+    const claimedGemini = new Set();
+    const claimedCodex = new Set();
     for (const s of dbSessions) {
       const cliType = s.cli_type || 'claude';
       if (cliType !== 'claude' && !s.cli_session_id) {
-        _getNonClaudeMetadata(s);
+        _getNonClaudeMetadata(s, claimedGemini, claimedCodex);
       }
     }
 

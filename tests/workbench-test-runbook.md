@@ -6208,14 +6208,16 @@ Branch: `milestone/phase-2` @ `9827be3`.
 **Priority:** P1
 
 **Setup:**
-Plant a non-active session with a 90-second-old `session_meta.timestamp` so the sidebar will display "1m ago" and then advance to "2m ago" after the wait. Run this command on the M5 host before navigating:
+Plant a non-active **Claude** session with a 90-second-old `session_meta.timestamp`. Only Claude sessions use `session_meta.timestamp` for sidebar rendering; Gemini/Codex sessions use their own file-based timestamps, which the planted row won't affect.
+
+Run this command on the M5 host before navigating:
 ```
 ssh workbench@m5 "docker exec workbench-test-workbench-1 sqlite3 /data/.workbench/workbench.db \
   \"INSERT OR REPLACE INTO session_meta (session_id, timestamp, file_path, file_mtime, file_size) \
     SELECT id, datetime('now', '-90 seconds'), '/dev/null', 0, 0 \
-    FROM sessions WHERE id NOT LIKE 'new_%' ORDER BY created_at ASC LIMIT 1\""
+    FROM sessions WHERE id NOT LIKE 'new_%' AND cli_type = 'claude' ORDER BY created_at ASC LIMIT 1\""
 ```
-Record the session ID for use in the verify step.
+If the command returns no output, no Claude session exists — create one via the UI first (P2-F0-03 flow) and re-run. Record the session ID for the verify step.
 
 **Steps:**
 1. Navigate to `${WORKBENCH_URL}/` (fresh load triggers a `loadState()` poll automatically).

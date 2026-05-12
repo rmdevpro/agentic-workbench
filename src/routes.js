@@ -460,14 +460,59 @@ function registerCoreRoutes(
     // Heavy fields move to GET /api/sessions/:sessionId/info, called only for
     // the active session + visible sessions (project expanded). Sort by
     // db updated_at (the timestamp we have without parsing JSONLs).
-    const sessions = dbSessions.map(s => ({
-      id: s.id,
-      name: s.name,
-      timestamp: s.updated_at || s.created_at,
-      cli_type: s.cli_type || 'claude',
-      archived: s.state === 'archived',
-      state: s.state,
-    }));
+
+    // #408 [Q5]: Gemini/Codex sessions: db.updated_at is frozen at creation
+    // (nothing bumps it during actual session activity). Pull the file mtime
+    // from the TTL-cached discovery results (already computed by the pre-pass
+    // above) so the sidebar timestamp reflects real recent activity.
+    let _geminiBySessionId = null;
+    let _codexByFileStem = null;
+    const _getGeminiTs = (cliSessionId) => {
+      if (!_geminiBySessionId) {
+        _geminiBySessionId = new Map();
+        try {
+          for (const d of sessionUtils.discoverGeminiSessions()) {
+            if (d.sessionId) _geminiBySessionId.set(d.sessionId, d.timestamp);
+          }
+        } catch { /* discovery unavailable */ }
+      }
+      return _geminiBySessionId.get(cliSessionId) || null;
+    };
+    const _getCodexTs = (cliSessionId) => {
+      if (!_codexByFileStem) {
+        _codexByFileStem = new Map();
+        try {
+          for (const d of sessionUtils.discoverCodexSessions()) {
+            const stem = basename(d.filePath, '.jsonl');
+            const m = stem.match(CODEX_ROLLOUT_UUID_RE);
+            const id = m ? m[1] : stem;
+            if (id) _codexByFileStem.set(id, d.timestamp);
+          }
+        } catch { /* discovery unavailable */ }
+      }
+      return _codexByFileStem.get(cliSessionId) || null;
+    };
+
+    const sessions = dbSessions.map(s => {
+      const cliType = s.cli_type || 'claude';
+      let ts = s.updated_at || s.created_at;
+      if (cliType === 'claude') {
+        // db.updated_at is bumped to NOW on every /api/state poll (upsertSession
+        // is called for each Claude JSONL file), so it always reads "just now".
+        // session_meta.timestamp is the actual last-message timestamp from the
+        // JSONL parse — use it when available and newer than created_at.
+        try {
+          const meta = db.getSessionMeta(s.id);
+          if (meta?.timestamp) ts = meta.timestamp;
+        } catch { /* session_meta may not exist yet for brand-new sessions */ }
+      } else if (s.cli_session_id) {
+        const fileTs = cliType === 'gemini'
+          ? _getGeminiTs(s.cli_session_id)
+          : _getCodexTs(s.cli_session_id);
+        if (fileTs && new Date(fileTs) > new Date(ts)) ts = fileTs;
+      }
+      return { id: s.id, name: s.name, timestamp: ts, cli_type: cliType, archived: s.state === 'archived', state: s.state };
+    });
     sessions.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
     return sessions;
   }

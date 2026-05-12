@@ -6012,21 +6012,16 @@ build/**</textarea>
       if (!banner) {
         banner = document.createElement('div');
         banner.id = 'error-banner';
+        // position:fixed so the banner overlays the layout without displacing
+        // any flex siblings. #main is flex-direction:row so inserting as a
+        // child shifts the primary panel rightward — fixed avoids that entirely.
         banner.style.cssText = `
+          position: fixed; top: 0; left: 0; right: 0; z-index: 2000;
           background: var(--bg-tertiary); border-bottom: 2px solid var(--error, #d32f2f);
           padding: 10px 16px; font-size: 13px; color: var(--error, #d32f2f);
           display: flex; align-items: center; gap: 8px;
         `;
-        // #402 [Q2]: tab-bar is nested inside #primary-panel, not a direct
-        // child of #main, so the original insertBefore(banner, #tab-bar)
-        // threw NotFoundError every 60s. Insert before #primary-panel
-        // instead — banner sits at the top of #main, above the tab area.
-        (() => {
-          const main = document.getElementById('main');
-          const primaryPanel = document.getElementById('primary-panel');
-          if (main && primaryPanel) main.insertBefore(banner, primaryPanel);
-          else if (main) main.prepend(banner);
-        })();
+        document.body.appendChild(banner);
       }
       const top = topError ? ` — top: <strong>${escapeHtml(topError.module || 'unknown')}</strong> ${escapeHtml(topError.message).slice(0, 120)}` : '';
       const lastErrTs = topError ? escapeHtml(topError.ts) : '';

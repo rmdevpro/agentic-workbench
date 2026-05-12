@@ -6062,17 +6062,21 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 2. `browser_evaluate`: `typeof window.renderSidebar` — verify export present.
 3. `browser_evaluate`: `typeof window.sessionSortBy` — verify defineProperty getter returns a string.
 4. Click the `+` button on any project row: `browser_click` on `.project-group .new-btn` (first visible one).
-5. `browser_wait` 500.
-6. `browser_evaluate`: `document.getElementById('new-session-name') !== null` — modal opened.
-7. `browser_type` into `#new-session-name`: `P2-F0-03-test`.
-8. `browser_click` `#new-session-submit`.
-9. `browser_wait` 3000.
-10. `browser_snapshot`.
+5. `browser_wait` 300.
+6. `browser_evaluate`: `document.querySelector('.new-session-menu[style*="block"]') !== null` — CLI picker menu opened.
+7. `browser_click` on `.new-session-menu[style*="block"] .context-menu-item[data-cli="claude"]` — select Claude.
+8. `browser_wait` 500.
+9. `browser_evaluate`: `document.getElementById('new-session-name') !== null` — modal opened.
+10. `browser_type` into `#new-session-name`: `P2-F0-03-test`.
+11. `browser_click` `#new-session-submit`.
+12. `browser_wait` 3000.
+13. `browser_snapshot`.
 
 **Verify:**
 - Steps 1–3: `openSettings` is a function, `renderSidebar` is a function, `sessionSortBy` is a string (not undefined). Proves key window.* exports from app.js are live.
-- Step 6: new-session-name input found → modal opened via createSession from app.js.
-- Step 10 snapshot: a new tab appears in `#tab-bar` — createTab (createTerminalTab wrapper) executed.
+- Step 6: `.new-session-menu` is visible — `+` button opens CLI picker before calling createSession.
+- Step 9: `new-session-name` input found → modal opened via createSession from app.js.
+- Step 13 snapshot: a new tab appears in `#tab-bar` — createTab (createTerminalTab wrapper) executed.
 
 ---
 
@@ -6080,12 +6084,12 @@ Branch: `milestone/phase-2` @ `ad4ee69`.
 **Issue:** #364 (tabs.js switchTab, renderTabs reachable via window.switchTab)
 **Priority:** P1
 
-**Setup:** At least 2 session tabs open (from P2-F0-03 or prior tests).
+**Setup:** Run P2-F0-03 first to create a session tab. If P2-F0-03 left a tab open, this entry can proceed. If 0 tabs remain, create a second session via the same `+` → CLI picker → claude modal flow before step 3.
 
 **Steps:**
 1. `browser_evaluate`: `typeof window.switchTab`
-2. `browser_evaluate`: `document.querySelectorAll('#tab-bar .tab-btn').length`
-3. `browser_click` on the second tab button.
+2. `browser_evaluate`: `document.querySelectorAll('#tab-bar .tab-btn').length` — record count.
+3. If count ≥ 2: `browser_click` the second `.tab-btn`. If count is 1: create a second session (same flow as P2-F0-03 steps 4–12) then click the second tab.
 4. `browser_wait` 500.
 5. `browser_evaluate`: `document.querySelector('#tab-bar .tab-btn.active')?.dataset?.tabId`
 6. `browser_snapshot`.

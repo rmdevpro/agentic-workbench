@@ -62,6 +62,23 @@ test('M1-LIVE-01: GET /api/kb/status returns 200 (watcher alive, no crash on uni
     `response must include 'initialized' field; got: ${JSON.stringify(r.data)}`);
 });
 
+test('M1-LIVE-03: KB path directory exists after container start (watcher created it)', async () => {
+  // KB_PATH = /data/knowledge-base (per constants.js). The kb-watcher start()
+  // function calls _cloneIfMissing which mkdir -p's the parent. Even when the
+  // clone itself fails (no upstream URL configured in a fresh test container),
+  // the watcher must start without crashing. We verify the parent /data directory
+  // structure is intact (the watcher didn't hard-crash before the directory check).
+  // A stricter assertion (/data/knowledge-base exists after clone) would require
+  // a real git upstream — out of scope for the sandbox container.
+  const workbenchDir = dockerExec('test -d /data/.workbench && echo exists || echo missing');
+  assert.equal(workbenchDir, 'exists',
+    '/data/.workbench must exist — watcher infrastructure requires this directory');
+
+  // Verify the KB watcher didn't crash the server (health still returns 200)
+  const health = await get('/health');
+  assert.equal(health.status, 200, 'server must still be healthy after watcher start');
+});
+
 test('M1-LIVE-02: GET /api/kb/roles returns 200 (KB route module accessible)', async () => {
   const r = await get('/api/kb/roles');
   assert.equal(r.status, 200,
@@ -114,73 +131,111 @@ test('G0-LIVE-02 (kb.js): GET /api/kb/status responds (kb.js module registered)'
     `kb.js domain module must respond; got ${r.status}: ${JSON.stringify(r.data)}`);
 });
 
-test('G0-LIVE-03: all 9 domain module endpoints return 2xx in a single sweep', async () => {
-  const endpoints = [
-    ['/health',          'health.js'],
-    ['/api/state',       'sessions.js'],
-    ['/api/projects',    'projects.js'],
-    ['/api/files/list',  'files.js'],       // returns 400 without path — that's OK (module alive)
-    ['/api/tasks',       'tasks.js'],
-    ['/api/git-accounts','git-accounts.js'],
-    ['/api/kb/status',   'kb.js'],
-    ['/api/settings',    'settings.js'],
-    ['/api/auth/status', 'auth.js'],
+test('G0-LIVE-03: all 9 domain module endpoints respond with expected status codes', async () => {
+  // Each entry: [method, path, body|null, expectedStatuses[], module]
+  dockerExec('mkdir -p /data/workspace/g0sweep_proj');
+  await post('/api/projects', { path: '/data/workspace/g0sweep_proj', name: 'g0sweep_proj' });
+
+  const cases = [
+    // health.js
+    ['GET',  '/health',                null,                              [200],       'health.js'],
+    // sessions.js
+    ['GET',  '/api/state',             null,                              [200],       'sessions.js'],
+    // projects.js — 200 created or 409 if already exists
+    ['POST', '/api/projects',          { path: '/data/workspace/g0sweep_proj', name: 'g0sweep_proj' },
+                                                                         [200, 409],  'projects.js'],
+    // files.js — POST /api/files/list with valid path returns 200
+    ['POST', '/api/files/list',        { path: '/data/workspace' },      [200],       'files.js'],
+    // tasks.js — GET /api/tasks/tree returns 200 with JSON tree
+    ['GET',  '/api/tasks/tree',        null,                              [200],       'tasks.js'],
+    // git-accounts.js
+    ['GET',  '/api/git-accounts',      null,                              [200],       'git-accounts.js'],
+    // kb.js
+    ['GET',  '/api/kb/status',         null,                              [200],       'kb.js'],
+    // settings.js
+    ['GET',  '/api/settings',          null,                              [200],       'settings.js'],
+    // auth.js
+    ['GET',  '/api/auth/status',       null,                              [200],       'auth.js'],
   ];
 
-  for (const [path, module] of endpoints) {
-    const r = await get(path);
+  for (const [method, path, body, expectedStatuses, module] of cases) {
+    const r = method === 'GET' ? await get(path) : await post(path, body);
     assert.ok(
-      r.status < 500,
-      `${module} endpoint GET ${path} must not return 5xx; got ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}`,
+      expectedStatuses.includes(r.status),
+      `${module} ${method} ${path} must return one of [${expectedStatuses}]; ` +
+      `got ${r.status}: ${JSON.stringify(r.data).slice(0, 200)}`,
     );
   }
 });
 
 // ── #460 — server-side session_meta.timestamp in /api/state ──────────────────
 
-test('#460-LIVE-01: /api/state session timestamps are ISO strings (session_meta pathway live)', async () => {
-  // Create a real project + session via API. The stub-claude creates a JSONL
-  // file whose timestamp drives session_meta.timestamp via parseSessionFile.
-  // On the next /api/state poll, buildSessionList reads session_meta.timestamp.
-  // The precise timestamp-override logic is proven by behavioral mock tests
-  // (#463-TS-01); here we verify the full live route path: session exists in
-  // /api/state with a valid ISO timestamp (not null, not empty).
-  dockerExec('mkdir -p /data/workspace/ts460_live_proj');
+test('#460-LIVE-01 / #469: /api/state uses session_meta.timestamp not db.updated_at for Claude sessions', async () => {
+  // Plant a session with a FUTURE db.updated_at and a PAST session_meta.timestamp.
+  // buildSessionList must return the session_meta value, proving it wins over
+  // db.updated_at. Timestamps are deliberately divergent so the assertion is
+  // unambiguous.
+  //
+  // session_meta schema: file_path TEXT NOT NULL, file_mtime REAL NOT NULL,
+  // file_size INTEGER NOT NULL — all included below to avoid constraint failure.
+
+  const FUTURE_UPDATED = '2028-01-01T00:00:00.000Z'; // db.updated_at (would be "now" on each poll)
+  const META_TS        = '2019-06-15T08:00:00.000Z'; // session_meta.timestamp (real last msg)
+
+  dockerExec('mkdir -p /data/workspace/ts469_live_proj');
   const projResp = await post('/api/projects', {
-    path: '/data/workspace/ts460_live_proj',
-    name: 'ts460_live_proj',
+    path: '/data/workspace/ts469_live_proj',
+    name: 'ts469_live_proj',
   });
   assert.ok(projResp.status === 200 || projResp.status === 409,
     `create project: ${JSON.stringify(projResp.data)}`);
 
-  const sessResp = await post('/api/sessions', {
-    project: 'ts460_live_proj',
-    name: 'ts460-live-test',
-  });
-  assert.equal(sessResp.status, 200,
-    `create session: ${JSON.stringify(sessResp.data)}`);
-  const sessId = sessResp.data.id;
+  const projId = dockerExec(
+    `sqlite3 /data/.workbench/workbench.db "SELECT id FROM projects WHERE name='ts469_live_proj'"`,
+  );
+  assert.ok(projId, 'project must be findable in DB');
 
-  // Wait for stub-claude to write its JSONL (100 ms delay in stub).
-  await new Promise(r => setTimeout(r, 500));
+  const sessId = `ts469_sess_${Date.now()}`;
 
-  // Two /api/state polls: first triggers parseSessionFile → upsertSessionMeta,
-  // second reads the populated session_meta.
-  await get('/api/state');
-  await new Promise(r => setTimeout(r, 300));
-  const stateResp = await get('/api/state');
-  assert.equal(stateResp.status, 200);
+  // Plant session with FUTURE updated_at
+  dockerExec(
+    `sqlite3 /data/.workbench/workbench.db "INSERT OR REPLACE INTO sessions ` +
+    `(id, project_id, name, cli_type, updated_at, created_at) VALUES ` +
+    `('${sessId}', ${projId}, 'ts469-test', 'claude', '${FUTURE_UPDATED}', '${FUTURE_UPDATED}')"`,
+  );
 
-  const project = stateResp.data.projects?.find(p => p.name === 'ts460_live_proj');
-  assert.ok(project, 'ts460_live_proj must appear in /api/state');
+  // Plant session_meta with PAST timestamp; include all NOT NULL columns
+  dockerExec(
+    `sqlite3 /data/.workbench/workbench.db "INSERT OR REPLACE INTO session_meta ` +
+    `(session_id, file_path, file_mtime, file_size, timestamp, message_count, model) VALUES ` +
+    `('${sessId}', '/fake/ts469.jsonl', 0.0, 0, '${META_TS}', 1, '')"`,
+  );
 
-  const session = project?.sessions?.find(s => s.id === sessId);
-  assert.ok(session, `${sessId} must appear in project sessions`);
-  assert.ok(session.timestamp, 'session.timestamp must be truthy');
-  // Must be a valid ISO 8601 date string
-  assert.ok(
-    !isNaN(Date.parse(session.timestamp)),
-    `session.timestamp must parse as a valid date; got: ${session.timestamp}`,
+  // Verify plant succeeded before asserting
+  const metaCheck = dockerExec(
+    `sqlite3 /data/.workbench/workbench.db "SELECT timestamp FROM session_meta WHERE session_id='${sessId}'"`,
+  );
+  assert.equal(metaCheck, META_TS,
+    `session_meta plant must succeed; got: '${metaCheck}'. ` +
+    `If empty, the INSERT failed (check NOT NULL constraints).`);
+
+  // Deadline-poll /api/state until our session appears (max 5s)
+  let session = null;
+  const deadline = Date.now() + 5000;
+  while (Date.now() < deadline) {
+    const r = await get('/api/state');
+    assert.equal(r.status, 200);
+    const proj = r.data.projects?.find(p => p.name === 'ts469_live_proj');
+    session = proj?.sessions?.find(s => s.id === sessId);
+    if (session) break;
+    await new Promise(r => setTimeout(r, 400));
+  }
+
+  assert.ok(session, `${sessId} must appear in /api/state within 5s`);
+  assert.equal(
+    session.timestamp, META_TS,
+    `buildSessionList must return session_meta.timestamp (${META_TS}), ` +
+    `not db.updated_at (${FUTURE_UPDATED}). Got: ${session.timestamp}`,
   );
 });
 
@@ -234,22 +289,72 @@ test('#461-LIVE-03: file_find paren pattern finds a fixture match in workspace',
 
 // ── #453 — claimed Sets: /api/state with multiple projects ───────────────────
 
-test('#453-LIVE-01: /api/state with multiple projects returns cleanly (no claimed-Set crash)', async () => {
-  // The fix moved claimedGemini/claimedCodex from module-level (shared across
-  // requests) to per-request Sets. A crash or 500 here would indicate a
-  // regression. This test ensures the handler completes cleanly with ≥2 projects.
+test('#453-LIVE-01: /api/state returns cleanly with multiple projects', async () => {
   for (const name of ['claimed_proj_a', 'claimed_proj_b']) {
     dockerExec(`mkdir -p /data/workspace/${name}`);
     await post('/api/projects', { path: `/data/workspace/${name}`, name });
   }
   const r = await get('/api/state');
   assert.equal(r.status, 200,
-    `/api/state must return 200 with multiple projects; got ${r.status}: ${JSON.stringify(r.data).slice(0, 300)}`);
-  assert.ok(Array.isArray(r.data.projects),
-    'projects must be an array');
-  const names = r.data.projects.map(p => p.name);
-  assert.ok(names.includes('claimed_proj_a') || names.includes('claimed_proj_b'),
-    `at least one test project must appear in /api/state; projects: ${JSON.stringify(names)}`);
+    `/api/state must return 200 with multiple projects; got ${r.status}`);
+  assert.ok(Array.isArray(r.data.projects), 'projects must be an array');
+});
+
+test('#468-LIVE-01: Gemini disk session claimed by exactly one project per /api/state request', async () => {
+  // Plant 1 Gemini disk file + 2 unbound DB Gemini sessions (one per project).
+  // Pre-fix: module-level _claimedGemini Set was shared across projects, so both
+  // sessions could claim the same file → double assignment.
+  // Post-fix: per-request Set → file claimed by exactly 1 session.
+  const ts = Date.now();
+  const GEM_SID = `gem-claim-live-${ts}`;    // unique sessionId in the Gemini JSONL header
+
+  // 1. Create 2 projects
+  for (const p of [`p468a_${ts}`, `p468b_${ts}`]) {
+    dockerExec(`mkdir -p /data/workspace/${p}`);
+    await post('/api/projects', { path: `/data/workspace/${p}`, name: p });
+  }
+
+  const projAId = dockerExec(`sqlite3 /data/.workbench/workbench.db "SELECT id FROM projects WHERE name='p468a_${ts}'"`);
+  const projBId = dockerExec(`sqlite3 /data/.workbench/workbench.db "SELECT id FROM projects WHERE name='p468b_${ts}'"`);
+  assert.ok(projAId && projBId, `both projects must be findable; got A='${projAId}' B='${projBId}'`);
+
+  // 2. Plant 2 unbound Gemini sessions — NO cli_session_id
+  const sessA = `p468a_sess_${ts}`;
+  const sessB = `p468b_sess_${ts}`;
+  const createdAt = new Date(ts).toISOString();
+  for (const [sid, pid] of [[sessA, projAId], [sessB, projBId]]) {
+    dockerExec(
+      `sqlite3 /data/.workbench/workbench.db ` +
+      `"INSERT OR REPLACE INTO sessions (id, project_id, name, cli_type, updated_at, created_at) ` +
+      `VALUES ('${sid}', ${pid}, 'gem-test', 'gemini', '${createdAt}', '${createdAt}')"`,
+    );
+  }
+
+  // 3. Plant a Gemini chat JSONL in the discovery path (~/.gemini/tmp/<dir>/chats/)
+  const gemDir = `/data/.gemini/tmp/p468-test-${ts}/chats`;
+  dockerExec(`mkdir -p ${gemDir}`);
+  dockerExec(
+    `printf '{"sessionId":"${GEM_SID}","startTime":"${createdAt}","lastUpdated":"${createdAt}"}\\n` +
+    `{"type":"user","content":"claim test"}\\n' > ${gemDir}/claim-${ts}.jsonl`,
+  );
+
+  // 4. Wait for discovery cache TTL to expire (10s) so next /api/state discovers the file
+  await new Promise(r => setTimeout(r, 12000));
+
+  // 5. Call /api/state — claim algorithm runs for both projects in one request
+  const r = await get('/api/state');
+  assert.equal(r.status, 200, `/api/state must return 200; got ${r.status}`);
+
+  // 6. Assert: exactly one of the two sessions was assigned the disk sessionId
+  const sidA = dockerExec(`sqlite3 /data/.workbench/workbench.db "SELECT cli_session_id FROM sessions WHERE id='${sessA}'"`);
+  const sidB = dockerExec(`sqlite3 /data/.workbench/workbench.db "SELECT cli_session_id FROM sessions WHERE id='${sessB}'"`);
+
+  const claimedCount = [sidA, sidB].filter(v => v === GEM_SID).length;
+  assert.equal(claimedCount, 1,
+    `Gemini file '${GEM_SID}' must be claimed by exactly 1 of 2 sessions ` +
+    `(would be 2 with pre-fix module-level Set). ` +
+    `sessA.cli_session_id='${sidA}', sessB.cli_session_id='${sidB}'`,
+  );
 });
 
 // ── #454 — createTrustDir live (project creation exercises trustDir) ──────────

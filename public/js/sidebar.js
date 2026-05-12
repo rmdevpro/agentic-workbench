@@ -396,15 +396,24 @@ export async function loadState() {
           if (edit.state != null) p.state = edit.state;
           if (edit.notes != null) p.notes = edit.notes;
         }
-        if (Array.isArray(p.sessions) && window._pendingSessionEdits && window._pendingSessionEdits.size) {
+        if (Array.isArray(p.sessions)) {
+          // Build a lookup of current client-side session state (before overwrite)
+          const _prevProj = (projectState || []).find(ep => ep.name === p.name);
           for (const s of p.sessions) {
-            if (window._pendingSessionEdits.has(s.id)) {
+            if (window._pendingSessionEdits && window._pendingSessionEdits.has(s.id)) {
               const edit = window._pendingSessionEdits.get(s.id);
               if (edit.name != null) s.name = edit.name;
               if (edit.state != null) s.state = edit.state;
               if (edit.notes != null) s.notes = edit.notes;
               if (edit.archived != null) s.archived = !!edit.archived;
             }
+            // Preserve hydrated timestamp for sessions the client knows are
+            // active. loadState() overwrites projectState with raw API data
+            // (backend timestamp = stale session_meta for in-progress turns);
+            // an active session's timestamp was stamped 'now' by hydration and
+            // must not be reverted to the stale value on the next poll.
+            const prev = _prevProj?.sessions?.find(ps => ps.id === s.id);
+            if (prev?.active && prev.timestamp) s.timestamp = prev.timestamp;
           }
         }
       }

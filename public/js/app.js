@@ -8,7 +8,7 @@ import {
   projectState, programState, expandedPrograms,
   _settingsCache, setSettingsCache, db_getSetting,
   REFRESH_MS, TERM_THEME, setFilter,
-  _lastClickedProjectPath,
+  _lastClickedProjectPath, sessionSortBy, setSessionSortBy,
 } from './state.js';
 
 import {
@@ -29,7 +29,7 @@ import { createFileTree } from './file-tree.js';
 
 import {
   loadFiles, openFileTab, _fileBrowserTree, refreshFileTree,
-  autoNavigateFileTree,
+  autoNavigateFileTree, fileBrowserUpload,
 } from './files.js';
 
 import {
@@ -1857,6 +1857,19 @@ window.addProject = addProject;
 window.applyTheme = applyTheme;
 window.applyFontSize = applyFontSize;
 window.applyFontFamily = applyFontFamily;
+window.loadState = loadState;
+window.renderSidebar = renderSidebar;
+window.refreshFileTree = refreshFileTree;
+window.fileBrowserUpload = fileBrowserUpload;
+window.openFileTab = openFileTab;
+window.oauthDetection = oauthDetection;
+// sessionSortBy: HTML handlers do plain assignment (sessionSortBy = value), so
+// define a setter that routes through state.js's setSessionSortBy.
+Object.defineProperty(window, 'sessionSortBy', {
+  get: () => sessionSortBy,
+  set: setSessionSortBy,
+  configurable: true,
+});
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 initSideDivider();

@@ -6,7 +6,6 @@ const { execFile } = require('child_process');
 const { promisify } = require('util');
 const execFileAsync = promisify(execFile);
 
-const safeExec = require('./safe-exec');
 const { CODEX_ROLLOUT_UUID_RE } = require('./constants');
 const sessionUtilsMod = require('./session-utils');
 const { discoverGeminiSessions, discoverCodexSessions } = sessionUtilsMod;
@@ -19,7 +18,7 @@ const { discoverGeminiSessions, discoverCodexSessions } = sessionUtilsMod;
 // project's cwd (the role lives in KB_PATH/roles/, well outside
 // /data/workspace/<project>), and Codex has the same scoping. Inlining works
 // for all three CLIs uniformly.
-async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger) {
+async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger, safe) {
   // #347 [C5]: requires hoisted to module top — execFile/promisify/path/fs
   // are all module-level imports. Use the top-level aliases here.
   const readdirFs = readdir;
@@ -59,7 +58,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
     const resumeArgs = phase1Id
       ? ['--resume', phase1Id, '--dangerously-skip-permissions', ...cliArgs]
       : ['--dangerously-skip-permissions', ...cliArgs];
-    await safeExec.tmuxCreateCLIAsync(tmux, projectPath, 'claude', resumeArgs, { workbenchSessionId: tmpId });
+    await safe.tmuxCreateCLIAsync(tmux, projectPath, 'claude', resumeArgs, { workbenchSessionId: tmpId });
     if (phase1Id) {
       // Register the real session ID so the resolver maps it correctly
       db.upsertSession(phase1Id, proj.id, null, 'claude');
@@ -76,7 +75,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       '-p', rolePrompt,
     ], projectPath);
     // Phase 2: resume latest interactively (no yolo)
-    await safeExec.tmuxCreateCLIAsync(tmux, projectPath, 'gemini', ['--resume', 'latest'], { workbenchSessionId: tmpId });
+    await safe.tmuxCreateCLIAsync(tmux, projectPath, 'gemini', ['--resume', 'latest'], { workbenchSessionId: tmpId });
     // Find the new chat file produced by Phase 1 — diff against snapshot.
     try {
       const after = discoverGeminiSessions();
@@ -100,7 +99,7 @@ async function _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles,
       ? (() => { const m = basenameFs(created.filePath, '.jsonl').match(CODEX_ROLLOUT_UUID_RE); return m ? m[1] : null; })()
       : null;
     const resumeArgs = rolloutId ? ['resume', rolloutId] : [];
-    await safeExec.tmuxCreateCLIAsync(tmux, projectPath, 'codex', resumeArgs, { workbenchSessionId: tmpId });
+    await safe.tmuxCreateCLIAsync(tmux, projectPath, 'codex', resumeArgs, { workbenchSessionId: tmpId });
     if (rolloutId) db.setCliSessionId(tmpId, rolloutId);
   }
 }

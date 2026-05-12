@@ -479,7 +479,7 @@ function register(app, {
         const rolePath = join(KB_PATH, 'roles', `${role}.md`);
         try {
           await stat(rolePath);
-          await _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger);
+          await _seedRole(cliType, rolePath, projectPath, cliArgs, existingFiles, sessDir, tmpId, proj, db, tmux, logger, safe);
         } catch (roleErr) {
           logger.warn('Role seeding failed — launching without role', { module: 'routes', role, err: roleErr.message });
           await safe.tmuxCreateCLIAsync(tmux, projectPath, cliType, cliArgs, { workbenchSessionId: tmpId });

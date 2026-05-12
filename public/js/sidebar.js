@@ -396,14 +396,22 @@ export async function loadState() {
           if (edit.state != null) p.state = edit.state;
           if (edit.notes != null) p.notes = edit.notes;
         }
-        if (Array.isArray(p.sessions) && window._pendingSessionEdits && window._pendingSessionEdits.size) {
+        if (Array.isArray(p.sessions)) {
           for (const s of p.sessions) {
-            if (window._pendingSessionEdits.has(s.id)) {
+            if (window._pendingSessionEdits && window._pendingSessionEdits.has(s.id)) {
               const edit = window._pendingSessionEdits.get(s.id);
               if (edit.name != null) s.name = edit.name;
               if (edit.state != null) s.state = edit.state;
               if (edit.notes != null) s.notes = edit.notes;
               if (edit.archived != null) s.archived = !!edit.archived;
+            }
+            // Restore hydrated 'active' status if still within cache TTL.
+            // /api/state returns minimal session data (no active/tmux/model);
+            // those come from hydration. Without this, each loadState() wipes
+            // active=true back to undefined and the 'just now' display vanishes.
+            const _ch = _sessionInfoClientCache.get(s.id);
+            if (_ch && (Date.now() - _ch.fetchedAt) < _SESSION_INFO_CLIENT_TTL_MS && _ch.info?.active) {
+              s.active = true;
             }
           }
         }

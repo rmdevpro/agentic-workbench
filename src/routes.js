@@ -2,6 +2,8 @@
 
 const registerSessions = require('./routes/sessions');
 const registerProjects = require('./routes/projects');
+const { registerMcpRoutes } = require('./mcp-tools');
+const { registerWebhookRoutes } = require('./webhooks');
 const registerFiles = require('./routes/files');
 const registerKb = require('./routes/kb');
 const registerTasks = require('./routes/tasks');
@@ -25,8 +27,6 @@ function registerCoreRoutes(app, deps) {
 
   registerHealth.register(app, deps, checkAuthStatus);
 
-  const { registerMcpRoutes } = require('./mcp-tools');
-  const { registerWebhookRoutes } = require('./webhooks');
   registerMcpRoutes(app);
   registerWebhookRoutes(app);
 

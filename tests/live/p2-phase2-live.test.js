@@ -27,6 +27,12 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { get, post } = require('../helpers/http-client');
 const { dockerExec } = require('../helpers/reset-state');
+const ws = require('../helpers/test-workspace');
+
+// #481: all Phase 2 test projects live under /data/workspace/_test/p2-phase2/
+// instead of polluting the WORKSPACE root. test.after() removes the whole tree.
+const SUITE = 'p2-phase2';
+test.after(() => ws.cleanup(SUITE));
 
 // ── J1 #367 — qdrant-sync factory DI ─────────────────────────────────────────
 
@@ -129,8 +135,8 @@ test('G0-LIVE-02 (kb.js): GET /api/kb/status responds (kb.js module registered)'
 
 test('G0-LIVE-03: all 9 domain module endpoints respond with expected status codes', async () => {
   // Each entry: [method, path, body|null, expectedStatuses[], module]
-  dockerExec('mkdir -p /data/workspace/g0sweep_proj');
-  await post('/api/projects', { path: '/data/workspace/g0sweep_proj', name: 'g0sweep_proj' });
+  const g0Path = ws.mkProject(SUITE, 'g0sweep_proj');
+  await post('/api/projects', { path: g0Path, name: 'g0sweep_proj' });
 
   const cases = [
     // health.js
@@ -138,7 +144,7 @@ test('G0-LIVE-03: all 9 domain module endpoints respond with expected status cod
     // sessions.js
     ['GET',  '/api/state',             null,                              [200],       'sessions.js'],
     // projects.js — 200 created or 409 if already exists
-    ['POST', '/api/projects',          { path: '/data/workspace/g0sweep_proj', name: 'g0sweep_proj' },
+    ['POST', '/api/projects',          { path: g0Path, name: 'g0sweep_proj' },
                                                                          [200, 409],  'projects.js'],
     // files.js — POST /api/files/list with valid path returns 200
     ['POST', '/api/files/list',        { path: '/data/workspace' },      [200],       'files.js'],
@@ -178,9 +184,9 @@ test('#460-LIVE-01 / #469: /api/state uses session_meta.timestamp not db.updated
   const FUTURE_UPDATED = '2028-01-01T00:00:00.000Z'; // db.updated_at (would be "now" on each poll)
   const META_TS        = '2019-06-15T08:00:00.000Z'; // session_meta.timestamp (real last msg)
 
-  dockerExec('mkdir -p /data/workspace/ts469_live_proj');
+  const ts469Path = ws.mkProject(SUITE, 'ts469_live_proj');
   const projResp = await post('/api/projects', {
-    path: '/data/workspace/ts469_live_proj',
+    path: ts469Path,
     name: 'ts469_live_proj',
   });
   assert.ok(projResp.status === 200 || projResp.status === 409,
@@ -266,10 +272,10 @@ test('#461-LIVE-03: file_find paren pattern finds a fixture match in workspace',
   // Plant a deterministic fixture file containing the paren pattern so the
   // ERE test has something to find — proves the -E flag makes the grep
   // succeed AND return a real match (not just "no crash").
+  const fixtureDir = ws.mkProject(SUITE, 'p2-461-fixture');
   dockerExec(
-    "mkdir -p /data/workspace/p2-461-fixture && " +
-    "printf 'function _seedRole(cliType, safe) { safe.tmuxCreateCLIAsync(); }\\n' " +
-    "> /data/workspace/p2-461-fixture/seedrole-fixture.js"
+    `printf 'function _seedRole(cliType, safe) { safe.tmuxCreateCLIAsync(); }\\n' ` +
+    `> ${fixtureDir}/seedrole-fixture.js`
   );
   const r = await post('/api/mcp/call', {
     tool: 'file_find',
@@ -280,15 +286,15 @@ test('#461-LIVE-03: file_find paren pattern finds a fixture match in workspace',
   assert.ok(r.data?.result?.matches?.length > 0,
     `should find at least one match for _seedRole\\( in .js files in workspace; ` +
     `got ${r.data?.result?.matches?.length} matches. ` +
-    `Fixture planted at /data/workspace/p2-461-fixture/seedrole-fixture.js`);
+    `Fixture planted at ${fixtureDir}/seedrole-fixture.js`);
 });
 
 // ── #453 — claimed Sets: /api/state with multiple projects ───────────────────
 
 test('#453-LIVE-01: /api/state returns cleanly with multiple projects', async () => {
   for (const name of ['claimed_proj_a', 'claimed_proj_b']) {
-    dockerExec(`mkdir -p /data/workspace/${name}`);
-    await post('/api/projects', { path: `/data/workspace/${name}`, name });
+    const projPath = ws.mkProject(SUITE, name);
+    await post('/api/projects', { path: projPath, name });
   }
   const r = await get('/api/state');
   assert.equal(r.status, 200,
@@ -325,14 +331,14 @@ test('#468-LIVE-01: Gemini disk session claimed by exactly one project per /api/
   // per-CLI discovery cache (#372 [E2]); we use it on a throwaway project
   // to force a refresh before the test continues.
   const flushName = `_p468_flush_${ts}`;
-  dockerExec(`mkdir -p /data/workspace/${flushName}`);
-  await post('/api/projects', { path: `/data/workspace/${flushName}`, name: flushName });
+  const flushPath = ws.mkProject(SUITE, flushName);
+  await post('/api/projects', { path: flushPath, name: flushName });
   await post(`/api/projects/${flushName}/remove`);
 
   // 1. Create 2 projects
   for (const p of [`p468a_${ts}`, `p468b_${ts}`]) {
-    dockerExec(`mkdir -p /data/workspace/${p}`);
-    await post('/api/projects', { path: `/data/workspace/${p}`, name: p });
+    const projPath = ws.mkProject(SUITE, p);
+    await post('/api/projects', { path: projPath, name: p });
   }
 
   const projAId = dockerExec(`sqlite3 /data/.workbench/workbench.db "SELECT id FROM projects WHERE name='p468a_${ts}'"`);
@@ -381,9 +387,9 @@ test('#468-LIVE-01: Gemini disk session claimed by exactly one project per /api/
 // ── #454 — createTrustDir live (project creation exercises trustDir) ──────────
 
 test('#454-LIVE-01: POST /api/projects succeeds (createTrustDir from _shared wired correctly)', async () => {
-  dockerExec('mkdir -p /data/workspace/trust_live_proj');
+  const trustPath = ws.mkProject(SUITE, 'trust_live_proj');
   const r = await post('/api/projects', {
-    path: '/data/workspace/trust_live_proj',
+    path: trustPath,
     name: 'trust_live_proj',
   });
   // 200 (created) or 409 (already exists from prior run) — both prove the

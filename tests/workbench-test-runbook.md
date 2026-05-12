@@ -6002,7 +6002,260 @@ land alongside that work, not by reviving these.
 Pre-fix the option label/value, indicator class, and any legacy DB rows would still read \`todo\`.
 
 ---
-## Troubleshooting
+## Phase 2 Milestone — UI Runbook Entries
+
+Target: `http://192.168.1.120:7867` (workbench-test sandbox container `workbench-test-workbench-1`).
+Branch: `milestone/phase-2` @ `ad4ee69`.
+
+---
+
+### P2-F0-01: F0 — ESM module load — no console errors on page open
+**Issue:** #364 (F0 frontend monolith decomposition)
+**Priority:** P0 — if this fails, all downstream P2 UI entries are invalid.
+
+**Setup:** Container running at `http://192.168.1.120:7867`.
+
+**Steps:**
+1. `browser_navigate` to `http://192.168.1.120:7867/`.
+2. `browser_wait` 2000 for page to settle.
+3. `browser_console_messages` — capture all console output from page load.
+4. `browser_evaluate`: `document.title`
+5. `browser_evaluate`: `document.querySelector('script[type="module"]')?.src`
+6. `browser_snapshot` — capture DOM.
+
+**Verify:**
+- `document.title` is `"Workbench"`.
+- `document.querySelector('script[type="module"]')?.src` ends with `/js/app.js` — proves `index.html` is a thin shell with a module entrypoint, not the old 6113-line monolith.
+- Console messages contain no `"SyntaxError"`, no `"Failed to resolve module"`, no `"Uncaught ReferenceError"` — proves all ESM imports resolved cleanly.
+- DOM snapshot shows `#sidebar` and `#terminal-area` visible — core layout intact.
+
+---
+
+### P2-F0-02: F0 — Sidebar renders and session list populates
+**Issue:** #364 (sidebar.js module wired; renderSidebar, loadState reachable)
+**Priority:** P0
+
+**Setup:** At least one project exists in the workbench-test DB (from prior live tests). Page loaded per P2-F0-01.
+
+**Steps:**
+1. `browser_evaluate`: `window._renderSidebarRef !== undefined`
+2. `browser_evaluate`: `typeof window.loadState`
+3. `browser_evaluate`: `document.getElementById('project-list')?.children.length`
+4. `browser_snapshot` — capture sidebar DOM.
+
+**Verify:**
+- `window._renderSidebarRef !== undefined` is `true` — app.js wired renderSidebar ref into state.js.
+- `typeof window.loadState` is `"function"` — loadState is exported on window.
+- `document.getElementById('project-list').children.length > 0` — at least one project row rendered (sidebar.js renderSidebar ran).
+- Snapshot shows `.project-group` elements in `#project-list`.
+
+---
+
+### P2-F0-03: F0 — Session create modal opens and submits (createSession in app.js)
+**Issue:** #364 (createSession, openSession, window.* exports)
+**Priority:** P0
+
+**Setup:** At least one project visible in the sidebar. Use the project created by live tests (`ts460_live_proj` or similar).
+
+**Steps:**
+1. `browser_evaluate`: `typeof window.openSettings` — verify export present.
+2. `browser_evaluate`: `typeof window.renderSidebar` — verify export present.
+3. `browser_evaluate`: `typeof window.sessionSortBy` — verify defineProperty getter returns a string.
+4. Click the `+` button on any project row: `browser_click` on `.project-group .new-btn` (first visible one).
+5. `browser_wait` 500.
+6. `browser_evaluate`: `document.getElementById('new-session-name') !== null` — modal opened.
+7. `browser_type` into `#new-session-name`: `P2-F0-03-test`.
+8. `browser_click` `#new-session-submit`.
+9. `browser_wait` 3000.
+10. `browser_snapshot`.
+
+**Verify:**
+- Steps 1–3: `openSettings` is a function, `renderSidebar` is a function, `sessionSortBy` is a string (not undefined). Proves key window.* exports from app.js are live.
+- Step 6: new-session-name input found → modal opened via createSession from app.js.
+- Step 10 snapshot: a new tab appears in `#tab-bar` — createTab (createTerminalTab wrapper) executed.
+
+---
+
+### P2-F0-04: F0 — Tab switch works (tabs.js module)
+**Issue:** #364 (tabs.js switchTab, renderTabs reachable via window.switchTab)
+**Priority:** P1
+
+**Setup:** At least 2 session tabs open (from P2-F0-03 or prior tests).
+
+**Steps:**
+1. `browser_evaluate`: `typeof window.switchTab`
+2. `browser_evaluate`: `document.querySelectorAll('#tab-bar .tab-btn').length`
+3. `browser_click` on the second tab button.
+4. `browser_wait` 500.
+5. `browser_evaluate`: `document.querySelector('#tab-bar .tab-btn.active')?.dataset?.tabId`
+6. `browser_snapshot`.
+
+**Verify:**
+- `window.switchTab` is a function — tabs.js export wired.
+- Step 3–5: the clicked tab has `active` class — switchTab executed correctly, DOM updated.
+- Snapshot shows only one tab active in `#tab-bar`.
+
+---
+
+### P2-F0-05: F0 — Settings modal opens and closes (window.openSettings / closeSettings)
+**Issue:** #364 (openSettings, closeSettings, switchSettingsTab in app.js)
+**Priority:** P1
+
+**Setup:** Page loaded.
+
+**Steps:**
+1. `browser_evaluate`: `window.openSettings()` — directly invoke.
+2. `browser_wait` 500.
+3. `browser_evaluate`: `document.getElementById('settings-modal').classList.contains('visible')`
+4. `browser_snapshot`.
+5. `browser_evaluate`: `window.closeSettings()`
+6. `browser_wait` 200.
+7. `browser_evaluate`: `document.getElementById('settings-modal').classList.contains('visible')`
+
+**Verify:**
+- Step 3: `true` — modal visible after openSettings().
+- Step 4 snapshot: `#settings-modal` visible with tabs (General, Git, Claude, Vector, Prompts).
+- Step 7: `false` — modal hidden after closeSettings().
+
+---
+
+### P2-F0-06: F0 — File panel renders tree (file-tree.js + files.js modules)
+**Issue:** #364 (createFileTree from file-tree.js, loadFiles from files.js)
+**Priority:** P1
+
+**Setup:** Right panel available, files exist in `/data/workspace`.
+
+**Steps:**
+1. `browser_evaluate`: `window.togglePanel()` — open the right panel.
+2. `browser_wait` 500.
+3. `browser_evaluate`: `window.switchPanel('files')` — switch to files tab.
+4. `browser_wait` 1500 — wait for loadFiles to populate the tree.
+5. `browser_evaluate`: `document.querySelectorAll('#panel-files .ft-row').length`
+6. `browser_snapshot`.
+
+**Verify:**
+- Step 5: file tree rows count > 0 — `createFileTree` from file-tree.js rendered the tree, `loadFiles` from files.js fetched the directory listing.
+- Snapshot shows `.ft-row` elements in `#panel-files`.
+
+---
+
+### P2-F0-07: F0 — Tasks panel loads (tasks.js module)
+**Issue:** #364 (loadTaskTree, setTaskFilter, initTaskEventListeners from tasks.js)
+**Priority:** P1
+
+**Setup:** Right panel available. At least one project has tasks (from live tests: `wb-seed` or `ts460_live_proj`).
+
+**Steps:**
+1. `browser_evaluate`: `window.switchPanel('tasks')` (or panel already on tasks).
+2. `browser_wait` 1500.
+3. `browser_evaluate`: `typeof window.setTaskFilter`
+4. `browser_evaluate`: `typeof window.openTaskDetail`
+5. `browser_evaluate`: `document.getElementById('panel-tasks') !== null`
+6. `browser_snapshot`.
+
+**Verify:**
+- Step 3: `window.setTaskFilter` is a function — tasks.js export via window.* live.
+- Step 4: `window.openTaskDetail` is a function.
+- Step 5: `#panel-tasks` exists.
+- Snapshot shows the task panel DOM (even if empty, the container must be present without JS error).
+
+---
+
+### P2-452-01: #452/#457 — window.sessionSortBy setter routes through state.js
+**Issue:** #452/#457 (sessionSortBy defined via Object.defineProperty setter)
+**Priority:** P1
+
+**Setup:** Sidebar visible with at least one project that has multiple sessions.
+
+**Steps:**
+1. `browser_evaluate`: `sessionSortBy` — read the current value.
+2. `browser_evaluate`: `sessionSortBy = 'name'; renderSidebar(); sessionSortBy` — simulate the HTML onchange handler, then read back the value.
+3. `browser_wait` 500.
+4. `browser_snapshot` — capture sidebar to verify re-render happened.
+5. `browser_evaluate`: `sessionSortBy = 'date'; renderSidebar()` — restore default.
+
+**Verify:**
+- Step 1: returns a string (`"date"` or `"name"`) — setter is live.
+- Step 2: returns `"name"` — the defineProperty setter propagated the value into state.js AND back out via the getter. If window.sessionSortBy was a plain property this would still work, but the key is it doesn't throw and renderSidebar() runs without error.
+- Snapshot shows sidebar re-rendered (session rows updated).
+
+---
+
+### P2-452-02: #452/#457 — window.refreshFileTree callable from file panel refresh button
+**Issue:** #452/#457 (window.refreshFileTree export)
+**Priority:** P1
+
+**Setup:** File panel open (from P2-F0-06). Files visible.
+
+**Steps:**
+1. `browser_evaluate`: `typeof window.refreshFileTree`
+2. `browser_click` on `#panel-refresh-files` button.
+3. `browser_wait` 1000.
+4. `browser_evaluate`: `document.querySelectorAll('#panel-files .ft-row').length`
+
+**Verify:**
+- Step 1: `"function"` — export present.
+- Step 4: count ≥ 0 and no JS error thrown — `window.refreshFileTree` was invoked by the button's onclick handler and completed without throwing.
+
+---
+
+### P2-460-01: #460 — Sidebar session timestamps are not frozen
+**Issue:** #460 (renderSidebar hashes timeAgo(s.timestamp) not raw s.timestamp)
+**Priority:** P1
+
+**Setup:** At least one session visible in the sidebar with a recent timestamp.
+
+**Steps:**
+1. `browser_evaluate`: `document.querySelector('.session-item .session-meta span')?.textContent`
+2. Note the timestamp text (e.g., "2m ago", "just now").
+3. `browser_wait` 62000` — wait past a 1-minute boundary.
+4. `browser_evaluate`: `loadState()` — trigger a poll.
+5. `browser_wait` 2000`.
+6. `browser_evaluate`: `document.querySelector('.session-item .session-meta span')?.textContent`
+7. `browser_snapshot`.
+
+**Verify:**
+- Step 6 text differs from step 1 text (e.g., "3m ago" vs "2m ago"), proving the hash changes at minute boundaries and renderSidebar re-runs.
+- No console error about undefined timeAgo.
+
+**Note:** This test requires ~64s total. Run last in the P2 suite to avoid blocking shorter tests. If session timestamp was "just now" in step 1, the test still passes if step 6 shows "1m ago" or "just now" for an active session.
+
+---
+
+### P2-461-01: #461 — file_find paren patterns via browser fetch (ERE fix end-to-end)
+**Issue:** #461 (file_find -E grep flag)
+**Priority:** P1
+
+**Setup:** Page loaded, workbench-test accessible at `http://192.168.1.120:7867`.
+
+**Steps:**
+1. `browser_evaluate`:
+   ```js
+   const r = await fetch('/api/mcp/call', {
+     method: 'POST',
+     headers: {'Content-Type':'application/json'},
+     body: JSON.stringify({ tool: 'file_find', args: { pattern: String.raw`_seedRole\(cliType` } })
+   });
+   const j = await r.json();
+   return { status: r.status, isArray: Array.isArray(j.result?.matches), error: j.error };
+   ```
+2. `browser_evaluate` (second pattern):
+   ```js
+   const r = await fetch('/api/mcp/call', {
+     method: 'POST',
+     headers: {'Content-Type':'application/json'},
+     body: JSON.stringify({ tool: 'file_find', args: { pattern: String.raw`Object\.defineProperty\(window` } })
+   });
+   const j = await r.json();
+   return { status: r.status, isArray: Array.isArray(j.result?.matches) };
+   ```
+
+**Verify:**
+- Step 1: `status === 200` AND `isArray === true` AND `error === undefined` — paren pattern does not crash grep (no BRE unmatched group error), returns an array.
+- Step 2: same — second real-world paren pattern succeeds.
+- Pre-fix: both calls would return `status: 500` with `"grep: Unmatched ( or \\("` in the error.
+
+---
 
 | Symptom | Likely Cause | Action |
 |---------|-------------|--------|

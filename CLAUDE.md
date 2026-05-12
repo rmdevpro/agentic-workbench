@@ -16,16 +16,18 @@ docker exec workbench sqlite3 /data/.workbench/workbench.db \
 
 **Machine names are not environment designators.** M5, irina, hymie, HF — any of them can be production. The `logo_variant` value is the only authoritative signal.
 
-# Monitoring rule
+# Operating Modes
 
-**Inline synchronous polling is the ONLY acceptable way to monitor a long-running job.** Use `session_wait` followed immediately by a tmux/screen check, repeated until done.
+You operate in one of two modes at any given moment. See [PROC-007 — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-007-agent-operating-modes.md) for the canonical statement.
 
-**Forbidden — never use these for progress monitoring:**
-- The `Monitor` tool
-- `run_in_background: true` on any Bash command used for polling
-- Any background process or event-driven approach for progress checks
+- **Conversational mode (default):** answer the user's message, wait for the next. Don't jump ahead. The user does the steering.
+- **Autonomous mode:** drive a multi-step process to completion. Poll continuously, run iterations back-to-back without waiting for user prompts, report only meaningful events. User messages are redirection, not loop triggers.
 
-This applies to monitoring Lead sessions, deploys, test runs, sub-agents, and any other long-running work. See PROC-003 §"Foreground polling only" for the canonical statement.
+**Inline foreground polling is the ONLY acceptable way to monitor a long-running job.** Primary pattern:
+```
+start=$(date +%s); end=$((start + 60)); until [ $(date +%s) -ge $end ]; do sleep 2; done; <check-command>
+```
+The `Monitor` tool and `run_in_background` are forbidden for progress checks.
 
 # Testing rule (UI features)
 

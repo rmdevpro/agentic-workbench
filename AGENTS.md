@@ -45,10 +45,10 @@ You operate in one of two modes at any given moment. See [PROC-007 — Agent Ope
 - **Conversational mode (default):** answer the user's message, wait for the next. Don't jump ahead. The user does the steering.
 - **Autonomous mode:** drive a multi-step process to completion. Poll continuously, run iterations back-to-back without waiting for user prompts, report only meaningful events. User messages are redirection, not loop triggers.
 
-**Inline foreground polling is the ONLY acceptable way to monitor a long-running job.** Primary pattern:
-```
-start=$(date +%s); end=$((start + 60)); until [ $(date +%s) -ge $end ]; do sleep 2; done; <check-command>
-```
+**Inline foreground polling is the ONLY acceptable way to monitor a long-running job.** Two valid patterns — pick whichever fits the situation:
+- `session_wait {session_id, seconds}` + `session_read_screen` — for workbench-managed CLI sessions.
+- `start=$(date +%s); end=$((start + 60)); until [ $(date +%s) -ge $end ]; do sleep 2; done; <check>` — for anything else (deploys, file growth, external commands).
+
 The `Monitor` tool and `run_in_background` are forbidden for progress checks.
 
 # This Repository

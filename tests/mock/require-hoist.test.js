@@ -16,15 +16,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 
-// acorn is a devDependency. Production containers run `npm ci --omit=dev`
-// and don't ship it; skip the structural check there.
-let acorn;
-try { acorn = require('acorn'); }
-catch { /* devDep missing — skip */ }
-if (!acorn) {
-  test('HOIST: skipped (acorn devDep not installed)', { skip: true }, () => {});
-  return;
-}
+// acorn is a runtime dependency so the structural HOIST check runs in every
+// environment (#479 — PROC-004 Principle 2: SKIP is not a valid test result).
+const acorn = require('acorn');
 
 const FILES = [
   path.join(__dirname, '..', '..', 'src', 'routes.js'),

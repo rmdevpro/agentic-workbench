@@ -304,12 +304,21 @@ test('#468-LIVE-01: Gemini disk session claimed by exactly one project per /api/
   //
   // Robustness: both sessions and the file use FUTURE_TS (2030-01-01) as their
   // timestamp. The _matchFromList time-proximity path (#2) matches sessions whose
-  // created_at is within 60s of the disk file's timestamp. Since no other test
-  // session/file ever uses 2030-01-01, the match is unambiguous regardless of
-  // leftover Gemini files from previous test runs on the persistent /data volume.
+  // created_at is within 60s of the disk file's timestamp. The cleanup step below
+  // removes any leftover p468-test-* directories from prior runs (they share the
+  // same hardcoded FUTURE_TS and would otherwise pollute the time-proximity match).
   const ts = Date.now();
   const FUTURE_TS = '2030-01-01T00:00:00.000Z'; // far future — unique across all test runs
   const GEM_SID = `gem-claim-live-${ts}`;        // unique sessionId in the header
+
+  // 0. CLEANUP: remove leftover p468-test-* dirs from prior test runs.
+  // The persistent /data volume in workbench-test accumulates these across
+  // gate-regression cycles; their FUTURE_TS timestamps collide with ours
+  // and cause _matchFromList to pick a stale leftover instead of our plant.
+  // The 12s wait below ensures any in-flight discovery cache fully expires
+  // (TTL = 10s) so the next /api/state refresh re-reads disk and sees only
+  // our just-planted file.
+  dockerExec('rm -rf /data/.gemini/tmp/p468-test-*');
 
   // 1. Create 2 projects
   for (const p of [`p468a_${ts}`, `p468b_${ts}`]) {

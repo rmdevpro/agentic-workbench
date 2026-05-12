@@ -83,7 +83,7 @@ export function renderSidebar() {
   if (window._searchActive) return;
   const stateHash = JSON.stringify(projectState.map(p => ({
     n: p.name, m: p.missing, st: p.state, pg: p.program_id,
-    s: p.sessions.map(s => ({ id: s.id, name: s.name, active: s.active, state: s.state, cli: s.cli_type, mc: s.messageCount, ts: window.timeAgo ? window.timeAgo(s.timestamp) : s.timestamp }))
+    s: p.sessions.map(s => ({ id: s.id, name: s.name, active: s.active, state: s.state, cli: s.cli_type, mc: s.messageCount, ts: s.active ? 'active' : (window.timeAgo ? window.timeAgo(s.timestamp) : s.timestamp) }))
   }))) + JSON.stringify(programState.map(p => ({ id: p.id, n: p.name, st: p.status }))) + sessionFilter + sessionSortBy + activeTabId + [...tabs.keys()].join(',') + [...expandedPrograms].join(',');
   const container = document.getElementById('project-list');
   if (stateHash === renderSidebar._lastHash && container.childElementCount > 0) return;
@@ -240,7 +240,7 @@ export function renderSidebar() {
             }
             return `<span style="font-size:13px;color:${color};line-height:1" title="${cli}">${icons[cli] || '?'}</span>`;
           })()}
-          <span>${timeAgo(session.timestamp)}</span>
+          <span>${session.active ? 'just now' : timeAgo(session.timestamp)}</span>
           <span class="msg-count">${session.messageCount != null ? session.messageCount : ''}</span>
           <span style="font-size:9px;color:var(--text-muted);margin-left:2px">${escHtml(session.model || '')}</span>
         </div>
@@ -396,24 +396,15 @@ export async function loadState() {
           if (edit.state != null) p.state = edit.state;
           if (edit.notes != null) p.notes = edit.notes;
         }
-        if (Array.isArray(p.sessions)) {
-          // Build a lookup of current client-side session state (before overwrite)
-          const _prevProj = (projectState || []).find(ep => ep.name === p.name);
+        if (Array.isArray(p.sessions) && window._pendingSessionEdits && window._pendingSessionEdits.size) {
           for (const s of p.sessions) {
-            if (window._pendingSessionEdits && window._pendingSessionEdits.has(s.id)) {
+            if (window._pendingSessionEdits.has(s.id)) {
               const edit = window._pendingSessionEdits.get(s.id);
               if (edit.name != null) s.name = edit.name;
               if (edit.state != null) s.state = edit.state;
               if (edit.notes != null) s.notes = edit.notes;
               if (edit.archived != null) s.archived = !!edit.archived;
             }
-            // Preserve hydrated timestamp for sessions the client knows are
-            // active. loadState() overwrites projectState with raw API data
-            // (backend timestamp = stale session_meta for in-progress turns);
-            // an active session's timestamp was stamped 'now' by hydration and
-            // must not be reverted to the stale value on the next poll.
-            const prev = _prevProj?.sessions?.find(ps => ps.id === s.id);
-            if (prev?.active && prev.timestamp) s.timestamp = prev.timestamp;
           }
         }
       }

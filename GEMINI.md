@@ -24,20 +24,6 @@ To interact with another CLI session, use the `session_*` tools — they handle 
 
 - `docs/guides/using-cli-sessions.md` — patterns for driving CLI sessions through the `session_*` tools (sending prompts, watching for startup dialogs, reading responses)
 
-# Deploy safety rule
-
-Before any deploy, two checks must pass in order:
-
-1. **Never deploy to yourself.** You are running inside a container. The target machine cannot be the one you are running on — it kills the current session.
-2. **Read `logo_variant` on the target first.** `production` = stop, do not deploy. `development` or `default` = may proceed.
-
-```
-docker exec workbench sqlite3 /data/.workbench/workbench.db \
-  "SELECT value FROM settings WHERE key = 'logo_variant'"
-```
-
-**Machine names are not environment designators.** M5, irina, hymie, HF — any of them can be production. The `logo_variant` value is the only authoritative signal.
-
 # Operating Modes
 
 You operate in one of two modes at any given moment. See [PROC-001 — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md) for the canonical statement.
@@ -57,7 +43,16 @@ This repository is the source code for the Agentic Workbench application — the
 
 # Anchor Documents
 
-These documents define the standards and context this project must be reviewed and developed against. When a document is relevant to your current task, read it fully. Do not grep or search within documents — content cannot be understood out of context. A document that is partially read is a document misread.
+These documents define the standards and context this project must be reviewed and developed against. **`README.md` (under §This Repository) must be read on every session.** Other documents must be read fully when relevant to your current task. Do not grep or search within documents — content cannot be understood out of context. A document that is partially read is a document misread.
+
+## This Repository
+
+- `README.md` — architecture, module structure, dependency graph, configuration reference, and compliance notes. **Read on every session.**
+- `tests/workbench-test-plan-backend.md` — backend test plan. Read before writing backend tests or reviewing backend changes.
+- `tests/workbench-test-plan-ui.md` — UI test plan. Read before writing UI tests or reviewing UI changes.
+- `tests/workbench-test-runbook.md` — master UI test runbook. Read before running UI tests.
+- `tests/traceability-matrix.md` — test coverage traceability matrix. Read to understand current coverage status before adding or modifying tests.
+- `/data/workspace/repos/Admin/docs/guides/workbench-deployment.md` — deployment specifics for this repo: safety rules, architecture, `/data` volume, dev/prod indicator, add-on installation. Read before deploying or working on container/infrastructure code.
 
 ## Engineering Standards
 
@@ -71,21 +66,11 @@ These documents define the standards and context this project must be reviewed a
 
 - `/data/workspace/repos/Admin/docs/process/SDLC-1-version-creation.md` — open a new release `rN`, set up team + artifact paths. Read when starting a new project or just after release close.
 - `/data/workspace/repos/Admin/docs/process/SDLC-2-release-planning.md` — populate the open `rN` Project with milestones + issues + release-specific scope matrix. Read at planning time.
-- `/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md` — 13-stage pipeline for one milestone (covers normal multi-issue milestones AND single-issue urgent patches via the patch path). Read whenever you're executing a milestone.
+- `/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md` — 13-stage pipeline for executing one milestone. Read whenever you're executing a milestone.
 - `/data/workspace/repos/Admin/docs/process/SDLC-4-release-close.md` — full-regression release gate, prod deploy, close `rN` Project, open `rN+1`. Read at release close.
 - `/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md` — conversational vs autonomous mode rules. Read at session start.
-- `/data/workspace/repos/Admin/docs/process/PROC-002-test-execution-policy.md` — canonical policy for which tests run and when.
+- `/data/workspace/repos/Admin/docs/process/PROC-002-test-execution-policy.md` — canonical policy for which tests run and when (includes the UI-headless-browser rule in Principle 8). Read before authoring or running tests.
 - `/data/workspace/repos/Admin/docs/process/PROC-003-test-scope-matrix.md` — global test scope matrix (consumed during SDLC-2 to produce the release-specific matrix).
 - `/data/workspace/repos/Admin/docs/process/PROC-004-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Used by SDLC-3 (UI test stages) and SDLC-4 (release-gate UI run).
-
-## Deployment
-
-- `/data/workspace/repos/Admin/docs/guides/workbench-deployment.md` — deployment architecture, the `/data` volume convention, dev/prod distinction, and add-on installation. Read before any deployment or infrastructure work.
-
-## This Repository
-
-- `README.md` — architecture, module structure, dependency graph, configuration reference, and compliance notes. Read before working on any part of the codebase.
-- `tests/workbench-test-plan-backend.md` — backend test plan. Read before writing backend tests or reviewing backend changes.
-- `tests/workbench-test-plan-ui.md` — UI test plan. Read before writing UI tests or reviewing UI changes.
-- `tests/workbench-test-runbook.md` — master UI test runbook. Read before running UI tests.
-- `tests/traceability-matrix.md` — test coverage traceability matrix. Read to understand current coverage status before adding or modifying tests.
+- `/data/workspace/repos/Admin/docs/process/PROC-005-review.md` — unified review procedure (code and docs) via 3-CLI quorum: round structure, review-request issue contract, PM dispatch contract, findings contract, per-round and per-milestone Definitions of Done, Stage 12 PR variant, content variations for code vs doc reviews.
+- `/data/workspace/repos/Admin/docs/runbooks/RUN-001-deployment.md` — step-by-step deploy procedure (build → push → pull → up). Read before any deploy.

@@ -211,9 +211,10 @@ Ask the orchestrator which option to use. If neither is available, fix the auth 
 1. 0.A complete (fresh container, /health green, empty-state UI rendered).
 2. Hymie (or Hymie2) remote desktop is reachable via MCP. **0.C requires Hymie** — the Claude CLI's `/login` flow opens an OAuth window via the host browser; headless Chromium cannot drive the system-level OAuth handoff. This is the one mandatory Hymie entry in Section 0 (along with 0.D). All other entries in this runbook are headless.
 3. From Hymie, open the desktop's default browser to `${WORKBENCH_URL}`. Pass the gate page if applicable. The workbench shell renders (sidebar + main panel visible).
-4. In the sidebar, click the `+` icon on the `wb-seed` project header. The new-session dropdown opens.
-5. Click the `Claude` row in the dropdown. The session-create overlay appears.
-6. Type session name `oauth-bootstrap-claude` and click `Start Session`. Wait up to 30s for the Claude session tab to open in the tab bar and the Claude input area to render in the terminal pane (the input area's screen position is not asserted — see SMOKE-CHAT-01 step 5 claude note; confirm readiness by typing a single `x` character into the focused pane and observing it render inline as a glyph, then delete it).
+4. **Precondition affirmation (§12.11 explicit Setup):** click the `⚙ Settings` button at the bottom of the sidebar; in the General tab, locate the `OAuth detection` settings group; screenshot-affirm the `Claude` checkbox is in the checked state (✓ glyph visible in the box); press Escape to close Settings. The 0.C trigger only fires the modal if this toggle is ON; without this affirmation a silent toggle-OFF would mask a false negative.
+5. In the sidebar, click the `+` icon on the `wb-seed` project header. The new-session dropdown opens.
+6. Click the `Claude` row in the dropdown. The session-create overlay appears.
+7. Type session name `oauth-bootstrap-claude` and click `Start Session`. Wait up to 30s for the Claude session tab to open in the tab bar and the Claude input area to render in the terminal pane (the input area's screen position is not asserted — see SMOKE-CHAT-01 step 5 claude note; confirm readiness by typing a single `x` character into the focused pane and observing it render inline as a glyph, then delete it).
 
 **Steps:**
 1. Click into the Claude terminal pane to focus it (real mouse via Hymie).
@@ -239,8 +240,9 @@ Ask the orchestrator which option to use. If neither is available, fix the auth 
 1. 0.A complete.
 2. Hymie reachable via MCP. **0.D requires Hymie** — Gemini CLI's OAuth handoff cannot be driven by headless Chromium for the same reason as 0.C.
 3. From Hymie, open the desktop browser to `${WORKBENCH_URL}`. Pass the gate. The workbench shell renders.
-4. Click the `+` icon on the `wb-seed` project header. The new-session dropdown opens.
-5. Click the `Gemini` row. Type session name `oauth-bootstrap-gemini` in the overlay and click `Start Session`. Wait up to 30s for the Gemini session tab to open and the `>` Gemini prompt to render at the bottom of the terminal pane.
+4. **Precondition affirmation (§12.11 explicit Setup):** click `⚙ Settings`; in the General tab → `OAuth detection` group, screenshot-affirm the `Gemini` checkbox is checked; press Escape to close. The 0.D trigger only fires the modal if this toggle is ON.
+5. Click the `+` icon on the `wb-seed` project header. The new-session dropdown opens.
+6. Click the `Gemini` row. Type session name `oauth-bootstrap-gemini` in the overlay and click `Start Session`. Wait up to 30s for the Gemini session tab to open and the `>` Gemini prompt to render at the bottom of the terminal pane.
 
 **Steps:**
 1. Click into the Gemini terminal pane to focus.
@@ -266,6 +268,7 @@ Ask the orchestrator which option to use. If neither is available, fix the auth 
 1. 0.B complete (Claude credentials seated; workbench shell renders).
 2. **0.E does NOT require Hymie** — runs headless via Playwright MCP against `${WORKBENCH_URL}`. Included in Section 0 because the bug class is the OAuth-detection checkbox's `oauthDetection` binding, which lives in the same code area as 0.C/0.D's modal trigger.
 3. Open the browser DevTools console (Playwright's `browser_console_messages` captures it). Clear the console buffer immediately before Steps so any captured message is attributable to this entry.
+4. **Precondition affirmation (§12.11 explicit Setup):** click `⚙ Settings` → General tab → `OAuth detection` group; screenshot-affirm the `Claude` checkbox is in the checked state at baseline (this entry tests checked → unchecked → reload → still unchecked; if baseline were already unchecked the assertion-01 would be a no-op). Press Escape to close before Steps begin.
 
 **Steps:**
 1. Click the `⚙ Settings` button at the bottom of the sidebar.
@@ -282,6 +285,164 @@ Ask the orchestrator which option to use. If neither is available, fix the auth 
 
 **Teardown:**
 - Click the `Claude` OAuth-detection checkbox to restore the default checked state. Click outside the modal to dismiss. State returns to 0.B baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 0.C.NEG: OAUTH-DETECT-CLAUDE-OFF-01 — Claude `/login` with Claude OAuth-detection OFF does NOT trigger modal (negative parity for 0.C)
+
+**Cascade-from:** 0.B
+**Closes gap for:** §12.11 axis-1 negative case for Claude OAuth-detection toggle (paired with 0.C positive)
+
+**Setup:**
+1. 0.B complete (Claude auth seated). Hymie reachable.
+2. From Hymie, open the desktop browser to `${WORKBENCH_URL}`. Workbench shell renders.
+3. **Toggle OFF (Setup):** click `⚙ Settings` → General → `OAuth detection` group; if the `Claude` checkbox is checked, click it to uncheck. Screenshot-affirm the `Claude` checkbox is now in the unchecked state (✓ glyph absent). Press Escape to close Settings.
+4. In the sidebar, click `+` on `wb-seed` → click `Claude` row → name session `oauth-off-claude` → `Start Session`. Wait up to 30s for the Claude session tab and ready observable (per SMOKE-CHAT-01 step 5 claude form).
+
+**Steps:**
+1. Click into the Claude terminal pane (real Hymie mouse).
+2. Type `/login` (Hymie keyboard).
+3. Press Enter.
+
+**Verify:**
+- ≤2s after step 3: NO workbench OAuth modal overlay is rendered. The screen shows the Claude terminal pane unchanged from its state immediately before step 3 — no `Authenticate with Claude` heading, no link button, no overlay panel. → `0.C.NEG/assertion-01-no-modal.png`
+- ≤5s after step 3: the Claude terminal pane shows the CLI's own response to `/login` (the Claude CLI's native handoff — whatever it normally does when the workbench-side detector is off, e.g., printing the auth URL to the terminal pane as plain text), with no overlay obscuring the pane. → `0.C.NEG/assertion-02-claude-native-handoff.png`
+- ≤5s after step 3: supplementary diagnostic — the DevTools console (Playwright `browser_console_messages` capture) shows zero entries from the `oauth-detector` module's modal-trigger code path during the 5s window. → `0.C.NEG/assertion-03-no-detector-fired.png`
+
+**Teardown:**
+- Press Ctrl+C to dismiss the Claude `/login` prompt without authenticating. Restore the toggle to its baseline checked state: click `⚙ Settings` → General → check the `Claude` OAuth-detection checkbox → close Settings. Right-click the `oauth-off-claude` row → Remove session.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 0.D.NEG: OAUTH-DETECT-GEMINI-OFF-01 — Gemini `/auth` with Gemini OAuth-detection OFF does NOT trigger modal (negative parity for 0.D)
+
+**Cascade-from:** 0.B
+**Closes gap for:** §12.11 axis-1 negative case for Gemini OAuth-detection toggle (paired with 0.D positive)
+
+**Setup:**
+1. 0.B complete. Hymie reachable.
+2. From Hymie, browser to `${WORKBENCH_URL}`. Workbench shell renders.
+3. **Toggle OFF (Setup):** click `⚙ Settings` → General → `OAuth detection` group; click the `Gemini` checkbox to uncheck it. Screenshot-affirm the `Gemini` checkbox is unchecked. Press Escape to close Settings.
+4. Click `+` on `wb-seed` → `Gemini` row → name `oauth-off-gemini` → `Start Session`. Wait up to 30s for the Gemini `>` prompt at the bottom of the pane.
+
+**Steps:**
+1. Click into the Gemini terminal pane.
+2. Type `/auth`.
+3. Press Enter.
+
+**Verify:**
+- ≤3s after step 3: NO workbench OAuth modal overlay is rendered; the screen shows the Gemini terminal pane unchanged. → `0.D.NEG/assertion-01-no-modal.png`
+- ≤5s after step 3: the Gemini terminal pane shows the CLI's own auth handoff output (URL printed to the pane as plain text or whatever Gemini's native handoff is when the workbench detector is off). → `0.D.NEG/assertion-02-gemini-native-handoff.png`
+- ≤5s after step 3: supplementary diagnostic — DevTools console shows zero `oauth-detector` modal-trigger entries. → `0.D.NEG/assertion-03-no-detector-fired.png`
+
+**Teardown:**
+- Dismiss the Gemini `/auth` prompt. Re-check the `Gemini` OAuth-detection checkbox in Settings to restore baseline. Right-click the `oauth-off-gemini` row → Remove session.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 0.E.GEMINI: OAUTH-CHECKBOX-PERSIST-GEMINI-01 — Gemini OAuth-detection checkbox persists + raises no ReferenceError (peer of 0.E)
+
+**Cascade-from:** 0.B
+**Closes gap for:** §12.11 axis-2 peer parity for OAuth-detection checkbox persistence (paired with 0.E Claude)
+
+**Setup:**
+1. 0.B complete. Headless Playwright session against `${WORKBENCH_URL}`.
+2. Clear the DevTools console buffer.
+3. **Precondition affirmation:** click `⚙ Settings` → General → `OAuth detection` group; screenshot-affirm the `Gemini` checkbox is at its baseline (the test toggles it; baseline must be observable). Press Escape to close Settings.
+
+**Steps:**
+1. Click `⚙ Settings`. Click the `General` tab.
+2. Locate the `OAuth detection` settings group. Note the `Gemini` checkbox current state from Setup step 3.
+3. Click the `Gemini` checkbox to flip its state.
+4. Press Escape to dismiss Settings.
+5. Reload the page (F5 or Playwright `browser_navigate` to the same URL).
+6. Re-open `⚙ Settings` → General → locate the `OAuth detection` group → `Gemini` row.
+
+**Verify:**
+- ≤1s after step 3: the `Gemini` OAuth-detection checkbox visibly shows its flipped state (opposite of baseline). → `0.E.GEMINI/assertion-01-checkbox-flipped.png`
+- ≤2s after step 6: the `Gemini` checkbox shows the same flipped state after reload (persistence). → `0.E.GEMINI/assertion-02-persisted.png`
+- ≤2s after step 3: supplementary diagnostic — DevTools console shows zero `oauthDetection` ReferenceError entries from the toggle click. → `0.E.GEMINI/assertion-03-console-clean.png`
+
+**Teardown:**
+- Click the `Gemini` OAuth-detection checkbox to restore baseline. Close Settings.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 0.E.CODEX: OAUTH-CHECKBOX-PERSIST-CODEX-01 — Codex OAuth-detection checkbox persists + raises no ReferenceError (peer of 0.E)
+
+**Cascade-from:** 0.B
+**Closes gap for:** §12.11 axis-2 peer parity for OAuth-detection checkbox persistence (paired with 0.E Claude)
+
+**Setup:**
+1. 0.B complete. Headless Playwright session against `${WORKBENCH_URL}`.
+2. Clear the DevTools console buffer.
+3. **Precondition affirmation:** click `⚙ Settings` → General → `OAuth detection` group; screenshot-affirm the `Codex` checkbox is at its baseline. Press Escape to close Settings.
+
+**Steps:**
+1. Click `⚙ Settings`. Click `General`.
+2. In the `OAuth detection` group, click the `Codex` checkbox to flip its state.
+3. Press Escape.
+4. Reload the page.
+5. Re-open `⚙ Settings` → General → `OAuth detection` group.
+
+**Verify:**
+- ≤1s after step 2: the `Codex` OAuth-detection checkbox visibly shows its flipped state. → `0.E.CODEX/assertion-01-checkbox-flipped.png`
+- ≤2s after step 5: the `Codex` checkbox shows the same flipped state after reload (persistence). → `0.E.CODEX/assertion-02-persisted.png`
+- ≤2s after step 2: supplementary diagnostic — DevTools console shows zero `oauthDetection` ReferenceError entries from the toggle click. → `0.E.CODEX/assertion-03-console-clean.png`
+
+**Teardown:**
+- Click the `Codex` OAuth-detection checkbox to restore baseline. Close Settings.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 0.F: OAUTH-MODAL-CODEX-01 — Codex `/login`-equivalent triggers OAuth modal with extracted URL (peer of 0.C / 0.D)
+
+**Cascade-from:** 0.B
+**Closes gap for:** §12.11 axis-1 + axis-2 — Codex OAuth-detection toggle ON / positive case (paired with 0.C Claude and 0.D Gemini)
+
+**Setup:**
+1. 0.B complete. Hymie reachable. **0.F requires Hymie** — same reason as 0.C / 0.D (OAuth handoff cannot be driven headless).
+2. From Hymie, browser to `${WORKBENCH_URL}`. Workbench shell renders.
+3. **Precondition affirmation:** click `⚙ Settings` → General → `OAuth detection` group; screenshot-affirm the `Codex` checkbox is checked; press Escape.
+4. Click `+` on `wb-seed` → `Codex` row → name `oauth-bootstrap-codex` → `Start Session`. Wait up to 30s for the Codex session tab and the Codex input field (at the bottom of the pane per its current rendering — Codex CLI does not exhibit the input-position drift the SMOKE-CHAT-01 Phase A note flagged for Claude).
+
+**Steps:**
+1. Click into the Codex terminal pane (Hymie mouse).
+2. Type the Codex login slash (`/login` or the Codex-current-version equivalent — verify against the Codex CLI's slash list if unsure) and press Enter.
+3. Observe Codex emit its authentication URL line in the terminal pane.
+
+**Verify:**
+- ≤3s after step 2: the workbench OAuth modal renders as an overlay with an `Authenticate with` heading and a link button visible. → `0.F/assertion-01-modal-rendered.png`
+- ≤3s after step 2: the modal's link button URL (hover-revealed via Hymie tooltip) starts with the Codex OAuth provider's URL prefix (`https://auth.openai.com/` or whatever the current Codex provider is at the pinned image version) and matches the URL the Codex CLI emitted in step 2. → `0.F/assertion-02-modal-url-matches.png`
+- ≤3s after step 2: a code-input field is visible inside the modal with a Submit button beside it (same modal structure as 0.C and 0.D). → `0.F/assertion-03-code-input-visible.png`
+
+**Teardown:**
+- Click the modal's `×` close affordance. Modal disappears ≤1s. Right-click the `oauth-bootstrap-codex` row → Remove session.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 0.F.NEG: OAUTH-DETECT-CODEX-OFF-01 — Codex `/login`-equivalent with Codex OAuth-detection OFF does NOT trigger modal (negative parity for 0.F)
+
+**Cascade-from:** 0.B
+**Closes gap for:** §12.11 axis-1 negative case for Codex OAuth-detection toggle
+
+**Setup:**
+1. 0.B complete. Hymie reachable.
+2. From Hymie, browser to `${WORKBENCH_URL}`. Workbench shell renders.
+3. **Toggle OFF (Setup):** click `⚙ Settings` → General → `OAuth detection` group; click the `Codex` checkbox to uncheck it. Screenshot-affirm the `Codex` checkbox is unchecked. Press Escape.
+4. Click `+` on `wb-seed` → `Codex` → name `oauth-off-codex` → `Start Session`. Wait for the Codex input field ready observable.
+
+**Steps:**
+1. Click into the Codex terminal pane.
+2. Type the Codex login slash and press Enter.
+
+**Verify:**
+- ≤3s after step 2: NO workbench OAuth modal overlay is rendered. → `0.F.NEG/assertion-01-no-modal.png`
+- ≤5s after step 2: the Codex terminal pane shows the CLI's own native auth handoff output. → `0.F.NEG/assertion-02-codex-native-handoff.png`
+- ≤5s after step 2: supplementary diagnostic — DevTools console shows zero `oauth-detector` modal-trigger entries. → `0.F.NEG/assertion-03-no-detector-fired.png`
+
+**Teardown:**
+- Dismiss the Codex `/login` prompt. Re-check the `Codex` OAuth-detection checkbox in Settings. Right-click `oauth-off-codex` row → Remove session.
 
 **Result:** ☐ PASS ☐ FAIL
 
@@ -522,8 +683,10 @@ After all three CLIs complete the block, three tabs are open in the tab bar; sub
 3. Observe the tab strip at the top (or side) of the modal — it lists the configured settings tabs.
 4. Click the Claude Code tab; observe the content area changes.
 5. Click the Vector Search tab; observe the content area changes.
-6. Click the close affordance (× glyph) on the modal (or press Escape).
-7. The modal closes.
+6. Click the Git tab; observe the content area changes.
+7. Click the System Prompts tab; observe the content area changes.
+8. Click the close affordance (× glyph) on the modal (or press Escape).
+9. The modal closes.
 
 **Verify (numbered assertions):**
 
@@ -531,7 +694,9 @@ After all three CLIs complete the block, three tabs are open in the tab bar; sub
 2. The settings modal's tab strip shows at least the labels "General," "Claude Code," "Vector Search," and "System Prompts" (the four tabs per the Meta section above), all visible simultaneously. *(Cascades from assertion 1.)* → `SMOKE-SETTINGS-01/assertion-02-tabs-visible.png`
 3. Within 1s of clicking the Claude Code tab, the modal's content area shows Claude-Code-specific controls (model selector, thinking mode, keepalive — whatever the current Claude Code tab contents are), visibly different from the General tab's content area. → `SMOKE-SETTINGS-01/assertion-03-claude-tab-content.png`
 4. Within 1s of clicking the Vector Search tab, the modal's content area shows Vector-Search-specific controls, visibly different from the Claude Code tab. → `SMOKE-SETTINGS-01/assertion-04-vector-tab-content.png`
-5. Within 1s of clicking the modal's close affordance (or pressing Escape), the settings modal is no longer visible. → `SMOKE-SETTINGS-01/assertion-05-modal-dismissed.png`
+5. Within 1s of clicking the Git tab (per `data-settings-tab="git"` registered in `public/index.html` and `git-accounts` route in `src/routes/`), the modal's content area shows Git Accounts controls (account list + add-account form with `github.com/yourname` placeholder and Personal access token field), visibly different from the Vector Search tab. (§12.11 axis-2 — Settings-tab peer parity, complementing the General/Claude Code/Vector Search assertions above.) → `SMOKE-SETTINGS-01/assertion-05-git-tab-content.png`
+6. Within 1s of clicking the System Prompts tab, the modal's content area shows System-Prompts-specific controls (the per-CLI prompt-file buttons C / G / X for Claude / Gemini / Codex and the project template textarea), visibly different from the Git tab. (§12.11 axis-2 — completes the per-tab parity sweep across all 4 documented Settings tabs.) → `SMOKE-SETTINGS-01/assertion-06-prompts-tab-content.png`
+7. Within 1s of clicking the modal's close affordance (or pressing Escape), the settings modal is no longer visible. → `SMOKE-SETTINGS-01/assertion-07-modal-dismissed.png`
 
 **Failure mode:** any assertion failing stops Gate C.
 
@@ -653,7 +818,8 @@ Verify the sidebar handles (a) optimistic-mutation in-flight without flicker (#3
 
 **Setup:**
 1. SMOKE-CHAT-01 complete (smoke-chat-claude / smoke-chat-gemini / smoke-chat-codex sessions exist as sidebar rows under `wb-seed`).
-2. Orchestrator configures Playwright to hold `PUT /api/sessions/*/archive` responses for 4 seconds: `await page.route('**/api/sessions/*/archive', async (route) => { await new Promise(r => setTimeout(r, 4000)); return route.continue(); });`. This is a network-layer throttle at the test harness, not in-page state manipulation.
+2. **Baseline-glyph affirmation (§12.11 explicit Setup):** screenshot-affirm the `smoke-chat-claude` row's Archive affordance is in the unchecked (☐) state at start. If a prior run left it in the checked (☑) state, click it once to restore baseline before proceeding — otherwise assertion-01's "transitions to ☑" silently passes on a no-op.
+3. Orchestrator configures Playwright to hold `PUT /api/sessions/*/archive` responses for 4 seconds: `await page.route('**/api/sessions/*/archive', async (route) => { await new Promise(r => setTimeout(r, 4000)); return route.continue(); });`. This is a network-layer throttle at the test harness, not in-page state manipulation.
 
 **Steps:**
 1. In the sidebar, locate the `smoke-chat-claude` session row under `wb-seed`. The row has an Archive affordance (☐ checkbox glyph).
@@ -677,8 +843,9 @@ Verify the sidebar handles (a) optimistic-mutation in-flight without flicker (#3
 **Closes gap for:** #408
 
 **Setup:**
-1. SMOKE-CHAT-01 complete (smoke-chat-gemini + smoke-chat-codex rows visible in sidebar).
-2. Note the current sidebar timestamp text shown beneath each row for `smoke-chat-gemini` and `smoke-chat-codex`. Take a baseline screenshot of the sidebar.
+1. SMOKE-CHAT-01 complete (smoke-chat-claude + smoke-chat-gemini + smoke-chat-codex rows visible in sidebar).
+2. **Baseline-timestamp affirmation (§12.11 explicit Setup):** screenshot the sidebar showing each smoke-chat-* row's current timestamp text. Read the visible value (e.g., "5m ago", "Just now"). Record the text per row in the run's manifest as the baseline against which "advanced" is measured in Verify. If any row shows an empty/missing timestamp, that is itself a precondition failure — the parser is not producing a value for the test to compare against.
+3. Set the sidebar sort dropdown (`#session-sort` in the filter bar) to `Recent activity` if not already set; screenshot-affirm the dropdown shows "Recent activity" as the selected value.
 
 **Steps:**
 1. Click the `smoke-chat-gemini` tab in the tab bar (or click the row in the sidebar) to focus its terminal pane.
@@ -686,14 +853,109 @@ Verify the sidebar handles (a) optimistic-mutation in-flight without flicker (#3
 3. Wait for the Gemini response to land in the pane (response containing `ack` visible).
 4. Click the `smoke-chat-codex` tab. Type the same prompt into the Codex terminal and press Enter.
 5. Wait for the Codex response containing `ack`.
+6. Click the `smoke-chat-claude` tab (or the row in the sidebar). Click into the Claude terminal pane. Type `please respond briefly with the word ack` and press Enter. Wait for the Claude response containing `ack` (§12.11 axis-2 Claude peer trigger).
 
 **Verify:**
 - ≤5s after step 3: the sidebar timestamp under `smoke-chat-gemini` has visibly advanced compared to the baseline screenshot taken in Setup step 2 (e.g., "just now" or "1s ago" instead of the stale value). → `3.2/assertion-01-gemini-timestamp-advanced.png`
 - ≤5s after step 5: the sidebar timestamp under `smoke-chat-codex` has visibly advanced compared to the baseline. → `3.2/assertion-02-codex-timestamp-advanced.png`
 - ≤5s after step 5 (with the sidebar sort dropdown set to "Recent activity"): the `smoke-chat-codex` row is now positioned ABOVE `smoke-chat-gemini` and above `smoke-chat-claude` in the sidebar (sort-by-activity order reflects the most-recent message landing on Codex). → `3.2/assertion-03-codex-sorted-to-top.png`
+- ≤5s after step 6: the `smoke-chat-claude` row's sidebar timestamp has visibly advanced compared to the baseline screenshot taken in Setup step 2 — affirming the Claude-side parser produces an advancing timestamp value with the same parity as the Gemini + Codex assertions 01-02 (§12.11 axis-2 Claude peer). → `3.2/assertion-04-claude-timestamp-advanced.png`
 
 **Teardown:**
 - N/A — state used by no downstream entry; the smoke-chat-* sessions remain operative.
+
+---
+
+### SIDEBAR-UNARCHIVE-01 — Un-archive (☑ → ☐) persists across sidebar refresh (negative parity for 3.1)
+
+**Cascade-from:** 3.1
+**Closes gap for:** §12.11 axis-1 — un-archive is the negative-of-archive state that 3.1's positive case implicitly relies on
+
+**Setup:**
+1. 3.1 complete with assertions PASSed. Remove 3.1's Playwright network throttle if it is still active.
+2. **Baseline affirmation:** screenshot-affirm `smoke-chat-claude` row's Archive glyph is currently ☑ (the post-3.1 state — 3.1's Teardown step that "un-archives to restore baseline" is what this entry verifies; if 3.1's Teardown ran successfully the row is already ☐, in which case re-archive it via a single click + 1s wait before proceeding). Then take the baseline showing ☑.
+
+**Steps:**
+1. Click the `smoke-chat-claude` row's Archive (☑) glyph in the sidebar.
+2. Wait for the un-archive PUT to land (typical: ≤1s on an un-throttled network).
+3. Click the sidebar's `↻` refresh affordance.
+
+**Verify:**
+- ≤1s after step 1: the Archive glyph on `smoke-chat-claude` visibly transitions from ☑ to ☐ (optimistic update). → `SIDEBAR-UNARCHIVE-01/assertion-01-optimistic-unarchived.png`
+- ≤2s after step 2: the Archive glyph remains ☐ after the PUT response lands; no flicker back to ☑. → `SIDEBAR-UNARCHIVE-01/assertion-02-unarchive-persists-post-put.png`
+- ≤3s after step 3: after the sidebar refresh, the `smoke-chat-claude` row is still rendered with Archive glyph ☐, AND if the sidebar filter is set to default (not hiding archived), the row is in its non-archived position. → `SIDEBAR-UNARCHIVE-01/assertion-03-persists-post-refresh.png`
+
+**Teardown:**
+- N/A — state returned to 3.1 baseline (☐). smoke-chat-claude remains operative for downstream entries.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### SIDEBAR-SHOWARCHIVED-OFF-01 — "Show archived" filter OFF hides archived rows (default)
+
+**Cascade-from:** 3.1
+**Closes gap for:** §12.11 axis-1 — show-archived filter OFF state (paired with SIDEBAR-SHOWARCHIVED-ON-01)
+
+**Setup:**
+1. 3.1 complete (an archived row exists: `smoke-chat-claude` is ☑). If SIDEBAR-UNARCHIVE-01 ran since 3.1, re-archive `smoke-chat-claude` first (click ☐ → wait ≤1s for ☑).
+2. **Filter-state affirmation:** locate the sidebar's `#session-filter` dropdown in the filter bar; screenshot-affirm it is currently at its OFF / default value (typically "Active" / not "All" / not "Archived"). If the dropdown shows anything else, click it and select the default "Active" option.
+
+**Steps:**
+1. Observe the sidebar. The `smoke-chat-claude` row was archived in 3.1.
+2. Take a screenshot of the sidebar's session list under `wb-seed`.
+
+**Verify:**
+- ≤2s after step 2: the `smoke-chat-claude` row is NOT visible in the sidebar's main session list under `wb-seed` (filter OFF hides archived sessions). → `SIDEBAR-SHOWARCHIVED-OFF-01/assertion-01-archived-hidden.png`
+- ≤2s after step 2: the `smoke-chat-gemini` and `smoke-chat-codex` rows ARE still visible in the sidebar (non-archived sessions are not affected by the filter). → `SIDEBAR-SHOWARCHIVED-OFF-01/assertion-02-active-still-visible.png`
+
+**Teardown:**
+- N/A — state preserved for SIDEBAR-SHOWARCHIVED-ON-01.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### SIDEBAR-SHOWARCHIVED-ON-01 — "Show archived" filter ON reveals archived rows
+
+**Cascade-from:** SIDEBAR-SHOWARCHIVED-OFF-01
+**Closes gap for:** §12.11 axis-1 — show-archived filter ON state (paired with SIDEBAR-SHOWARCHIVED-OFF-01)
+
+**Setup:**
+1. SIDEBAR-SHOWARCHIVED-OFF-01 complete (filter is OFF; `smoke-chat-claude` is archived; row is hidden).
+
+**Steps:**
+1. Click the sidebar filter dropdown (`#session-filter`).
+2. Select the option that includes archived sessions (typically "All" or "Archived").
+3. Observe the sidebar re-render.
+
+**Verify:**
+- ≤2s after step 2: the `smoke-chat-claude` row IS now visible in the sidebar under `wb-seed`, displayed with its Archive glyph in the ☑ state (the filter reveals it; the archived state is unchanged). → `SIDEBAR-SHOWARCHIVED-ON-01/assertion-01-archived-revealed.png`
+- ≤2s after step 2: `smoke-chat-gemini` and `smoke-chat-codex` remain visible alongside it (filter does not affect non-archived rows). → `SIDEBAR-SHOWARCHIVED-ON-01/assertion-02-active-still-visible.png`
+
+**Teardown:**
+- Click `smoke-chat-claude`'s ☑ glyph to un-archive (restore baseline). Reset the filter dropdown to its default "Active" value. State returned to SMOKE-CHAT-01 baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### SIDEBAR-SORT-NAME-01 — Sidebar sort-by-Name orders rows alphabetically (parity for 3.2/4.3's sort-by-Recent-activity)
+
+**Cascade-from:** 2.1
+**Closes gap for:** §12.11 axis-1 — sort dropdown's Name value (peer of Recent activity which 3.2/4.3 use)
+
+**Setup:**
+1. 2.1 complete (workbench shell rendered). At least two session rows exist under any project so a sort order is observable — the SMOKE-CHAT-01 product (three smoke-chat-* rows) is sufficient.
+2. **Sort-dropdown affirmation:** screenshot-affirm the sidebar `#session-sort` dropdown's current value. If it is at "Recent activity" (the value used by 3.2/4.3), note for Teardown so the test can restore that state.
+
+**Steps:**
+1. Click the `#session-sort` dropdown in the sidebar filter bar.
+2. Select the `Name` option.
+3. Observe the sidebar re-render.
+
+**Verify:**
+- ≤2s after step 2: the session rows under `wb-seed` are visibly re-ordered to alphabetical order by session name. With smoke-chat-claude / smoke-chat-gemini / smoke-chat-codex existing, the visible order top-to-bottom is `smoke-chat-claude`, `smoke-chat-codex`, `smoke-chat-gemini` (alphabetical). → `SIDEBAR-SORT-NAME-01/assertion-01-alphabetical-order.png`
+- ≤2s after step 2: the `#session-sort` dropdown's visible selected value is `Name` (confirms the dropdown's value is what drove the re-order). → `SIDEBAR-SORT-NAME-01/assertion-02-dropdown-shows-name.png`
+
+**Teardown:**
+- Click `#session-sort` → select the value noted from Setup (typically "Recent activity") to restore the downstream-entries baseline. State returned to 2.1 / SMOKE-CHAT-01 baseline.
+
+**Result:** ☐ PASS ☐ FAIL
 
 ---
 
@@ -765,7 +1027,8 @@ Cover session creation under load (#334, #444), path-encoding round-trips on res
 
 **Setup:**
 1. SMOKE-CHAT-01 complete (smoke-chat-gemini exists; the SMOKE-CHAT-01 round-trip drove a "what is 7 times 8" prompt + response, so the Gemini session's `.jsonl` transcript file exists and has at least 2 message records).
-2. Note the sidebar's sort setting; for this entry, switch it to `Recent activity` if not already (click the `#session-sort` select in the sidebar filter bar).
+2. **Precondition affirmation (§12.11 explicit Setup):** screenshot-affirm the `smoke-chat-gemini` row in the sidebar shows ANY timestamp value (not an empty cell, not a missing field). This is the baseline against which "advancing timestamp" is the verify clause. If the row shows an empty timestamp, that is itself a precondition failure — the parser is not producing any value to advance.
+3. Note the sidebar's sort setting; for this entry, switch it to `Recent activity` if not already (click the `#session-sort` select in the sidebar filter bar). Screenshot-affirm the dropdown shows "Recent activity" as the selected value.
 
 **Steps:**
 1. Click the sidebar refresh affordance (the circular-arrow button next to `+ Add Program` in the sidebar header).
@@ -837,11 +1100,12 @@ Cover session creation under load (#334, #444), path-encoding round-trips on res
 
 **Setup:**
 1. SMOKE-CHAT-01 complete (smoke-chat-codex exists with ≥2 messages of transcript; smoke-chat-claude is the calling session).
-2. Note the workbench session id of `smoke-chat-codex` (hover its sidebar row, read the tooltip, copy the id).
+2. **Precondition affirmation (§12.11 explicit Setup):** screenshot-affirm the `smoke-chat-codex` tab is currently visible in the tab bar (the session is still open, not closed by an upstream entry's Teardown). Then screenshot-affirm the `smoke-chat-claude` tab is also visible (the calling session is reachable). If either tab is absent, the precondition is not met — re-spawn the missing session via the standard `+` → CLI flow before proceeding.
+3. Note the workbench session id of `smoke-chat-codex` (hover its sidebar row, read the tooltip, copy the id).
 
 **Steps:**
 1. Click the `smoke-chat-claude` tab in the tab bar to focus its Claude terminal.
-2. Type a natural prompt into the Claude pane: `Please call the workbench MCP tool session_summarize with session_id=<codex-id> and show me the result it returns.` (substitute the actual id from Setup step 2.)
+2. Type a natural prompt into the Claude pane: `Please call the workbench MCP tool session_summarize with session_id=<codex-id> and show me the result it returns.` (substitute the actual id from Setup step 3.)
 3. Press Enter. The Claude CLI invokes the MCP tool.
 4. Wait for the Claude pane to render the MCP tool's returned content.
 
@@ -852,6 +1116,175 @@ Cover session creation under load (#334, #444), path-encoding round-trips on res
 
 **Teardown:**
 - N/A — smoke-chat-* state preserved.
+
+---
+
+### 4.1.GEMINI: SESS-PATH-ENCODING-GEMINI-01 — Gemini session restart on unusual-path project (peer of 4.1 Claude)
+
+**Cascade-from:** 0.B
+**Closes gap for:** §12.11 axis-2 — Gemini peer of 4.1 path-encoding-restart
+
+**Setup:**
+1. 0.B complete (auth seated for Gemini equivalent — Gemini credentials provisioned by orchestrator).
+2. Orchestrator pre-creates the workspace path: `ssh ${WORKBENCH_HOST} 'docker exec ${WORKBENCH_CONTAINER} mkdir -p /data/workspace/foo.bar/sub_dir+with-stuff'` (or re-use the directory from 4.1 if 4.1 ran in the same session — 4.1's Teardown removes it, so this entry's Setup must re-create).
+
+**Steps:**
+1. In the sidebar, click `+ Project` under a program. Type project name `path-encode-gemini-test`. Type path `/data/workspace/foo.bar/sub_dir+with-stuff`. Click Save.
+2. Click `+` on the new project's header → click `Gemini` → name session `pathenc-gemini-01` → `Start Session`. Wait up to 30s for the Gemini tab and the Gemini `>` prompt at the bottom of the pane.
+3. Right-click the `pathenc-gemini-01` row → `Restart`.
+
+**Verify:**
+- ≤5s after step 1: the `path-encode-gemini-test` project row is visible in the sidebar. → `4.1.GEMINI/assertion-01-project-created.png`
+- ≤30s after step 2: the `pathenc-gemini-01` session tab is visible and the Gemini `>` prompt is rendered. → `4.1.GEMINI/assertion-02-session-created.png`
+- ≤10s after step 3: the `pathenc-gemini-01` row remains attached to the `path-encode-gemini-test` project in the sidebar after restart. → `4.1.GEMINI/assertion-03-session-attached-after-restart.png`
+- ≤10s after step 3: the Gemini `>` prompt is rendered again at the bottom of the restarted session's terminal pane. → `4.1.GEMINI/assertion-04-gemini-ready-after-restart.png`
+
+**Teardown:**
+- Right-click `pathenc-gemini-01` → Remove session. Right-click `path-encode-gemini-test` → Remove project. Orchestrator removes workspace dir if no other entry needs it.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 4.1.CODEX: SESS-PATH-ENCODING-CODEX-01 — Codex session restart on unusual-path project (peer of 4.1 Claude)
+
+**Cascade-from:** 0.B
+**Closes gap for:** §12.11 axis-2 — Codex peer of 4.1 path-encoding-restart
+
+**Setup:**
+1. 0.B complete. Codex credentials provisioned.
+2. Orchestrator pre-creates workspace path (same as 4.1.GEMINI Setup step 2 — re-create if removed).
+
+**Steps:**
+1. `+ Project` → `path-encode-codex-test` at `/data/workspace/foo.bar/sub_dir+with-stuff` → Save.
+2. `+` on the new project → `Codex` → `pathenc-codex-01` → Start Session. Wait up to 30s for the Codex tab and Codex input field at the bottom of the pane.
+3. Right-click `pathenc-codex-01` → `Restart`.
+
+**Verify:**
+- ≤5s after step 1: project row visible. → `4.1.CODEX/assertion-01-project-created.png`
+- ≤30s after step 2: Codex session tab visible with Codex input field rendered. → `4.1.CODEX/assertion-02-session-created.png`
+- ≤10s after step 3: row stays attached to the project after restart. → `4.1.CODEX/assertion-03-session-attached-after-restart.png`
+- ≤10s after step 3: Codex input field re-renders at the bottom of the pane post-restart. → `4.1.CODEX/assertion-04-codex-ready-after-restart.png`
+
+**Teardown:**
+- Right-click `pathenc-codex-01` → Remove. Right-click `path-encode-codex-test` → Remove. Orchestrator removes workspace dir.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 4.2.GEMINI: SESS-RAPID-CREATE-GEMINI-01 — 5 rapid Gemini session clicks → 5 distinct rows (peer of 4.2 Claude)
+
+**Cascade-from:** 2.1
+**Closes gap for:** §12.11 axis-2 — Gemini peer of 4.2 rapid-create / tmpId-collision
+
+**Setup:**
+1. 2.1 complete. Gemini credentials provisioned.
+2. Note the current count of session rows under `wb-seed` in the sidebar (baseline screenshot).
+
+**Steps:**
+1. Click `+` on the `wb-seed` project header. Click `Gemini`. Type `rapid-gemini-01` and click `Start Session`.
+2. Immediately (without waiting for the new row to render) click `+` on `wb-seed` again → `Gemini` → `rapid-gemini-02` → Start.
+3. Repeat for `rapid-gemini-03`, `rapid-gemini-04`, `rapid-gemini-05` — all five requested within 1 wall-clock second of step 1's click.
+
+**Verify:**
+- ≤3s after step 3: five distinct rows labeled `rapid-gemini-01..05` visible under `wb-seed`. → `4.2.GEMINI/assertion-01-five-distinct-rows.png`
+- ≤30s after step 3: each of the five tabs is openable from the sidebar and each renders the Gemini `>` prompt at the bottom of the pane. → `4.2.GEMINI/assertion-02-all-five-openable.png`
+
+**Teardown:**
+- Right-click each `rapid-gemini-01..05` row → Remove session. Sidebar returns to 2.1 / SMOKE-CHAT-01 baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 4.2.CODEX: SESS-RAPID-CREATE-CODEX-01 — 5 rapid Codex session clicks → 5 distinct rows (peer of 4.2 Claude)
+
+**Cascade-from:** 2.1
+**Closes gap for:** §12.11 axis-2 — Codex peer of 4.2 rapid-create / tmpId-collision
+
+**Setup:**
+1. 2.1 complete. Codex credentials provisioned.
+
+**Steps:**
+1. `+` on `wb-seed` → `Codex` → `rapid-codex-01` → Start. Immediately repeat for `rapid-codex-02..05` within 1 wall-clock second.
+
+**Verify:**
+- ≤3s after step 1: five distinct `rapid-codex-01..05` rows visible under `wb-seed`. → `4.2.CODEX/assertion-01-five-distinct-rows.png`
+- ≤30s after step 1: each of the five tabs renders the Codex input field at the bottom of the pane. → `4.2.CODEX/assertion-02-all-five-openable.png`
+
+**Teardown:**
+- Right-click each row → Remove session.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 4.3.CODEX: SESS-CODEX-PARSER-01 — Codex session row shows activity timestamp from JSONL (peer of 4.3 Gemini)
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** §12.11 axis-2 — Codex peer of 4.3 JSONL-parser timestamp
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-codex exists; the SMOKE-CHAT-01 arithmetic round-trip drove ≥2 message records into its Codex rollout JSONL).
+2. **Precondition affirmation:** screenshot-affirm the `smoke-chat-codex` row in the sidebar shows ANY timestamp value (not empty); this is the baseline against which "advancing" would be measured. The parser must produce a non-empty value.
+3. Set sidebar `#session-sort` to `Recent activity`.
+
+**Steps:**
+1. Click the sidebar's `↻` refresh affordance.
+2. Observe the sidebar re-render. Find the `smoke-chat-codex` row.
+
+**Verify:**
+- ≤5s after step 1: the `smoke-chat-codex` row's timestamp shown below the row name reads a recent value (e.g., `just now`, `Ns ago`, `Nm ago`) — NOT a stale "session-start" timestamp or an empty value. → `4.3.CODEX/assertion-01-codex-timestamp-non-empty.png`
+- ≤5s after step 1: the `smoke-chat-codex` row sorts ABOVE or AT THE SAME LEVEL as any session with no recent activity (verifying that the Codex parser produces an advancing timestamp the sort consumes). → `4.3.CODEX/assertion-02-sort-consistent.png`
+
+**Teardown:**
+- N/A — state preserved for 3.2 / other entries.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 4.6.CLAUDE: SESS-SUMMARIZE-CLAUDE-TARGET-01 — `session_summarize` MCP tool produces summary for Claude session (peer of 4.6 Codex)
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** §12.11 axis-2 — Claude target peer of 4.6 (Codex target)
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-claude exists with ≥2 messages of transcript).
+2. **Precondition affirmation:** screenshot-affirm the `smoke-chat-claude` tab is visible in the tab bar.
+3. Note the workbench session id of `smoke-chat-claude` (hover its sidebar row, read the tooltip, copy the id).
+4. Setup creates a separate Claude session to call summarize from — so the target session is NOT the calling session. Click `+` on `wb-seed` → `Claude` → name `summarize-caller` → Start Session. Wait for ready.
+
+**Steps:**
+1. Click the `summarize-caller` tab to focus.
+2. Type into the Claude pane: `Please call the workbench MCP tool session_summarize with session_id=<claude-target-id> and show me the result it returns.` (substitute the smoke-chat-claude id from Setup step 3.)
+3. Press Enter. Wait for the response.
+
+**Verify:**
+- ≤10s after step 3: the `summarize-caller` pane shows a tool-call invocation block for `mcp__workbench__session_summarize` with the correct session_id argument. → `4.6.CLAUDE/assertion-01-tool-call-rendered.png`
+- ≤10s after step 3: the tool-result content is a prose summary of the smoke-chat-claude transcript; DOES NOT contain `Error:` or any error message indicating Claude transcript could not be read. → `4.6.CLAUDE/assertion-02-summary-not-error.png`
+- ≤15s after step 3: the `summarize-caller` pane's response continues with Claude's natural-language confirmation. → `4.6.CLAUDE/assertion-03-claude-confirms.png`
+
+**Teardown:**
+- Right-click `summarize-caller` → Remove session. smoke-chat-claude preserved.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 4.6.GEMINI: SESS-SUMMARIZE-GEMINI-TARGET-01 — `session_summarize` MCP tool produces summary for Gemini session (peer of 4.6 Codex)
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** §12.11 axis-2 — Gemini target peer of 4.6 (Codex target)
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-gemini exists with ≥2 messages of transcript; smoke-chat-claude is the calling session).
+2. **Precondition affirmation:** screenshot-affirm both smoke-chat-gemini and smoke-chat-claude tabs are visible in the tab bar.
+3. Note the workbench session id of `smoke-chat-gemini`.
+
+**Steps:**
+1. Click `smoke-chat-claude` tab.
+2. Type: `Please call the workbench MCP tool session_summarize with session_id=<gemini-target-id> and show me the result it returns.`
+3. Press Enter.
+
+**Verify:**
+- ≤10s after step 3: Claude pane shows tool-call block for `mcp__workbench__session_summarize` with the Gemini session_id argument. → `4.6.GEMINI/assertion-01-tool-call-rendered.png`
+- ≤10s after step 3: tool-result is a prose summary of the Gemini transcript; no `Error:` content. → `4.6.GEMINI/assertion-02-summary-not-error.png`
+- ≤15s after step 3: Claude confirms naturally. → `4.6.GEMINI/assertion-03-claude-confirms.png`
+
+**Teardown:**
+- N/A — smoke-chat-* state preserved.
+
+**Result:** ☐ PASS ☐ FAIL
 
 ---
 
@@ -917,6 +1350,36 @@ Verify CRUD + cascade behavior for projects and programs at the sidebar level: r
 
 **Teardown:**
 - Orchestrator removes `/data/workspace/cascade-test-proj` if it still exists. SMOKE-CHAT-01 baseline preserved on `wb-seed`.
+
+---
+
+### 5.2.PENCIL: PROJECT-REMOVE-VIA-PENCIL-01 — Project remove via ✎ pencil affordance (peer of 5.2 right-click)
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** §12.11 axis-2 — pencil affordance peer of 5.2 right-click context menu (same remove flow, different entry point)
+
+**Setup:**
+1. SMOKE-CHAT-01 complete.
+2. Setup creates a sacrificial sister project (parallel to 5.2's setup, with a different name so the two entries can run in either order without state collision):
+   - `+ Project` → `pencil-remove-test` at `/data/workspace/pencil-remove-test` (orchestrator pre-creates path if needed) → Save.
+   - On `pencil-remove-test`, `+` → `Claude` → name `pencil-claude-01` → Start Session. Wait for ready.
+   - Verify the `pencil-remove-test` project row and `pencil-claude-01` session row are visible in the sidebar.
+
+**Steps:**
+1. Locate the `pencil-remove-test` project row in the sidebar. Hover the row to reveal the ✎ pencil affordance (if it is hidden until hover).
+2. Click the ✎ pencil affordance on the `pencil-remove-test` row.
+3. The project-edit modal (or context menu) opens. Locate the `Remove` action within it. Click `Remove`.
+4. A confirm modal appears. Click `Confirm`.
+
+**Verify:**
+- ≤2s after step 2: a project-edit modal or context menu is visibly rendered in response to the pencil click (the workbench-styled overlay distinct from the right-click context menu). → `5.2.PENCIL/assertion-01-pencil-overlay-rendered.png`
+- ≤2s after step 3: a workbench-styled confirm modal is visibly rendered asking to confirm removal. → `5.2.PENCIL/assertion-02-confirm-modal.png`
+- ≤10s after step 4: the `pencil-remove-test` project row is no longer visible in the sidebar AND the `pencil-claude-01` session row also disappears (the same cascade behavior as 5.2's right-click path applies). → `5.2.PENCIL/assertion-03-project-and-session-removed.png`
+
+**Teardown:**
+- Orchestrator removes `/data/workspace/pencil-remove-test` if it still exists. State returns to SMOKE-CHAT-01 baseline.
+
+**Result:** ☐ PASS ☐ FAIL
 
 ---
 
@@ -1086,6 +1549,7 @@ Verify the issue picker honors GH Enterprise host / quoted-repo derivation (#328
 2. Orchestrator pre-configures a project with a GHE-style origin (or a quoted-repo origin): `ssh ${WORKBENCH_HOST} 'docker exec ${WORKBENCH_CONTAINER} bash -lc "cd /data/workspace && git init ghe-test && cd ghe-test && git remote add origin https://github.enterprise.example.com/team-x/ghe-test.git"'`.
 3. In the workbench UI, click `+ Project` under a program. Add the `ghe-test` project pointing at `/data/workspace/ghe-test`.
 4. Open the Tasks panel for `ghe-test`. Click `+ Task` and add a task named `ghe-task-01`. Click Save.
+5. **Project-selected affirmation (§12.11 explicit Setup):** click the `ghe-test` project row in the sidebar to ensure it is the currently-selected project (the Tasks panel scopes to the active project; without this affirmation a subsequent test step could open task-detail on a task from a different project). Screenshot-affirm `ghe-test` is the active project row (visual selection state distinct from other rows).
 
 **Steps:**
 1. With the `ghe-task-01` task visible in the Tasks panel, click the task row to open the task-detail modal.
@@ -1222,6 +1686,7 @@ Verify gate-page render consistency across boot-time loads (#337), sub-second lo
 **Setup:**
 1. 11.1 complete (`workbench-gate-A` container running, gate page reachable).
 2. Navigate to `${WORKBENCH_URL}` to render the gate page if not already on it.
+3. **Gate-page-current affirmation (§12.11 explicit Setup):** screenshot-affirm the current rendered view is the gate page — username field, password field, and Sign In button all visible — NOT the workbench shell (which would mean a prior 11.1 navigation already authenticated, in which case this entry's "shell loads from gate" timing assertion would be invalid). If the shell is rendered instead of the gate, log out first (click `⚙ Settings` → Logout, or use the explicit logout affordance) and reload the page so the gate is shown.
 
 **Steps:**
 1. Click into the username field. Type `tester`.
@@ -1271,6 +1736,7 @@ Verify gate-page render consistency across boot-time loads (#337), sub-second lo
 **Setup:**
 1. 2.4 complete (Settings modal verified to open ≤500ms).
 2. Clear the DevTools console buffer.
+3. **Cleared-buffer affirmation (§12.11 explicit Setup):** capture a Playwright `browser_console_messages` snapshot immediately after clearing the buffer and screenshot-affirm the captured log shows zero entries (or only the system-level Playwright initialization line, no `[DOM]` warnings). This is the baseline against which the Verify "zero `[DOM] Password field` warnings" is measured.
 
 **Steps:**
 1. Click `⚙ Settings` in the sidebar.
@@ -1288,6 +1754,39 @@ Verify gate-page render consistency across boot-time loads (#337), sub-second lo
 
 **Teardown:**
 - Clear any test characters typed into the password fields. Press Escape to dismiss Settings. State returns to 2.4 baseline.
+
+---
+
+### 11.2.FOLLOWON: GATE-FOLLOWON-3CLI-01 — Post-gate-login 3-CLI session usage works
+
+**Cascade-from:** 11.2
+**Closes gap for:** §12.11 axis-2 — full user journey from gate-login through follow-on 3-CLI usage (Claude / Gemini / Codex)
+
+**Setup:**
+1. 11.2 complete (`workbench-gate-A` container running, gate authenticated, workbench shell rendered).
+2. Confirm Claude / Gemini / Codex credentials are provisioned on this gate-A container (orchestrator decision — if the gate-A image was built with credentials seeded, no extra setup; if not, orchestrator provisions credentials via the standard injection path before Steps).
+
+**Steps:**
+1. In the workbench shell (post-gate-login), click `+ Project` under any program → name `gate-followon-test` at `/data/workspace/gate-followon-test` → Save.
+2. Click `+` on `gate-followon-test` → `Claude` → name `gate-claude-01` → Start Session. Wait for ready observable.
+3. Click `+` on `gate-followon-test` → `Gemini` → name `gate-gemini-01` → Start Session. Wait for ready observable.
+4. Click `+` on `gate-followon-test` → `Codex` → name `gate-codex-01` → Start Session. Wait for ready observable.
+5. Click the `gate-claude-01` tab. Type `please respond briefly with the word ack` in the Claude terminal and press Enter.
+6. Click the `gate-gemini-01` tab. Type the same prompt in the Gemini terminal and press Enter.
+7. Click the `gate-codex-01` tab. Type the same prompt in the Codex terminal and press Enter.
+
+**Verify:**
+- ≤30s after step 2: the Claude session tab is open and the Claude input area is rendered (per SMOKE-CHAT-01 step 5 claude form — typing a test character renders inline). → `11.2.FOLLOWON/assertion-01-claude-ready-post-gate.png`
+- ≤30s after step 3: the Gemini session tab is open and the Gemini `>` prompt is rendered at the bottom of the pane. → `11.2.FOLLOWON/assertion-02-gemini-ready-post-gate.png`
+- ≤30s after step 4: the Codex session tab is open and the Codex input field is rendered at the bottom of the pane. → `11.2.FOLLOWON/assertion-03-codex-ready-post-gate.png`
+- ≤30s after step 5: the Claude terminal pane renders a coherent response containing `ack` (per SMOKE-CHAT-01-style content judgment) — confirms the gate's cookie / session context did not break Claude's flow post-login. → `11.2.FOLLOWON/assertion-04-claude-ack.png`
+- ≤30s after step 6: the Gemini terminal pane renders a coherent response containing `ack`. → `11.2.FOLLOWON/assertion-05-gemini-ack.png`
+- ≤30s after step 7: the Codex terminal pane renders a coherent response containing `ack`. → `11.2.FOLLOWON/assertion-06-codex-ack.png`
+
+**Teardown:**
+- Right-click each of `gate-claude-01`, `gate-gemini-01`, `gate-codex-01` → Remove session. Right-click `gate-followon-test` → Remove project. Orchestrator removes `/data/workspace/gate-followon-test`. State preserved for 11.2's container Teardown.
+
+**Result:** ☐ PASS ☐ FAIL
 
 ---
 
@@ -1328,9 +1827,10 @@ Verify the MCP tool catalog matches the registry (#361), project-MCP enable prop
 **Setup:**
 1. SMOKE-PROJ-01 complete (`smoke-proj-<timestamp>` exists as project P).
 2. Click `smoke-proj-<timestamp>` in the sidebar. Open its Project Settings (right-click → Settings, or the per-project ✎ pencil affordance).
-3. Locate the per-project MCP-servers section. Click `+ Add MCP Server`. Set Name: `test-mcp` and Command: `echo test-mcp-running` (a no-op MCP that any registered CLI can see). Click Save.
-4. Start two new sessions in P: a Gemini session named `parity-gemini` and a Codex session named `parity-codex` via the standard `+` → CLI dropdown flow.
-5. Wait for both terminals to render their ready observables.
+3. **Clean-baseline affirmation (§12.11 explicit Setup):** locate the per-project MCP-servers section. Screenshot-affirm `test-mcp` is NOT already in the list (the list is empty, or contains only entries with different names). If `test-mcp` is present from a prior run, remove it first so the Step 1 "add test-mcp" is a true addition, not a no-op.
+4. Click `+ Add MCP Server`. Set Name: `test-mcp` and Command: `echo test-mcp-running` (a no-op MCP that any registered CLI can see). Click Save.
+5. Start two new sessions in P: a Gemini session named `parity-gemini` and a Codex session named `parity-codex` via the standard `+` → CLI dropdown flow.
+6. Wait for both terminals to render their ready observables.
 
 **Steps:**
 1. Click the `parity-gemini` tab to focus its terminal.
@@ -1369,6 +1869,154 @@ Verify the MCP tool catalog matches the registry (#361), project-MCP enable prop
 
 **Teardown:**
 - N/A — smoke-chat-* state preserved.
+
+---
+
+### 12.1.GEMINI: MCP-CATALOG-LIST-GEMINI-01 — Gemini caller invokes `tools/list` (peer of 12.1 Claude)
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** §12.11 axis-2 — Gemini caller peer of 12.1 (Claude caller)
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-gemini is the calling session).
+
+**Steps:**
+1. Click `smoke-chat-gemini` tab to focus.
+2. Type the Gemini slash to list MCP tools: `/mcp` and press Enter.
+3. Wait for the Gemini CLI to render the list.
+
+**Verify:**
+- ≤5s after step 2: the Gemini terminal pane visibly shows a list of MCP servers / tools, including the `workbench` server entry with its registered tool names (at minimum: `session_new`, `session_list`, `task_add`, `file_find` — substantive named tools). → `12.1.GEMINI/assertion-01-tool-list-rendered.png`
+- ≤5s after step 2: the rendered list does NOT show an error like "MCP server unreachable" or "no tools registered" for the workbench server. → `12.1.GEMINI/assertion-02-no-mcp-error.png`
+
+**Teardown:**
+- N/A — smoke-chat-gemini state preserved.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 12.1.CODEX: MCP-CATALOG-LIST-CODEX-01 — Codex caller invokes `tools/list` (peer of 12.1 Claude)
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** §12.11 axis-2 — Codex caller peer of 12.1
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-codex is the calling session).
+
+**Steps:**
+1. Click `smoke-chat-codex` tab.
+2. Type the Codex MCP-list slash command (`/mcp` per current Codex CLI, or the pinned-version equivalent) and press Enter.
+3. Wait for the Codex CLI to render the list.
+
+**Verify:**
+- ≤5s after step 2: the Codex terminal pane shows a list of MCP servers / tools including the workbench server with its tool names rendered. → `12.1.CODEX/assertion-01-tool-list-rendered.png`
+- ≤5s after step 2: no "MCP unreachable" / "no tools registered" error for the workbench server. → `12.1.CODEX/assertion-02-no-mcp-error.png`
+
+**Teardown:**
+- N/A — smoke-chat-codex preserved.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 12.2.CLAUDE: MCP-PROJECT-ENABLE-CLAUDE-01 — Claude session in project P sees enabled MCP (peer of 12.2 Gemini+Codex)
+
+**Cascade-from:** SMOKE-PROJ-01
+**Closes gap for:** §12.11 axis-2 — Claude peer of 12.2 (Gemini+Codex peers covered there)
+
+**Setup:**
+1. SMOKE-PROJ-01 complete (`smoke-proj-<timestamp>` exists as project P).
+2. Click `smoke-proj-<timestamp>` in the sidebar.
+3. **Clean-baseline affirmation:** open Project Settings → MCP-servers section → screenshot-affirm `test-mcp-claude` is NOT in the list.
+4. Click `+ Add MCP Server`. Set Name: `test-mcp-claude` and Command: `echo test-mcp-claude-running`. Click Save.
+5. Start a Claude session in P: `+` → `Claude` → name `parity-claude-mcp` → Start Session. Wait for ready observable.
+
+**Steps:**
+1. Click `parity-claude-mcp` tab.
+2. Type a natural prompt: `Please list all MCP servers available to you in this project and tell me whether you see one named test-mcp-claude.` Press Enter.
+3. Wait for Claude's response.
+
+**Verify:**
+- ≤10s after step 2: the Claude pane's response visibly lists `test-mcp-claude` among the project's MCP servers (proves Claude in the same project sees the project-enabled MCP). → `12.2.CLAUDE/assertion-01-claude-sees-mcp.png`
+- ≤10s after step 2: Claude's response confirms it found the server (natural-language affirmation). → `12.2.CLAUDE/assertion-02-claude-confirms.png`
+
+**Teardown:**
+- Right-click `parity-claude-mcp` → Remove session. Open Project Settings → remove `test-mcp-claude`. State returns to SMOKE-PROJ-01 baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 12.2.NEG: MCP-PROJECT-DISABLE-PARITY-01 — Project MCP disable removes server from all peer CLIs' lists (negative-of-enable)
+
+**Cascade-from:** 12.2
+**Closes gap for:** §12.11 axis-1 — disable state of the project-MCP toggle (paired with 12.2's enable positive)
+
+**Setup:**
+1. 12.2 complete with assertions PASSed. After 12.2's Teardown the `test-mcp` server is removed and the Gemini+Codex sessions are gone — for this entry, we re-establish the enabled state, then exercise disable.
+2. Click `smoke-proj-<timestamp>` → open Project Settings.
+3. Click `+ Add MCP Server` → Name `test-mcp-disable` / Command `echo running` → Save.
+4. Start Gemini session in P: `parity-disable-gemini`. Start Codex session: `parity-disable-codex`. Wait for ready observables.
+5. **Confirm enable propagated:** in each terminal, type `/mcp` Enter; screenshot-affirm both terminals see `test-mcp-disable` in their MCP list (precondition for the disable test).
+
+**Steps:**
+1. Open Project Settings for `smoke-proj-<timestamp>`.
+2. Locate `test-mcp-disable` in the MCP-servers list. Click its `Remove` affordance (× or trash icon).
+3. A confirm modal appears. Click `Confirm`.
+4. Close Project Settings.
+5. In `parity-disable-gemini` terminal, type `/mcp` Enter.
+6. In `parity-disable-codex` terminal, type `/mcp` Enter.
+
+**Verify:**
+- ≤10s after step 5: the Gemini terminal's MCP list NO LONGER shows `test-mcp-disable` (the server was visible in Setup step 5; after Steps 1–4 disable, the next `/mcp` call returns a list without it). → `12.2.NEG/assertion-01-gemini-mcp-gone.png`
+- ≤10s after step 6: the Codex terminal's MCP list also no longer shows `test-mcp-disable`. → `12.2.NEG/assertion-02-codex-mcp-gone.png`
+- ≤2s after step 3: the Project Settings → MCP-servers list visibly no longer contains `test-mcp-disable` (the workbench-side disable is reflected in the UI). → `12.2.NEG/assertion-03-settings-list-removed.png`
+
+**Teardown:**
+- Right-click `parity-disable-gemini` → Remove session. Right-click `parity-disable-codex` → Remove session. State returns to SMOKE-PROJ-01 baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 12.3.GEMINI: MCP-SESSION-LIST-FROM-GEMINI-01 — Gemini caller invokes `session_list` (peer of 12.3 Claude caller)
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** §12.11 axis-2 — Gemini caller peer of 12.3
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (3 CLI sessions on `wb-seed`; smoke-chat-gemini is the calling session).
+
+**Steps:**
+1. Click `smoke-chat-gemini` tab.
+2. Type a natural prompt: `Please call the workbench MCP tool session_list with project=wb-seed and show me the cli_type of every session it returns.` Press Enter.
+3. Wait for Gemini to invoke the MCP tool and render the result.
+
+**Verify:**
+- ≤5s after step 2: the Gemini pane shows a tool-call invocation for `session_list` (Gemini's rendering style for MCP tool calls) with `project: "wb-seed"`. → `12.3.GEMINI/assertion-01-tool-call.png`
+- ≤5s after step 2: the rendered result lists at least three sessions and the cli_type values include `claude`, `gemini`, AND `codex`. → `12.3.GEMINI/assertion-02-all-three-cli-types.png`
+- ≤5s after step 2: Gemini's natural-language summary accurately names the three sessions. → `12.3.GEMINI/assertion-03-gemini-paraphrase.png`
+
+**Teardown:**
+- N/A — smoke-chat-gemini preserved.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 12.3.CODEX: MCP-SESSION-LIST-FROM-CODEX-01 — Codex caller invokes `session_list` (peer of 12.3 Claude caller)
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** §12.11 axis-2 — Codex caller peer of 12.3
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-codex is the calling session).
+
+**Steps:**
+1. Click `smoke-chat-codex` tab.
+2. Type a natural prompt asking Codex to invoke `session_list project=wb-seed` and show cli_type per session. Press Enter.
+3. Wait for response.
+
+**Verify:**
+- ≤5s after step 2: the Codex pane shows a tool-call invocation for `session_list` with project=wb-seed. → `12.3.CODEX/assertion-01-tool-call.png`
+- ≤5s after step 2: result lists ≥3 sessions with cli_type values including `claude`, `gemini`, `codex`. → `12.3.CODEX/assertion-02-all-three-cli-types.png`
+- ≤5s after step 2: Codex's natural-language summary names the sessions. → `12.3.CODEX/assertion-03-codex-paraphrase.png`
+
+**Teardown:**
+- N/A — smoke-chat-codex preserved.
+
+**Result:** ☐ PASS ☐ FAIL
 
 ---
 
@@ -1418,7 +2066,8 @@ Verify the workbench modal pattern replaces every native browser dialog (#340) a
 
 **Setup:**
 1. 4.2 complete (session-create flow exercised).
-2. Orchestrator may optionally instrument an `alert()` tripwire on the page as a hard-failure diagnostic during the run — Setup-only, not a verify mechanism. The verify is the screenshot: a browser-native `alert` dialog carries OS chrome (title bar, OK button widget) that is visually distinct from any in-page rendering and is screenshot-affirmable.
+2. **No-prior-payload affirmation (§12.11 explicit Setup):** screenshot-affirm the sidebar under `wb-seed` does NOT already contain a row whose display text matches the malicious payload `<bad>&"'name`. If such a row exists from a prior run (left by a Teardown miss), remove it first (right-click → Remove session). Otherwise the "new row appears" assertion may silently pass on the pre-existing row.
+3. Orchestrator may optionally instrument an `alert()` tripwire on the page as a hard-failure diagnostic during the run — Setup-only, not a verify mechanism. The verify is the screenshot: a browser-native `alert` dialog carries OS chrome (title bar, OK button widget) that is visually distinct from any in-page rendering and is screenshot-affirmable.
 
 **Steps:**
 1. Click `+` on `wb-seed` → `Claude`. The session-create overlay opens.
@@ -1432,6 +2081,56 @@ Verify the workbench modal pattern replaces every native browser dialog (#340) a
 
 **Teardown:**
 - Right-click the malicious-named row → Remove session. Sidebar returns to 4.2 baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 13.2.GEMINI: MODAL-ESCAPEHTML-GEMINI-01 — Gemini session-name XSS escape (peer of 13.2 Claude)
+
+**Cascade-from:** 4.2.GEMINI
+**Closes gap for:** §12.11 axis-2 — Gemini peer of 13.2 (Claude session-name XSS)
+
+**Setup:**
+1. 4.2.GEMINI complete (Gemini session-create flow exercised; baseline of multiple Gemini rows under `wb-seed`).
+2. **No-prior-payload affirmation:** screenshot-affirm no existing Gemini-rowed session under `wb-seed` already has the name `<bad>&"'gemini`.
+3. Orchestrator's optional `alert()` tripwire as in 13.2.
+
+**Steps:**
+1. Click `+` on `wb-seed` → `Gemini`. The session-create overlay opens.
+2. Type session name `<bad>&"'gemini` exactly.
+3. Click `Start Session`. Wait for the session row to appear.
+
+**Verify:**
+- ≤2s after step 3: a new Gemini session row appears in the sidebar with display text rendering the literal characters `<bad>&"'gemini` as glyphs. → `13.2.GEMINI/assertion-01-row-shows-literal.png`
+- ≤2s after step 3: sidebar layout intact — no DOM mangling, no truncation. → `13.2.GEMINI/assertion-02-layout-intact.png`
+- ≤2s after step 3: no browser-native `alert` OS-chrome dialog visible. → `13.2.GEMINI/assertion-03-no-os-chrome-alert.png`
+
+**Teardown:**
+- Right-click the malicious-named Gemini row → Remove session. Sidebar returns to 4.2.GEMINI baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 13.2.CODEX: MODAL-ESCAPEHTML-CODEX-01 — Codex session-name XSS escape (peer of 13.2 Claude)
+
+**Cascade-from:** 4.2.CODEX
+**Closes gap for:** §12.11 axis-2 — Codex peer of 13.2
+
+**Setup:**
+1. 4.2.CODEX complete.
+2. **No-prior-payload affirmation:** sidebar has no Codex row with name `<bad>&"'codex`.
+3. Orchestrator's optional `alert()` tripwire.
+
+**Steps:**
+1. `+` on `wb-seed` → `Codex` → type `<bad>&"'codex` as the name → Start Session.
+
+**Verify:**
+- ≤2s after step 1: a new Codex row appears with display text rendering `<bad>&"'codex` as literal glyphs. → `13.2.CODEX/assertion-01-row-shows-literal.png`
+- ≤2s after step 1: layout intact. → `13.2.CODEX/assertion-02-layout-intact.png`
+- ≤2s after step 1: no OS-chrome alert dialog. → `13.2.CODEX/assertion-03-no-os-chrome-alert.png`
+
+**Teardown:**
+- Right-click the malicious-named Codex row → Remove session.
+
+**Result:** ☐ PASS ☐ FAIL
 
 ---
 
@@ -1450,6 +2149,7 @@ Verify the `showErrorBanner insertBefore` regression does not recur during the 6
 1. 2.1 complete (workbench shell rendered).
 2. Take a baseline screenshot of the sidebar showing all currently-visible project + session rows. This is the reference for verifying the polling cycle did not corrupt the sidebar render.
 3. Clear the DevTools console buffer at start of Steps.
+4. **Cleared-buffer affirmation (§12.11 explicit Setup):** capture a Playwright `browser_console_messages` snapshot immediately after clearing the buffer; screenshot-affirm the captured log shows zero entries (or only system-level Playwright init lines, no application warnings or errors). This is the baseline against which the Verify "zero `NotFoundError` entries during the 120s window" is measured.
 
 **Steps:**
 1. At wall-clock time `t0`, take a screenshot of the workbench shell — the sidebar shows its current row inventory, the tab bar shows current tabs, the right panel renders.
@@ -1528,6 +2228,54 @@ Verify CLI-parity slash commands auto-install on fresh container (#451) and that
 
 ---
 
+### 15.1.CLAUDE: CLI-PARITY-SLASH-AUTOINSTALL-CLAUDE-01 — `/session:transition` autocompletes in fresh Claude session (peer of 15.1 Gemini+Codex)
+
+**Cascade-from:** cold
+**Closes gap for:** §12.11 axis-2 — Claude peer of 15.1 (Gemini+Codex peers covered there)
+
+**Setup:**
+1. Orchestrator spins a fresh container from the current image with NO manual slash-command placement: `docker run -d --name workbench-parity-claude -v <ephemeral>:/data -p <port>:7860 <image>`. Confirm `/data/.claude/skills/session-transition/` does NOT exist before workbench starts.
+2. Bind `${WORKBENCH_URL}` to this container. Pass the gate if applicable. Workbench shell renders.
+3. Provision Claude credentials.
+4. Start a Claude session in `wb-seed` named `parity-slash-claude` via `+` → `Claude` → name → Start. Wait for the Claude input-area ready observable (per SMOKE-CHAT-01 step 5 claude form).
+
+**Steps:**
+1. Click the `parity-slash-claude` tab. Click into the terminal pane.
+2. Type the partial slash `/sessio` (do NOT press Enter; observe the autocomplete dropdown).
+3. Capture the autocomplete dropdown content visible in the terminal pane.
+
+**Verify:**
+- ≤2s after step 2: the Claude terminal's autocomplete dropdown visibly lists `/session:transition` AND `/session:resume` as suggestions (auto-installed by the workbench at boot; without manual placement). → `15.1.CLAUDE/assertion-01-claude-autocomplete.png`
+
+**Teardown:**
+- Leave the `workbench-parity-claude` container running for 15.2.CLAUDE. State preserved.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 15.2.CLAUDE: CLI-PARITY-COMPACT-PROMPT-CLAUDE-01 — Claude `/session:transition` renders Claude-appropriate prompt (peer of 15.2 Gemini+Codex)
+
+**Cascade-from:** 15.1.CLAUDE
+**Closes gap for:** §12.11 axis-2 — Claude peer of 15.2 (anchors the positive value that 15.2's negative assertions for Gemini/Codex reference: Gemini "does not contain `/compact`" is meaningful only if `/compact` IS the Claude value)
+
+**Setup:**
+1. 15.1.CLAUDE complete (`workbench-parity-claude` running; `parity-slash-claude` session exists with auto-installed slash commands).
+
+**Steps:**
+1. Click `parity-slash-claude` tab.
+2. Type `/session:transition` and press Enter.
+3. Wait for the prompt to render in the Claude pane.
+
+**Verify:**
+- ≤5s after step 2: the Claude pane renders a transition prompt containing the literal text `/compact` (Claude's compaction slash) AND containing a reference to the Claude plans directory `~/.claude/plans/`. → `15.2.CLAUDE/assertion-01-claude-compact-prompt.png`
+- ≤5s after step 2: the prompt does NOT contain `/compress` (which is Gemini's slash) — the per-CLI prompt template correctly differs. → `15.2.CLAUDE/assertion-02-no-gemini-slash.png`
+
+**Teardown:**
+- Orchestrator stops + removes `workbench-parity-claude`. State returns to pre-Section 15 baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
+---
+
 **Authored:** step 3a.1 of milestone #7 (UI runbook refactor), 2026-05-14.
 **Source proposal:** `/mnt/storage/dev_artifacts/workbench/r1/plan/baseline-ui-smoke-proposal.md`.
 **Round-1 findings folded:** #495–#514 against review-request #498. Specific defects addressed in this rewrite: `term.buffer.active` removed (§12.7); "Tester recognizes" wording replaced with concrete per-CLI ready observables (#504); chat content assertion strengthened to require coherent reply containing "56" per agent screenshot judgment (#501); numbered assertions cite-able by cell-6 grids; timing bounds applied per §12.8–§12.9; per-run subdir path aligned with PROC-004 `runbook-runs/` convention (#500).
@@ -1591,3 +2339,75 @@ Tester run `run-20260514T081936Z` (irina dev, Claude Code v2.1.123) surfaced run
 
 1. **GitHub issue filed** — sidebar auto-refresh does not recover from `loadState` `Failed to fetch` after Add Project: manual `↻` works, but the bounded ≤5s auto-refresh that SMOKE-PROJ-01 assertion-03 verifies is currently silently broken. Evidence: `SMOKE-PROJ-01/assertion-01..04*.png` in the run-20260514T081936Z subdir.
 2. **Comment on issue #404** — `#jqft-tree` element id is still emitted by the dir-picker despite #404's closure title naming the rename. Tester noted this as a side-finding during entry 2.3 (which PASSed on visible rendering but emits the legacy id). Decision recorded in the issue thread.
+
+---
+
+## §12.11 chain-of-events backfill (post-3-CLI-audit)
+
+STD-003 §12.11 was added after Phase A; the 3-CLI audit synthesis (`/mnt/storage/dev_artifacts/workbench/r1/runbook-build/12-11-backfill-plan.md`) identified 29 unique new entries needed (Axis 1: 9 negatives / both-state pairs; Axis 2: 20 peer-parity siblings) plus 13 existing entries needing explicit-precondition Setup steps and 2 in-place verify extensions (SMOKE-SETTINGS-01 picks up Git + System Prompts tab assertions; 3.2 picks up a Claude timestamp assertion).
+
+### New entries appended (29 total)
+
+| Section | New entries |
+|---|---|
+| 0 (OAuth) | 0.C.NEG, 0.D.NEG, 0.E.GEMINI, 0.E.CODEX, 0.F, 0.F.NEG |
+| 3 (Sidebar) | SIDEBAR-UNARCHIVE-01, SIDEBAR-SHOWARCHIVED-OFF-01, SIDEBAR-SHOWARCHIVED-ON-01, SIDEBAR-SORT-NAME-01 |
+| 4 (Sessions) | 4.1.GEMINI, 4.1.CODEX, 4.2.GEMINI, 4.2.CODEX, 4.3.CODEX, 4.6.CLAUDE, 4.6.GEMINI |
+| 5 (Projects) | 5.2.PENCIL |
+| 11 (Gate) | 11.2.FOLLOWON |
+| 12 (MCP) | 12.1.GEMINI, 12.1.CODEX, 12.2.CLAUDE, 12.2.NEG, 12.3.GEMINI, 12.3.CODEX |
+| 13 (Modals) | 13.2.GEMINI, 13.2.CODEX |
+| 15 (CLI parity) | 15.1.CLAUDE, 15.2.CLAUDE |
+
+### Existing entries with explicit-precondition Setup added (13 entries)
+
+0.C (Claude OAuth toggle ON), 0.D (Gemini OAuth toggle ON), 0.E (baseline checked state), 3.1 (Archive glyph ☐ baseline), 3.2 (timestamp baseline + sort dropdown affirmation), 4.3 (Gemini timestamp baseline), 4.6 (Codex tab present), 9.1 (`ghe-test` project selected), 11.2 (gate-page-current affirmation), 11.4 (cleared-buffer affirmation), 12.2 (test-mcp absent at baseline), 13.2 (no prior payload row), 14.1 (cleared-buffer affirmation).
+
+### Existing entries with in-place verify extensions (§12.11 axis-2 light touch)
+
+- **SMOKE-SETTINGS-01:** added assertions 05 (Git tab content) and 06 (System Prompts tab content), completing the 4-tab parity sweep; Steps extended to 9 (added clicks for Git and System Prompts).
+- **3.2 SIDEBAR-NONCLAUDE-TIMESTAMPS-01:** added assertion 04 (Claude timestamp advancement) — Claude peer of the existing Gemini+Codex assertions.
+
+### Coverage axes closed
+
+- **Axis 1 (toggle / setting / mode — both states):** 6/6 toggles covered with both ON and OFF cases — OAuth Claude / Gemini / Codex (now 6 entries each side covered), Archive toggle (3.1 ON + SIDEBAR-UNARCHIVE-01 OFF), Show-archived filter (OFF + ON pair), Sort dropdown (Recent activity used in 3.2/4.3 + Name in SIDEBAR-SORT-NAME-01), MCP project enable/disable (12.2 + 12.2.NEG).
+- **Axis 2 (peer / CLI parity):** 13/13 multi-CLI code paths now have an entry per peer — OAuth-detector module × 3 CLIs; OAuth-detection checkbox persistence × 3; `/session:transition` autocomplete × 3; `/session:transition` prompt content × 3; MCP `tools/list` × 3; MCP `session_list` as caller × 3; MCP `session_summarize` as target × 3; rapid-create × 3; path-encoding-restart × 3; JSONL parser × 3; session-name-XSS × 3; settings-tabs × 4; project-remove affordance × 2 (right-click + pencil); gate-followon-3CLI single entry covering all three.
+- **Axis 3 (explicit Setup):** 13/13 entries with previously-implicit preconditions now have explicit Setup steps that screenshot-affirm the precondition state.
+
+### Deferred (out of scope for this backfill round)
+
+- Settings → font-size both-state coverage (Claude flagged as low-priority exclusion per §14.1 — not a known regression surface).
+- Project-level KB sync toggle both-state coverage (Gemini-only finding; the codebase exposes KB settings as global, not per-project — feature does not exist as described).
+- Full compaction execution (Claude `/compact`, Gemini `/compress`, Codex equivalent — §12a Context Stress concern, not §12.11).
+- CRUD modal entry-point parity for keyboard shortcuts (Gemini noted as "if implemented"; source check shows no documented keyboard shortcuts for CRUD).
+- Mid-chain state-change entries (OAuth toggle flipped while session active; MCP enabled while session active — plausible per §12.11 but Gemini-only and not a known regression class; can be added in a future backfill round if real-world bugs surface).
+- 12.1/12.3 "add `/clear` to Teardown to avoid context pollution" (Gemini quality nit; existing entries' "N/A — smoke-chat-* preserved" Teardown is intentional and the pollution from one tool-call response is negligible).
+- Per-entry Claude-auth-observable Setup affirmation across all auth-dependent entries (Claude + Gemini flagged broadly; would bloat ~15-20 entries with minimal added signal; 0.B already verifies `auth:healthy` and the cascade-from value is the contract).
+
+Coverage after §12.11 backfill: 77 entries total (Section 0 = 2 prereqs (0.A, 0.B) + 3 originals (0.C, 0.D, 0.E) + 6 §12.11 additions = 11; Section 1 = 8 SMOKE; Section 2 = 4; Section 3 = 2 originals + 4 §12.11 = 6; Section 4 = 6 originals + 7 §12.11 = 13; Section 5 = 2 originals + 1 §12.11 = 3; Section 6 = 2; Section 7 = 2; Section 8 = 1; Section 9 = 2; Section 10 = 2; Section 11 = 4 originals + 1 §12.11 = 5; Section 12 = 3 originals + 6 §12.11 = 9; Section 13 = 2 originals + 2 §12.11 = 4; Section 14 = 1; Section 15 = 2 originals + 2 §12.11 = 4). 40 of these still close the original UI-gap issues 1:1; the 29 §12.11 additions close §12.11 axis gaps rather than gap-assessment issue numbers.
+
+---
+
+## §12.11 backfill round 1 fix dispositions
+
+Three reviewers audited the §12.11 backfill. Gemini APPROVE (0/0/0/0, all sweeps PASS). Claude APPROVE (0/0/0/1, §12.7/§12.8/§12.10/§12.11 PASS, one minor §12.8 finding). Codex REJECT_MAJOR (0/1/0/0, §12.8 FAIL on 6 verify lines in new entries). Severity-max applies; the union of Codex F1 + Claude F1 is addressed below.
+
+| ID | Sev | Where | Disposition | Justification |
+|---|---|---|---|---|
+| Codex F1 (a) | major | 0.E.GEMINI assertion-01 ≤500ms | **fix** | Sub-second screenshot polling for content affirmation is at the instrument's noise floor per §12.8; bumped to ≤1s to give screenshot polling room above its capture latency. The checkbox flip is observably immediate and ≤1s still catches the "toggle didn't fire" failure class. |
+| Codex F1 (b) | major | 0.E.CODEX assertion-01 ≤500ms | **fix** | Same fix as (a), same justification — ≤500ms → ≤1s for the Codex checkbox flip. |
+| Codex F1 (c) | major | SIDEBAR-UNARCHIVE-01 assertion-01 ≤500ms | **fix** | Same fix — ≤500ms → ≤1s for the Archive glyph optimistic-update transition. The optimistic update is observably immediate; the bound is the screenshot-polling instrument fit, not a behavior change. |
+| Codex F1 (d) | major | 4.2.CODEX assertion-01 "after step 1's batch" | **fix** | Replaced "after step 1's batch" with "after step 1" — the canonical `after step <K>:` form. Step 1 IS the batch (5 session creations within 1 wall-clock second); the trigger is Step 1's completion. Same canonicalization as 4.2 (Claude) Step 5 / 4.2.GEMINI Step 3. |
+| Codex F1 (e) | major | 4.2.CODEX assertion-02 "after step 1's batch" | **fix** | Same fix as (d) for the second assertion. |
+| Codex F1 (f) | major | 11.2.FOLLOWON "after each step-5 prompt landing" | **fix** | Step 5 split into three explicit steps (Steps 5, 6, 7 — one per CLI prompt). Original composite assertion split into three step-anchored verify lines: assertion-04 ≤30s after step 5 (Claude ack), assertion-05 ≤30s after step 6 (Gemini ack), assertion-06 ≤30s after step 7 (Codex ack). Each prompt is now a discrete trigger. |
+| Claude F1 | minor | 3.2 assertion-04 OR-construct + embedded Step 6 | **fix** | Promoted the embedded "exercise it explicitly" guidance to a numbered Step 6 in the Steps block (click smoke-chat-claude tab, type prompt, Enter, wait for ack). Assertion-04 reworded to strict `≤5s after step 6:` form, removing the OR-construct that could have silently passed on stale SMOKE-CHAT-01 timestamps. |
+| Gemini | — | (no findings, APPROVE 0/0/0/0) | n/a | Gemini's independent sweep confirmed §12.7/§12.8/§12.10/§12.11 PASS with no findings. No action required. |
+
+### Net effect
+
+- **Major resolved:** 1 Codex F1 spanning 6 specific verify lines in new entries (3 ≤500ms → ≤1s; 2 "after step 1's batch" → "after step 1"; 1 composite step-5 anchor split into 3 explicit step-anchored lines).
+- **Minor resolved:** 1 Claude F1 — 3.2 assertion-04 promoted to canonical `≤Ns after step <K>:` form with a new numbered Step 6 to anchor it.
+- **§12.8 form compliance in §12.11 new entries:** all flagged lines now use strict `≤Ns after step <K>:` form. Sub-second screenshot-polled content affirmations replaced with second-bounded form per Codex's reading; the ≤500ms patterns retained in prior-approved entries (0.E assertion-01, 2.4 assertions 01/02/03, 3.1 assertion-01, 6.1 assertions 02/03, 13.1 assertions 01-07) were not in Codex's review scope and are not regressing.
+- **Steps integrity:** 11.2.FOLLOWON Steps grew from 5 to 7; 3.2 Steps grew from 5 to 6. Both Step blocks now have a 1:1 mapping between trigger steps and step-anchored verify lines.
+
+Coverage after fixes: still 77 entries total; no entries added or removed in round 1.

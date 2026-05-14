@@ -422,6 +422,8 @@ module.exports = function createWatchers({
   async function registerCodexMcp() {
     const HOME = safe.HOME;
     const codexConfigFile = join(HOME, '.codex', 'config.toml');
+    const expectedArgsPath = join(__dirname, 'mcp-server.js');
+    const expectedBlock = `\n[mcp_servers.workbench]\ncommand = "node"\nargs = ["${expectedArgsPath}"]\n`;
     try {
       let content = '';
       try {
@@ -430,11 +432,42 @@ module.exports = function createWatchers({
         if (err.code !== 'ENOENT') throw err;
       }
 
-      if (content.includes('[mcp_servers.workbench]')) return;
+      // #565: the prior existence-only check left stale args paths in place
+      // when an older workbench build had seeded e.g. `mcp-stdio-server.js`.
+      // Parse the existing block (if any) and rewrite when the args path
+      // doesn't match the current source layout. Mirrors the Claude /
+      // Gemini stale-detection at lines ~225 and ~265.
+      const blockHeader = '[mcp_servers.workbench]';
+      const headerIdx = content.indexOf(blockHeader);
+      if (headerIdx >= 0) {
+        // Block spans from the header to the next top-level `[...]` section
+        // or EOF, whichever comes first.
+        const after = content.slice(headerIdx + blockHeader.length);
+        const nextHeaderMatch = after.match(/\n\[[^\]]+\]/);
+        const blockEnd = nextHeaderMatch
+          ? headerIdx + blockHeader.length + nextHeaderMatch.index
+          : content.length;
+        const existingBlock = content.slice(headerIdx, blockEnd);
+        if (existingBlock.includes(expectedArgsPath)) return; // already correct
+        // Stale: strip the existing block + any leading blank line, then
+        // append the correct one. Preserve everything else in the TOML.
+        let prefix = content.slice(0, headerIdx);
+        if (prefix.endsWith('\n')) prefix = prefix.slice(0, -1);
+        const suffix = content.slice(blockEnd);
+        const repaired = prefix + suffix + expectedBlock;
+        await fsp.mkdir(join(HOME, '.codex'), { recursive: true });
+        await fsp.writeFile(codexConfigFile, repaired);
+        logger.info('Repaired stale Workbench MCP server entry for Codex', {
+          module: 'watchers',
+          op: 'registerCodexMcp',
+          expectedArgsPath,
+        });
+        return;
+      }
 
-      const mcpConfig = `\n[mcp_servers.workbench]\ncommand = "node"\nargs = ["${join(__dirname, 'mcp-server.js')}"]\n`;
+      // No existing block — append fresh.
       await fsp.mkdir(join(HOME, '.codex'), { recursive: true });
-      await fsp.appendFile(codexConfigFile, mcpConfig);
+      await fsp.appendFile(codexConfigFile, expectedBlock);
       logger.info('Registered Workbench MCP server for Codex', { module: 'watchers' });
     } catch (err) {
       logger.error('Could not write Codex MCP config', { module: 'watchers', err: err.message });

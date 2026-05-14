@@ -1824,6 +1824,37 @@ window._pollTokenUsage = pollTokenUsage;
 // Expose renderSidebar reference for state.js setFilter
 window._renderSidebarRef = renderSidebar;
 
+// #574: re-fit every terminal tab on window resize. The xterm FitAddon doesn't
+// hook resize itself; without this the user's manual browser-window resize
+// leaves every tab at its previous column count (observed: cold-side-car
+// fresh-data deployments rendering at 1-column-wide until a Playwright
+// dispatchEvent('resize') triggered fit). Debounced to coalesce rapid resize
+// events; only fits visible / WS-connected tabs.
+let _resizeFitTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_resizeFitTimer);
+  _resizeFitTimer = setTimeout(() => {
+    for (const [, tab] of tabs) {
+      if (tab.type === 'file') continue;
+      if (!tab.fitAddon || !tab.paneEl) continue;
+      if (tab.paneEl.clientWidth <= 0 || tab.paneEl.clientHeight <= 0) continue;
+      try {
+        tab.fitAddon.fit();
+        const dims = tab.fitAddon.proposeDimensions();
+        if (
+          dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows)
+          && dims.cols > 0 && dims.rows > 0
+          && tab.ws?.readyState === WebSocket.OPEN
+        ) {
+          tab.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+        }
+      } catch {
+        /* ignore — fitAddon may not have dims yet for a pre-connect tab */
+      }
+    }
+  }, 100);
+});
+
 // ── Global window exports for HTML inline handlers ────────────────────────────
 window.openSettings = openSettings;
 window.closeSettings = closeSettings;

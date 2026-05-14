@@ -213,6 +213,25 @@ export function createTerminalTab(tabId, tmuxSession, name, project, cliType, ta
   }));
   term.open(paneEl);
 
+  // #574: fit on initial mount. term.open uses a default 80x24 grid; without
+  // an early fit() the pane can stay at sub-actual column counts (observed:
+  // 1-column-wide on cold-side-car fresh-data deploys until a window resize
+  // event fires). Fit immediately if paneEl has a non-zero clientWidth, and
+  // again on the next rAF to catch layouts that finished after term.open
+  // returned. connectTab's ws.onopen will re-fit once more when the WebSocket
+  // hands back actual cols/rows from the server.
+  const _safeInitialFit = () => {
+    try {
+      if (paneEl && paneEl.clientWidth > 0 && paneEl.clientHeight > 0) {
+        fitAddon.fit();
+      }
+    } catch {
+      /* ignore — fitAddon may not have dims yet */
+    }
+  };
+  _safeInitialFit();
+  requestAnimationFrame(_safeInitialFit);
+
   term.registerLinkProvider({
     provideLinks(lineNumber, callback) {
       const line = term.buffer.active.getLine(lineNumber - 1);

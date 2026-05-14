@@ -1664,12 +1664,28 @@ async function checkAuth() {
   try {
     const res = await fetch('/api/auth/status');
     const status = await res.json();
-    if (!status.valid) showAuthBanner(status.reason);
+    // #571: surface per-CLI auth-broken state (Claude / Gemini) so the banner
+    // can name the right CLI and the right slash command. The legacy `valid`
+    // field stays Claude-focused; `per_cli` is the richer signal.
+    const broken = [];
+    const perCli = status.per_cli || {};
+    if (perCli.claude?.broken) {
+      broken.push({ cli: 'Claude', cmd: perCli.claude.reauth_command || '/login' });
+    }
+    if (perCli.gemini?.broken) {
+      broken.push({ cli: 'Gemini', cmd: perCli.gemini.reauth_command || '/auth' });
+    }
+    // Fall back to legacy `valid` flag when per_cli isn't populated yet (older
+    // server build): treat as Claude broken to preserve prior behavior.
+    if (broken.length === 0 && !status.valid) {
+      broken.push({ cli: 'Claude', cmd: '/login' });
+    }
+    if (broken.length > 0) showAuthBanner(broken);
     else hideAuthBanner();
   } catch (err) { console.error('Auth check failed:', err); }
 }
 
-function showAuthBanner(reason) {
+function showAuthBanner(broken) {
   let banner = document.getElementById('auth-banner');
   if (!banner) {
     banner = document.createElement('div');
@@ -1682,10 +1698,13 @@ function showAuthBanner(reason) {
       else if (main) main.prepend(banner);
     })();
   }
-  banner.innerHTML = `
-    <span style="font-size:16px">&#9888;</span>
-    <span>Not authenticated — open any session and run <code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px;font-size:12px">/login</code> to authenticate all sessions</span>
-  `;
+  // #571: per-CLI message — names the affected CLI(s) explicitly and the
+  // correct slash command for each. Avoids the prior "run /login" guidance
+  // for Gemini sessions (Gemini uses /auth, not /login).
+  const lines = broken.map(b =>
+    `<span><b>${b.cli}</b> not authenticated — open any ${b.cli} session and run <code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px;font-size:12px">${b.cmd}</code></span>`
+  ).join('<span style="opacity:0.4;margin:0 4px">·</span>');
+  banner.innerHTML = `<span style="font-size:16px">&#9888;</span>${lines}`;
 }
 
 function hideAuthBanner() {

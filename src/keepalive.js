@@ -407,6 +407,14 @@ module.exports = function createKeepalive({ safe, config, logger }) {
         token_expires_at: new Date(expiresAt).toISOString(),
       };
     },
+    // #571: per-CLI auth-broken signals so the UI banner can render
+    // CLI-specific re-auth guidance (Claude → /login, Gemini → /auth).
+    getAuthBrokenStatus() {
+      return {
+        claude: { broken: !!_authBrokenLogged },
+        gemini: { broken: !!_geminiAuthBrokenLogged },
+      };
+    },
     setMode(newMode, idleMinutes) {
       mode = newMode;
       if (idleMinutes) idleTimeoutMs = idleMinutes * 60 * 1000;

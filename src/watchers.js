@@ -243,6 +243,73 @@ module.exports = function createWatchers({
         });
       }
     }
+
+    // #572: also patch the user-scope ~/.claude/.claude.json's
+    // mcpServers.workbench block. entrypoint.sh seeds this via
+    // `claude mcp add-json --scope user`, but if a prior workbench build
+    // wrote a stale args path (e.g., /app/mcp-server.js before the C0
+    // src/ refactor moved the file to /app/src/mcp-server.js), Claude
+    // surfaces a "Conflicting scopes" warning because user and project
+    // scopes disagree on the workbench server's endpoint. Repair the same
+    // way settings.json above is repaired: read, detect stale args path,
+    // rewrite. Idempotent — no-op when already canonical.
+    const claudeJsonFile = join(CLAUDE_HOME, '.claude.json');
+    let claudeJsonCfg = null;
+    try {
+      claudeJsonCfg = JSON.parse(await fsp.readFile(claudeJsonFile, 'utf-8'));
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return; // no .claude.json yet — entrypoint will seed it
+      }
+      if (err instanceof SyntaxError) {
+        logger.error(
+          '.claude.json is corrupt — skipping user-scope MCP repair',
+          { module: 'watchers', op: 'registerMcpServer' },
+        );
+        return;
+      }
+      logger.warn('Failed to read .claude.json for user-scope MCP repair', {
+        module: 'watchers',
+        op: 'registerMcpServer',
+        err: err.message,
+      });
+      return;
+    }
+
+    if (!claudeJsonCfg.mcpServers) claudeJsonCfg.mcpServers = {};
+    const userExisting = claudeJsonCfg.mcpServers.workbench;
+    const userIsStale = userExisting && (
+      !userExisting.command ||
+      (Array.isArray(userExisting.args) && userExisting.args[0] !== expectedArgs[0])
+    );
+    if (!userExisting || userIsStale) {
+      claudeJsonCfg.mcpServers.workbench = {
+        command: 'node',
+        args: expectedArgs,
+      };
+      try {
+        await fsp.writeFile(claudeJsonFile, JSON.stringify(claudeJsonCfg, null, 2));
+        if (userIsStale) {
+          logger.info('Repaired stale Workbench MCP server entry in user-scope .claude.json', {
+            module: 'watchers',
+            op: 'registerMcpServer',
+            previousArgs: userExisting.args,
+            expectedArgs,
+          });
+        } else {
+          logger.info('Seeded Workbench MCP server in user-scope .claude.json', {
+            module: 'watchers',
+            op: 'registerMcpServer',
+          });
+        }
+      } catch (err) {
+        logger.error('Could not write user-scope .claude.json MCP entry', {
+          module: 'watchers',
+          op: 'registerMcpServer',
+          err: err.message,
+        });
+      }
+    }
   }
 
   async function registerGeminiMcp() {

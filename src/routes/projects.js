@@ -332,6 +332,61 @@ function register(app, {
     if (notes !== undefined) db.setProjectNotes(project.id, notes);
     res.json({ ok: true });
   });
+
+  // ── Per-project MCP servers (#570) ──────────────────────────────────────
+  // The MCP-tool layer (mcp-tools.js project_mcp_enable / project_mcp_disable)
+  // already implements the workbench-side state transitions + per-CLI config
+  // writes. These HTTP endpoints surface the same enable/disable controls to
+  // the Project Config modal so operators don't have to drop into an
+  // MCP-capable CLI to flip a project's MCP config.
+  const { _writeProjectMcpForAllCLIs } = require('../mcp-tools');
+
+  app.get('/api/projects/:name/mcp', (req, res) => {
+    const project = db.getProject(req.params.name);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+    const available = db.getMcpServers();
+    const enabled = db.getEnabledMcpForProject(project.id);
+    const enabledNames = new Set(enabled.map(m => m.name));
+    res.json({
+      available: available.map(m => ({
+        name: m.name,
+        transport: m.transport,
+        description: m.description || '',
+        enabled: enabledNames.has(m.name),
+      })),
+    });
+  });
+
+  app.post('/api/projects/:name/mcp', (req, res) => {
+    const project = db.getProject(req.params.name);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+    const { mcp_name } = req.body || {};
+    if (!mcp_name || typeof mcp_name !== 'string') {
+      return res.status(400).json({ error: 'mcp_name required' });
+    }
+    if (!db.getMcpServer(mcp_name)) {
+      return res.status(404).json({ error: 'MCP server not registered globally' });
+    }
+    db.enableMcpForProject(project.id, mcp_name);
+    try { _writeProjectMcpForAllCLIs(project); } catch (err) {
+      logger.error('Failed to write per-CLI project MCP config', {
+        module: 'routes', op: 'project_mcp_enable', project: project.name, err: err.message,
+      });
+    }
+    res.json({ enabled: mcp_name, project: project.name });
+  });
+
+  app.delete('/api/projects/:name/mcp/:mcpName', (req, res) => {
+    const project = db.getProject(req.params.name);
+    if (!project) return res.status(404).json({ error: 'project not found' });
+    db.disableMcpForProject(project.id, req.params.mcpName);
+    try { _writeProjectMcpForAllCLIs(project); } catch (err) {
+      logger.error('Failed to write per-CLI project MCP config', {
+        module: 'routes', op: 'project_mcp_disable', project: project.name, err: err.message,
+      });
+    }
+    res.json({ disabled: req.params.mcpName, project: project.name });
+  });
 }
 
 module.exports = { register };

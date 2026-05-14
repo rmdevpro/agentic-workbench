@@ -395,56 +395,17 @@ Ask the orchestrator which option to use. If neither is available, fix the auth 
 
 **Result:** ☐ PASS ☐ FAIL
 
-### 0.F: OAUTH-MODAL-CODEX-01 — Codex `/login`-equivalent triggers OAuth modal with extracted URL (peer of 0.C / 0.D)
+### 0.F: OAUTH-MODAL-CODEX-01 — DELETED in Phase D (Codex has no in-session OAuth slash command)
 
-**Cascade-from:** 0.B
-**Closes gap for:** §12.11 axis-1 + axis-2 — Codex OAuth-detection toggle ON / positive case (paired with 0.C Claude and 0.D Gemini)
+This entry has been removed. Codex CLI v0.130.0 has no `/login` or `/auth` in-session slash command; Codex authentication is process-spawn-time only. The premise of testing the workbench's oauth-detector against a Codex in-session OAuth trigger is structurally invalid — the feature does not exist on Codex. Documented in the Phase D triage section at the bottom of this runbook.
 
-**Setup:**
-1. 0.B complete. Hymie reachable. **0.F requires Hymie** — same reason as 0.C / 0.D (OAuth handoff cannot be driven headless).
-2. From Hymie, browser to `${WORKBENCH_URL}`. Workbench shell renders.
-3. **Precondition affirmation:** click `⚙ Settings` → General → `OAuth detection` group; screenshot-affirm the `Codex` checkbox is checked; press Escape.
-4. Click `+` on `wb-seed` → `Codex` row → name `oauth-bootstrap-codex` → `Start Session`. Wait up to 30s for the Codex session tab and the Codex input field (at the bottom of the pane per its current rendering — Codex CLI does not exhibit the input-position drift the SMOKE-CHAT-01 Phase A note flagged for Claude).
+The §12.11 axis-2 peer-parity claim for the OAuth-detector module reduces accordingly: 0.C (Claude) + 0.D (Gemini) cover the two CLIs that DO expose an in-session OAuth slash. Codex's process-spawn-time auth flow is exercised at container-bring-up by 0.A / 0.B-equivalent setup, not by a Section-2+ entry.
 
-**Steps:**
-1. Click into the Codex terminal pane (Hymie mouse).
-2. Type the Codex login slash (`/login` or the Codex-current-version equivalent — verify against the Codex CLI's slash list if unsure) and press Enter.
-3. Observe Codex emit its authentication URL line in the terminal pane.
+### 0.F.NEG: OAUTH-DETECT-CODEX-OFF-01 — DELETED in Phase D (paired with 0.F; same reason)
 
-**Verify:**
-- ≤3s after step 2: the workbench OAuth modal renders as an overlay with an `Authenticate with` heading and a link button visible. → `0.F/assertion-01-modal-rendered.png`
-- ≤3s after step 2: the modal's link button URL (hover-revealed via Hymie tooltip) starts with the Codex OAuth provider's URL prefix (`https://auth.openai.com/` or whatever the current Codex provider is at the pinned image version) and matches the URL the Codex CLI emitted in step 2. → `0.F/assertion-02-modal-url-matches.png`
-- ≤3s after step 2: a code-input field is visible inside the modal with a Submit button beside it (same modal structure as 0.C and 0.D). → `0.F/assertion-03-code-input-visible.png`
+This entry has been removed. Codex has no in-session OAuth slash to suppress; the toggle's effect on Codex cannot be verified in-session because the feature itself does not exist in-session. Documented in the Phase D triage section.
 
-**Teardown:**
-- Click the modal's `×` close affordance. Modal disappears ≤1s. Right-click the `oauth-bootstrap-codex` row → Remove session.
-
-**Result:** ☐ PASS ☐ FAIL
-
-### 0.F.NEG: OAUTH-DETECT-CODEX-OFF-01 — Codex `/login`-equivalent with Codex OAuth-detection OFF does NOT trigger modal (negative parity for 0.F)
-
-**Cascade-from:** 0.B
-**Closes gap for:** §12.11 axis-1 negative case for Codex OAuth-detection toggle
-
-**Setup:**
-1. 0.B complete. Hymie reachable.
-2. From Hymie, browser to `${WORKBENCH_URL}`. Workbench shell renders.
-3. **Toggle OFF (Setup):** click `⚙ Settings` → General → `OAuth detection` group; click the `Codex` checkbox to uncheck it. Screenshot-affirm the `Codex` checkbox is unchecked. Press Escape.
-4. Click `+` on `wb-seed` → `Codex` → name `oauth-off-codex` → `Start Session`. Wait for the Codex input field ready observable.
-
-**Steps:**
-1. Click into the Codex terminal pane.
-2. Type the Codex login slash and press Enter.
-
-**Verify:**
-- ≤3s after step 2: NO workbench OAuth modal overlay is rendered. → `0.F.NEG/assertion-01-no-modal.png`
-- ≤5s after step 2: the Codex terminal pane shows the CLI's own native auth handoff output. → `0.F.NEG/assertion-02-codex-native-handoff.png`
-- ≤5s after step 2: supplementary diagnostic — DevTools console shows zero `oauth-detector` modal-trigger entries. → `0.F.NEG/assertion-03-no-detector-fired.png`
-
-**Teardown:**
-- Dismiss the Codex `/login` prompt. Re-check the `Codex` OAuth-detection checkbox in Settings. Right-click `oauth-off-codex` row → Remove session.
-
-**Result:** ☐ PASS ☐ FAIL
+The §12.11 axis-1 negative-state coverage for Codex OAuth-detection toggle is N/A by feature absence — the toggle is a workbench-side setting that gates the workbench's terminal-pane URL detector; with no Codex in-session URL emission to detect, ON and OFF are indistinguishable on Codex sessions. The Codex OAuth-detection checkbox in Settings remains under test by 0.E.CODEX (which verifies the checkbox's persistence + click handler — those work regardless of whether the detector ever fires for Codex).
 
 ### Orchestrator-directed SKIP
 
@@ -1353,31 +1314,35 @@ Verify CRUD + cascade behavior for projects and programs at the sidebar level: r
 
 ---
 
-### 5.2.PENCIL: PROJECT-REMOVE-VIA-PENCIL-01 — Project remove via ✎ pencil affordance (peer of 5.2 right-click)
+### 5.2.PENCIL: PROJECT-CONFIG-STATE-VIA-PENCIL-01 — ✎ pencil opens Project Config and changes project state
 
 **Cascade-from:** SMOKE-CHAT-01
-**Closes gap for:** §12.11 axis-2 — pencil affordance peer of 5.2 right-click context menu (same remove flow, different entry point)
+**Closes gap for:** §12.11 axis-2 — ✎ pencil affordance as a distinct entry point to project-level configuration (the pencil opens Project Config / State dropdown, NOT a Remove flow — Remove parity is filed as a product gap; see Phase D triage in the runbook trailer)
+
+**Note on reframe (Phase D):** The original 5.2.PENCIL entry was authored on the assumption that the ✎ pencil affordance exposes a Remove action symmetric with the right-click context menu. Phase D execution surfaced that the ✎ pencil instead opens a Project Config modal containing a State dropdown (active / archived / hidden) and a Save button — NO Remove button. The §12.11 axis-2 intent (peer affordances for project-level state changes) is satisfied by reframing this entry to test the State-change flow the pencil DOES enable. Remove-via-pencil parity has been filed as a separate product gap.
 
 **Setup:**
 1. SMOKE-CHAT-01 complete.
-2. Setup creates a sacrificial sister project (parallel to 5.2's setup, with a different name so the two entries can run in either order without state collision):
-   - `+ Project` → `pencil-remove-test` at `/data/workspace/pencil-remove-test` (orchestrator pre-creates path if needed) → Save.
-   - On `pencil-remove-test`, `+` → `Claude` → name `pencil-claude-01` → Start Session. Wait for ready.
-   - Verify the `pencil-remove-test` project row and `pencil-claude-01` session row are visible in the sidebar.
+2. Setup creates a sacrificial sister project (so the State change is observable without disturbing upstream state):
+   - `+ Project` → `pencil-state-test` at `/data/workspace/pencil-state-test` (orchestrator pre-creates path if needed) → Save.
+   - On `pencil-state-test`, `+` → `Claude` → name `pencil-claude-01` → Start Session. Wait for ready.
+   - Verify the `pencil-state-test` project row and `pencil-claude-01` session row are visible in the sidebar.
+3. **Baseline-state affirmation (§12.11 explicit Setup):** screenshot-affirm the `pencil-state-test` project row's current visual state is "active" (the default — no archived / hidden indicator). The test changes state to "archived" via the pencil affordance; baseline must be "active" for the transition to be observable.
 
 **Steps:**
-1. Locate the `pencil-remove-test` project row in the sidebar. Hover the row to reveal the ✎ pencil affordance (if it is hidden until hover).
-2. Click the ✎ pencil affordance on the `pencil-remove-test` row.
-3. The project-edit modal (or context menu) opens. Locate the `Remove` action within it. Click `Remove`.
-4. A confirm modal appears. Click `Confirm`.
+1. Locate the `pencil-state-test` project row in the sidebar. Hover the row to reveal the ✎ pencil affordance (if it is hidden until hover).
+2. Click the ✎ pencil affordance on the `pencil-state-test` row.
+3. The Project Config modal opens. Locate the `State` dropdown control.
+4. Click the State dropdown. Select the `archived` option.
+5. Click the modal's `Save` button.
 
 **Verify:**
-- ≤2s after step 2: a project-edit modal or context menu is visibly rendered in response to the pencil click (the workbench-styled overlay distinct from the right-click context menu). → `5.2.PENCIL/assertion-01-pencil-overlay-rendered.png`
-- ≤2s after step 3: a workbench-styled confirm modal is visibly rendered asking to confirm removal. → `5.2.PENCIL/assertion-02-confirm-modal.png`
-- ≤10s after step 4: the `pencil-remove-test` project row is no longer visible in the sidebar AND the `pencil-claude-01` session row also disappears (the same cascade behavior as 5.2's right-click path applies). → `5.2.PENCIL/assertion-03-project-and-session-removed.png`
+- ≤2s after step 2: the Project Config modal is visibly rendered as a workbench-styled overlay with at least a `State` dropdown control and a `Save` button visible. → `5.2.PENCIL/assertion-01-project-config-modal-rendered.png`
+- ≤1s after step 4: the State dropdown's visible selected value is `archived` (the dropdown UI reflects the click). → `5.2.PENCIL/assertion-02-state-dropdown-set-to-archived.png`
+- ≤3s after step 5: the modal dismisses AND the `pencil-state-test` project row in the sidebar visibly reflects the archived state (per-product styling — dimmed text, archived badge, moved to an archived section per the sidebar's filter, or removed from the default Active filter). → `5.2.PENCIL/assertion-03-row-shows-archived-state.png`
 
 **Teardown:**
-- Orchestrator removes `/data/workspace/pencil-remove-test` if it still exists. State returns to SMOKE-CHAT-01 baseline.
+- Restore the project state: click the `pencil-state-test` row's ✎ pencil → Project Config modal → State dropdown → select `active` → Save. Then right-click the row → `Remove` → Confirm (right-click is the canonical Remove path; this entry no longer tests Remove). Orchestrator removes `/data/workspace/pencil-state-test`. State returns to SMOKE-CHAT-01 baseline.
 
 **Result:** ☐ PASS ☐ FAIL
 
@@ -2228,13 +2193,15 @@ Verify CLI-parity slash commands auto-install on fresh container (#451) and that
 
 ---
 
-### 15.1.CLAUDE: CLI-PARITY-SLASH-AUTOINSTALL-CLAUDE-01 — `/session:transition` autocompletes in fresh Claude session (peer of 15.1 Gemini+Codex)
+### 15.1.CLAUDE: CLI-PARITY-SLASH-AUTOINSTALL-CLAUDE-01 — `/session` skill autocompletes in fresh Claude session (peer of 15.1 Gemini+Codex)
 
 **Cascade-from:** cold
 **Closes gap for:** §12.11 axis-2 — Claude peer of 15.1 (Gemini+Codex peers covered there)
 
+**Note on per-CLI slash form:** Claude Code v2.1.x exposes the session-management skill as a single `/session` slash with subcommand arguments (`transition`, `resume`), NOT as separate `/session:transition` / `/session:resume` entries like Gemini and Codex. Per-CLI autocomplete renderings differ: this entry asserts the Claude form (one dropdown row for `/session` with subcommand args reachable on Tab / arrow keys). The 15.1 (Gemini+Codex) entry asserts the colon-namespaced form on those CLIs.
+
 **Setup:**
-1. Orchestrator spins a fresh container from the current image with NO manual slash-command placement: `docker run -d --name workbench-parity-claude -v <ephemeral>:/data -p <port>:7860 <image>`. Confirm `/data/.claude/skills/session-transition/` does NOT exist before workbench starts.
+1. Orchestrator spins a fresh container from the current image with NO manual slash-command placement: `docker run -d --name workbench-parity-claude -v <ephemeral>:/data -p <port>:7860 <image>`. Confirm the Claude skill files do NOT exist at the canonical install path (e.g., `/data/.claude/skills/session/SKILL.md`) before workbench starts — proves auto-install is the only source.
 2. Bind `${WORKBENCH_URL}` to this container. Pass the gate if applicable. Workbench shell renders.
 3. Provision Claude credentials.
 4. Start a Claude session in `wb-seed` named `parity-slash-claude` via `+` → `Claude` → name → Start. Wait for the Claude input-area ready observable (per SMOKE-CHAT-01 step 5 claude form).
@@ -2243,26 +2210,31 @@ Verify CLI-parity slash commands auto-install on fresh container (#451) and that
 1. Click the `parity-slash-claude` tab. Click into the terminal pane.
 2. Type the partial slash `/sessio` (do NOT press Enter; observe the autocomplete dropdown).
 3. Capture the autocomplete dropdown content visible in the terminal pane.
+4. Press the down-arrow / Tab to navigate the autocomplete and observe whether the `/session` row exposes its subcommand args (`transition`, `resume`) — either as a second-level dropdown when the row is highlighted, or as inline arg-hint text within the same row.
+5. Capture a second screenshot showing the args surfaced for `/session`.
 
 **Verify:**
-- ≤2s after step 2: the Claude terminal's autocomplete dropdown visibly lists `/session:transition` AND `/session:resume` as suggestions (auto-installed by the workbench at boot; without manual placement). → `15.1.CLAUDE/assertion-01-claude-autocomplete.png`
+- ≤2s after step 2: the Claude terminal's autocomplete dropdown visibly lists `/session` as a suggestion (auto-installed by the workbench at boot; without manual placement). → `15.1.CLAUDE/assertion-01-claude-session-autocomplete.png`
+- ≤2s after step 4: the dropdown affordance (second-level menu or inline arg hint, per Claude Code's current rendering) makes the subcommand arguments `transition` AND `resume` discoverable from the `/session` row — they appear on screen as selectable / typeable arg values, not buried behind documentation. → `15.1.CLAUDE/assertion-02-claude-session-args-visible.png`
 
 **Teardown:**
 - Leave the `workbench-parity-claude` container running for 15.2.CLAUDE. State preserved.
 
 **Result:** ☐ PASS ☐ FAIL
 
-### 15.2.CLAUDE: CLI-PARITY-COMPACT-PROMPT-CLAUDE-01 — Claude `/session:transition` renders Claude-appropriate prompt (peer of 15.2 Gemini+Codex)
+### 15.2.CLAUDE: CLI-PARITY-COMPACT-PROMPT-CLAUDE-01 — Claude `/session transition` renders Claude-appropriate prompt (peer of 15.2 Gemini+Codex)
 
 **Cascade-from:** 15.1.CLAUDE
 **Closes gap for:** §12.11 axis-2 — Claude peer of 15.2 (anchors the positive value that 15.2's negative assertions for Gemini/Codex reference: Gemini "does not contain `/compact`" is meaningful only if `/compact` IS the Claude value)
 
+**Note on per-CLI invocation form:** Per 15.1.CLAUDE's note, Claude invokes the session-transition skill as `/session` + `transition` arg, not as `/session:transition`. The actual keystroke sequence is `/session<space>transition<Enter>` (or whatever the deployed Claude Code v2.1.137 input form for skill+arg is — Tab-select arg, type arg, or arg-as-positional — verify against the v2.1.137 autocomplete behavior captured in run-20260514T182149Z/15.1.CLAUDE/ for the actual deployed pattern). The PROMPT CONTENT that lands in the pane is the same regardless of the invocation form; this entry verifies prompt content, not invocation syntax.
+
 **Setup:**
-1. 15.1.CLAUDE complete (`workbench-parity-claude` running; `parity-slash-claude` session exists with auto-installed slash commands).
+1. 15.1.CLAUDE complete (`workbench-parity-claude` running; `parity-slash-claude` session exists with auto-installed `/session` skill).
 
 **Steps:**
 1. Click `parity-slash-claude` tab.
-2. Type `/session:transition` and press Enter.
+2. Invoke the Claude session-transition skill using the deployed v2.1.x invocation form: type `/session` then space, then `transition`, then Enter (or follow the Claude Code v2.1.137 prompt for arg entry — Tab to accept arg, type the arg value, then Enter). If the autocomplete from 15.1.CLAUDE step 4 surfaced a direct-invoke affordance for the `transition` arg, use that; otherwise type the arg explicitly.
 3. Wait for the prompt to render in the Claude pane.
 
 **Verify:**
@@ -2411,3 +2383,54 @@ Three reviewers audited the §12.11 backfill. Gemini APPROVE (0/0/0/0, all sweep
 - **Steps integrity:** 11.2.FOLLOWON Steps grew from 5 to 7; 3.2 Steps grew from 5 to 6. Both Step blocks now have a 1:1 mapping between trigger steps and step-anchored verify lines.
 
 Coverage after fixes: still 77 entries total; no entries added or removed in round 1.
+
+---
+
+## Phase D triage (post-step-5 follow-up tester run)
+
+Tester follow-up run `run-20260514T182149Z` surfaced three runbook spec errors (entries written against assumed CLI behavior that did not match the deployed CLI behavior) and three real product issues. Phase D applies the runbook fixes and files the product issues; cold-target auth-seeding and HF-target auth-seeding are documented as orchestrator actions outside this engineer's container.
+
+### Runbook spec corrections applied
+
+| Entry | Phase D disposition |
+|---|---|
+| **0.F + 0.F.NEG** (Codex in-session OAuth modal) | **DELETED.** Codex CLI v0.130.0 has no `/login` or `/auth` in-session slash command; Codex authentication is process-spawn-time only. The premise of testing the workbench's in-session terminal-pane URL detector against a Codex `/login` trigger is structurally invalid — the trigger does not exist. The reframe option (test workbench's detector against Codex's spawn-time auth URL emission) was rejected because Codex's spawn-time flow is a precondition, not a runtime trigger; it doesn't produce a clean §12.11 axis-1/axis-2 entry. Both entries are replaced with deletion-stub blocks naming the reason. The §12.11 axis-2 peer-parity claim for the OAuth detector module reduces accordingly: 0.C (Claude) + 0.D (Gemini) cover the two CLIs that DO expose an in-session OAuth trigger. |
+| **15.1.CLAUDE** (Claude `/session:transition` autocomplete) | **REFRAMED.** Claude Code v2.1.x exposes the session-management skill as a single `/session` slash with subcommand arguments (`transition`, `resume`), NOT as separate `/session:transition` / `/session:resume` autocomplete entries the way Gemini and Codex do. Steps + Verify rewritten to assert the Claude form: `/sessio` autocompletes to one `/session` row; navigating the autocomplete surfaces the subcommand args (`transition`, `resume`) as discoverable arg values. Assertion count grew from 1 to 2 to cover both the `/session`-visible and args-discoverable halves. |
+| **15.2.CLAUDE** (Claude `/session:transition` prompt content) | **REFRAMED.** Invocation form changed from `/session:transition` + Enter to the actual Claude v2.1.137 form: `/session` + space + `transition` + Enter (or per the autocomplete arg-entry affordance captured in 15.1.CLAUDE step 4). Verify content unchanged — the prompt content the skill renders is the same regardless of invocation syntax. Note added that the test verifies prompt content, not invocation syntax. |
+| **5.2.PENCIL** (Project remove via ✎ pencil affordance) | **REFRAMED.** The ✎ pencil affordance opens a Project Config modal with a State dropdown (active / archived / hidden) and Save button — NO Remove button. The original entry's premise (Remove-via-pencil parity with right-click Remove) was structurally wrong. The reframe tests what the pencil DOES enable: changing project state via the State dropdown. ID stays `5.2.PENCIL`; full name changed to `PROJECT-CONFIG-STATE-VIA-PENCIL-01`. Remove-parity is filed as a separate product gap (see Issues filed below). The §12.11 axis-2 intent — multiple affordances for project-level configuration — is satisfied by the reframed test of the State-change affordance. |
+
+Net runbook impact: 2 entries deleted (0.F, 0.F.NEG), 3 entries reframed (15.1.CLAUDE, 15.2.CLAUDE, 5.2.PENCIL). Coverage: 75 entries total (was 77; minus 2 deleted). The §12.11 axis tally adjusts: axis-1 Codex-OAuth toggle both-states now documented as N/A by feature absence; axis-2 OAuth-detector peer parity reduces from 3 CLIs to 2 (Claude + Gemini, since Codex's in-session detector code path does not exist as a runtime trigger).
+
+### Issues filed (Phase D)
+
+1. **#565** — Workbench injects wrong MCP server path for Codex sessions (\`/app/src/mcp-stdio-server.js\` does not exist; actual file is \`mcp-server.js\`). Major. All Codex sessions on irina commit \`f5bc87b\` fail MCP startup. Evidence in `run-20260514T182149Z/12.1.CODEX/`.
+2. **#566** — Project ✎ pencil affordance lacks Remove parity with right-click context menu. Minor / quality. Workaround exists. Tracks the product gap that motivated 5.2.PENCIL's reframe.
+3. **#567** — Workbench should refresh Gemini OAuth tokens (keepalive parity with Claude). Major. \`src/keepalive.js\` only refreshes Claude tokens; Gemini's expired tokens stall sessions in a re-auth flow that doesn't recover. Closes the §12.1.GEMINI / §12.3.GEMINI FAIL class.
+
+### Gemini-12.x cached-OAuth investigation (Part C disposition)
+
+The 12.1.GEMINI / 12.3.GEMINI FAIL class was investigated as a candidate workbench bug. Finding: BOTH a product gap AND a runtime workaround are appropriate.
+
+- **Product gap (filed):** `src/keepalive.js` refreshes Claude credentials only. Zero Gemini-side refresh path exists in the workbench. `grep -nE 'gemini|Gemini|oauth_creds|GOOGLE_OAUTH' src/keepalive.js` returns zero hits. The workbench-side fix is to extend keepalive (or factor out the refresh primitive) to handle Gemini's `oauth_creds.json`. Filed as issue #567.
+- **Environment limit (documented):** Until #567 lands, Gemini sessions that show a stall on first prompt have expired tokens. Workaround: open a fresh Gemini session, type `/auth`, complete OAuth re-flow. Cached tokens persist for the WORKBENCH_DATA volume lifetime.
+
+The 12.1.GEMINI / 12.3.GEMINI entries' Setup blocks should be amended in a future round to add a "Gemini auth health check" precondition step (try a trivial Gemini prompt; if it stalls, do a `/auth` re-flow before proceeding with the entry's Steps). Not folded into this Phase D round to keep the scope tight.
+
+### Cold-target auth-seeding (Part D disposition)
+
+Cold container `wb-cold-1778763392` on `irina:7861` has no Gemini or Codex auth seeded. Action required: orchestrator with SSH access to irina copies `/srv/workbench/.gemini/oauth_creds.json` and `/srv/workbench/.codex/auth.json` from the main irina workbench into `/tmp/wb-cold-1778763392/data/.gemini/` and `/tmp/wb-cold-1778763392/data/.codex/`, then `docker restart wb-cold-1778763392`.
+
+This engineer's container does NOT have SSH access to irina (`ssh -o BatchMode=yes workbench@irina` returns `Permission denied (publickey,password)` — separation-of-concerns between this prod-mode workbench and the irina dev target). Cold-seed is an orchestrator action outside this Phase D pass.
+
+### HF-target auth-seeding (Part D disposition)
+
+HF test space `aristotle9-agentic-workbench-test.hf.space` has no CLI credentials. Per `workbench-deployment.md` line 148, the space uses Space Secrets (`WORKBENCH_USER`, `WORKBENCH_PASS`) for gate auth only — there is no Space-Secrets mechanism for CLI OAuth tokens. CLI tokens live in `~/.gemini/oauth_creds.json` / `~/.codex/auth.json` inside the container; on an HF Space those would need to be baked into the image OR persisted via Persistent Storage (which is a Space-settings choice).
+
+Disposition: **out of scope for runbook execution.** The HF test space is a public smoke target without persistent CLI auth; runbook entries that require Gemini/Codex CLI sessions (most of Section 4 + Section 12 + Section 15) cannot run against this target unless the orchestrator first seeds the credentials via the HF Persistent Storage path. Documented in the deployment guide.
+
+### Coverage after Phase D
+
+- **Entries:** 75 (was 77; 0.F + 0.F.NEG deleted)
+- **§12.11 axis-1 toggle both-states:** 5/6 toggles fully covered (Codex OAuth-detection toggle is N/A by feature absence — the toggle's effect on Codex cannot be observed in-session because Codex has no in-session OAuth trigger to gate; the toggle's persistence is still verified by 0.E.CODEX)
+- **§12.11 axis-2 peer parity:** OAuth-detector module reduced from 3 peers to 2 (Claude + Gemini); all other multi-CLI code paths unchanged
+- **§12.11 axis-3 explicit Setup:** 13/13 entries with explicit precondition Setup (unchanged)

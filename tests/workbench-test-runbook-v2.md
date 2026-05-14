@@ -2,9 +2,9 @@
 
 ## Status
 
-This file is the v2 rewrite of the Workbench UI Test Runbook, authored on milestone #7 (UI runbook refactor). It lives at `tests/workbench-test-runbook-v2.md` for the duration of milestone #7. At project close it swaps places with `tests/workbench-test-runbook.md`. Until then, the legacy `workbench-test-runbook.md` remains the operating runbook and serves as a reference comparator for review.
+This file is the v2 rewrite of the Workbench UI Test Runbook, authored on milestone #7 (UI runbook refactor). It lives at `tests/workbench-test-runbook-v2.md` for the duration of r1 and is swapped into place at `tests/workbench-test-runbook.md` at SDLC-4 release close. The legacy runbook has been archived under `/mnt/storage/archive/` and is only retrieved during the SDLC-4 release-close gate for a final coverage-equivalence check (which itself runs after a 3-CLI UI-surface inventory and gap closure — see the SDLC-4 release-close gating issues).
 
-Section 1 (Baseline UI Smoke) is authored in this commit (step 3a.1 of milestone #7). Sections 2+ (feature groups) are added in subsequent step 3a.N iterations per the milestone plan.
+Section 0 (Environment Setup — fresh container + OAuth bootstrap) and Section 1 (Baseline UI Smoke) are authored in this commit. Further sections (feature groups) are added in subsequent r1 milestones as features land — they are not authored as a block during milestone #7.
 
 ## Target binding
 
@@ -21,7 +21,7 @@ Anywhere a test step says `${WORKBENCH_URL}/...` or names the container, substit
 
 - **Target:** `${WORKBENCH_URL}` (per-run binding above)
 - **Login:** `${GATE_USER}` / `${GATE_PASS}` if the deployment is gated; otherwise direct
-- **Tool:** Playwright MCP (synthetic mouse + keyboard + screenshot in a headless Chromium); Hymie remote-desktop only for native-OS dialogs the browser cannot drive
+- **Tool:** Playwright MCP (synthetic mouse + keyboard + screenshot in a headless Chromium). Hymie remote-desktop is used **only in Section 0** (OAuth bootstrap); no other section uses Hymie.
 - **Container user:** `workbench` (UID 1000)
 - **Workspace path:** `/data/workspace`
 - **MCP tools:** the workbench's flat MCP tool set (per `mcp-tools.js` registry)
@@ -41,7 +41,7 @@ A result of "unknown," "empty," "0," "null," "not found," "expected behavior," "
 
 **SKIP is not a valid result.** Per PROC-002, every in-scope test runs and is recorded as PASS or FAIL with a filed issue on FAIL. Entries excluded by the test scope matrix for the current change type do not appear in the executor briefing at all — they are out of scope, not skipped at runtime. Neither the executor nor the orchestrator has authority to skip an in-scope entry.
 
-Every entry in this runbook is runnable on the standard Workbench executor (Playwright MCP for UI; SSH + `docker exec` for setup state on the deployed container; Hymie remote desktop when the bug needs a real OS-level mouse/keyboard/screen). If a test appears unrunnable: investigate why, file an issue, mark FAIL. "I don't have the tool" is wrong — you do.
+Every entry in this runbook is runnable on the standard Workbench executor: Playwright MCP for UI verification (headless Chromium), SSH + `docker exec` for setup state on the deployed container, and Hymie remote desktop **only in Section 0** for the OAuth bootstrap. Every other section is headless. If a test appears unrunnable: investigate why, file an issue, mark FAIL. "I don't have the tool" is wrong — you do.
 
 Aggregate results that bundle multiple tests into a single PASS line are forbidden. "Exercised-elsewhere" footnotes that mark untested entries as PASS are forbidden. One test ID, one explicit result, one set of assertions specific to that entry (PROC-004 Principle 6).
 
@@ -97,7 +97,7 @@ Tests run against a deployed container or HF Space — never against a host-mach
 **Allowed:**
 - `ssh ${WORKBENCH_HOST} 'docker exec -i ${WORKBENCH_CONTAINER} sh -c "cd /app && npm test"'` — suite runs inside the deployed container's own filesystem and DB.
 - Playwright MCP (driven from inside this Claude Code session) pointed at `${WORKBENCH_URL}`. The Playwright MCP runs Chromium against an HTTP target; it never imports server code.
-- Hymie / Hymie2 remote desktops with real Firefox, for headed checks against `${WORKBENCH_URL}` when the bug needs OS-level rendering or input handling that headless cannot replicate.
+- Hymie / Hymie2 remote desktops with real Firefox — used **only in Section 0** for the OAuth bootstrap. Not used in any other section.
 
 **Not allowed from the host shell of a workbench-running machine:**
 - `npm test` / `npm run test:coverage` / `npm run test:live` / `npm run test:browser`
@@ -143,18 +143,68 @@ Results, manifests, and screenshots for a run land under `/mnt/storage/dev_artif
 
 ## Sections
 
-The runbook is organized into sections by surface area. Section 1 (Baseline UI Smoke) is mandatory for every code change in scope (PROC-003 §2). Sections 2+ run when the matrix puts their surface in scope (PROC-003 §4, §5).
+The runbook is organized into sections by surface area. Section 0 is the environment-and-auth precondition; it runs first on any fresh container, fresh `/data` volume, or when auth has changed. Section 1 (Baseline UI Smoke) is mandatory for every code change in scope (PROC-003 §2). Sections 2+ run when the matrix puts their surface in scope (PROC-003 §4, §5).
 
+0. **Environment Setup** — fresh container + OAuth bootstrap. Runs on a fresh `/data` volume, an auth-touched change, or an explicit auth regression. **Section 0 is the only section that uses Hymie** (for the OAuth flow). Every other section runs headless.
 1. **Baseline UI Smoke** — 8 SMOKE-* entries. Mandatory floor for every code-change Gate C run.
-2. **Core sessions and projects** — session CRUD, sidebar, project management. *(Pending — added in step 3a.2.)*
-3. **Features** — file browser, tasks, plan files. *(Pending.)*
-4. **CLI and terminal** — terminal I/O, multi-CLI behavior, tmux lifecycle. *(Pending.)*
-5. **Settings and Vector Search** — Settings modal tabs, Qdrant flows. *(Pending.)*
-6. **Multi-CLI and MCP** — multi-CLI session interleave, MCP server management. *(Pending.)*
-7. **Comprehensive feature verification** — broad end-to-end flows. *(Pending.)*
-8. **Regression coverage** — REG-* entries permanent from prior fix landings. *(Pending — carry-forward from legacy runbook in step 3a.N.)*
+2. *(future feature-group sections — authored as features land per the milestone plan.)*
 
-Numbering and section boundaries finalize as each step lands. Section 1 is stable from this commit forward.
+Numbering and section boundaries finalize as each section lands. Sections 0 and 1 are stable from this commit forward.
+
+---
+
+## Section 0: Environment Setup (required for every fresh-`/data` run; required when auth changes)
+
+Section 0 prepares a clean, authenticated test environment for the rest of the runbook. It has TWO steps that always run together: first a fresh container, then OAuth on top.
+
+**Execution mode for Section 0 is headed (Hymie).** Hymie appears nowhere else in this runbook. Every other section runs headless.
+
+### 0.A: Fresh container (also covers REG-FRESH-01)
+
+A fresh container with an empty `/data` volume must come up cleanly. This is the "Fresh Install Works" regression — by virtue of 0.A succeeding, REG-FRESH-01 PASSes for the run.
+
+**Steps:**
+1. On `${WORKBENCH_HOST}`: `docker run --rm -d --name workbench-test-fresh -v <ephemeral-volume>:/data -p <free-port>:7860 <image>` (or use a docker-compose entry that creates the ephemeral volume each run).
+2. Bind `${WORKBENCH_URL}` to that container's port for this run.
+3. Wait up to 30s for `/health` to return `{status:'ok'}`.
+4. `browser_navigate` to `${WORKBENCH_URL}` — verify the empty-state UI renders, sidebar shows zero (or default-seeded) projects.
+5. `docker exec ${WORKBENCH_CONTAINER} ls /data/.workbench/workbench.db` — DB file exists (entrypoint.sh + db.js migrations ran).
+6. `docker exec ${WORKBENCH_CONTAINER} ls /data/workspace` — workspace dir created.
+7. `curl ${WORKBENCH_URL}/api/state` — returns `{projects: []}` or default seeded projects without errors.
+
+**Expected:** Container starts within 30s. /health green. UI loads. DB + workspace seeded. No 500s in initial requests.
+
+**Result:** ☐ PASS ☐ FAIL
+
+If 0.A FAILs: STOP — file an issue, do not proceed. Nothing downstream is meaningful without a working container.
+
+### 0.B: Claude Authentication (required for Section 1+)
+
+Claude CLI tests in Section 1 (SMOKE-CHAT-01 and the per-CLI smokes) require valid Claude credentials in the just-spawned container.
+
+**Option A: Hymie desktop automation (full OAuth flow)**
+Use Hymie MCP to automate the browser-based OAuth flow. This tests the actual auth pipeline end-to-end. Requires Hymie MCP server connected.
+
+**Option B: Inject credentials from an authenticated device (with user permission)**
+Copy the credentials file from a machine that already has valid Claude auth into the container.
+
+```bash
+# From the authenticated machine, copy credentials to the workbench container:
+# 1. Read the local credentials
+cat ~/.claude/credentials.json
+
+# 2. Inject into the container via the terminal
+# Open a terminal session in Workbench, then:
+echo '<paste credentials JSON>' > ~/.claude/credentials.json
+```
+
+Ask the orchestrator which option to use. If neither is available, fix the auth path before proceeding — Section 1 tests will FAIL without auth.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### Orchestrator-directed SKIP
+
+When the orchestrator explicitly directs "skip Section 0 — re-use existing dev container with persistent auth," then 0.A and 0.B both record SKIP with that orchestrator reason verbatim, and REG-FRESH-01 also records SKIP with the same reason. This is the only way SKIP appears for any test in this runbook.
 
 ---
 

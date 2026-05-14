@@ -119,6 +119,29 @@ function claudeExecAsync(args, options = {}) {
   });
 }
 
+// #567: Gemini CLI subprocess wrapper, parallel to claudeExecAsync. Used by
+// keepalive.js to keep Gemini's cached OAuth tokens fresh — the Gemini CLI
+// internally refreshes its OAuth state when invoked, the same way Claude does.
+function geminiExecAsync(args, options = {}) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(
+      'gemini',
+      [...args],
+      {
+        encoding: 'utf-8',
+        timeout: options.timeout || 120000,
+        cwd: options.cwd || WORKSPACE,
+        maxBuffer: 10 * 1024 * 1024,
+        env: { ...process.env, TERM: 'xterm-256color' },
+      },
+      (err, stdout) => {
+        if (err) reject(err);
+        else resolve(stdout);
+      },
+    );
+  });
+}
+
 async function tmuxExists(name) {
   const safeName = sanitizeTmuxName(name);
   try {
@@ -426,6 +449,7 @@ module.exports = {
   shellEscape,
   sanitizeErrorForClient,
   claudeExecAsync,
+  geminiExecAsync,
   tmuxExecAsync,
   tmuxCaptureScrollback,
   tmuxExists,

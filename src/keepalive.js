@@ -6,7 +6,12 @@ const { join } = require('path');
 module.exports = function createKeepalive({ safe, config, logger }) {
   const WORKSPACE = safe.WORKSPACE;
   const CLAUDE_HOME = safe.CLAUDE_HOME;
+  const HOME = safe.HOME;
   const CREDENTIALS_PATH = join(CLAUDE_HOME, '.credentials.json');
+  // #567: Gemini OAuth lives at ~/.gemini/oauth_creds.json (Google personal-
+  // auth flow). Format: { access_token, refresh_token, expiry_date, scope,
+  // token_type, id_token }. expiry_date is epoch ms.
+  const GEMINI_CREDS_PATH = join(HOME, '.gemini', 'oauth_creds.json');
 
   const _REFRESH_THRESHOLD = config ? config.get('keepalive.refreshThreshold', 0.85) : 0.85;
   const CHECK_RANGE_LOW = config ? config.get('keepalive.checkRangeLow', 0.65) : 0.65;
@@ -175,6 +180,129 @@ module.exports = function createKeepalive({ safe, config, logger }) {
     } catch (err) {
       logger.error('Keepalive refresh error', { module: 'keepalive', err: err.message });
     }
+
+    // #567: keep Gemini OAuth tokens fresh alongside Claude. Invoke the Gemini
+    // CLI's non-interactive mode; the CLI internally refreshes its cached
+    // tokens (read ~/.gemini/oauth_creds.json, exchange refresh_token at
+    // Google's OAuth endpoint, rewrite the file with new access_token +
+    // expiry_date). Parity with Claude's path: same scheduling cadence, same
+    // subprocess pattern, same fail-quiet behavior. Best-effort — if Gemini
+    // isn't installed or auth is unrecoverable, the auth-broken state machine
+    // below logs once and stops scheduling further Gemini queries until the
+    // creds file changes.
+    await geminiKeepalive();
+  }
+
+  // #567: Gemini-side keepalive primitives — independent auth-broken state
+  // tracking so a Gemini token-expiry never suppresses Claude refreshes.
+  let _geminiAuthBrokenCount = 0;
+  let _geminiAuthBrokenLogged = false;
+  let _geminiAuthBrokenMtime = 0;
+  let _geminiCredsWatchTimer = null;
+
+  async function getGeminiCredsMtimeAsync() {
+    try { return (await stat(GEMINI_CREDS_PATH)).mtimeMs; }
+    catch { return 0; }
+  }
+
+  function startGeminiCredsWatch() {
+    if (_geminiCredsWatchTimer) return;
+    _geminiCredsWatchTimer = setInterval(async () => {
+      const mtime = await getGeminiCredsMtimeAsync();
+      if (mtime && _geminiAuthBrokenMtime && mtime !== _geminiAuthBrokenMtime) {
+        logger.info('Gemini credentials file changed — re-enabling Gemini keepalive', {
+          module: 'keepalive',
+          oldMtime: new Date(_geminiAuthBrokenMtime).toISOString(),
+          newMtime: new Date(mtime).toISOString(),
+        });
+        _geminiAuthBrokenCount = 0;
+        _geminiAuthBrokenLogged = false;
+        _geminiAuthBrokenMtime = 0;
+        clearInterval(_geminiCredsWatchTimer);
+        _geminiCredsWatchTimer = null;
+      }
+    }, CREDS_WATCH_INTERVAL_MS);
+    if (typeof _geminiCredsWatchTimer.unref === 'function') _geminiCredsWatchTimer.unref();
+  }
+
+  function isGeminiAuthBrokenError(err) {
+    if (!err) return false;
+    const haystack = `${err.message || ''}\n${err.stderr?.toString() || ''}`;
+    // Google OAuth on refresh failure returns invalid_grant; the Gemini CLI
+    // surfaces a re-auth prompt in stderr. 401 is also possible from the
+    // upstream API after a stale token slip.
+    return /invalid_grant|invalid authentication|please run \/auth|\b401\b/i.test(haystack);
+  }
+
+  async function geminiQuery(message) {
+    const queryTimeout = config ? config.get('keepalive.queryTimeoutMs', 30000) : 30000;
+    try {
+      const result = await safe.geminiExecAsync(
+        // --prompt invokes non-interactive mode; --model gemini-1.5-flash uses
+        // the cheapest currently-available model so keepalive doesn't burn
+        // expensive credits.
+        ['--prompt', message, '--model', 'gemini-1.5-flash'],
+        { cwd: WORKSPACE, timeout: queryTimeout },
+      );
+      if (_geminiAuthBrokenCount > 0 || _geminiAuthBrokenLogged) {
+        _geminiAuthBrokenCount = 0;
+        _geminiAuthBrokenLogged = false;
+        _geminiAuthBrokenMtime = 0;
+        if (_geminiCredsWatchTimer) {
+          clearInterval(_geminiCredsWatchTimer);
+          _geminiCredsWatchTimer = null;
+        }
+      }
+      return result.trim();
+    } catch (err) {
+      if (isGeminiAuthBrokenError(err)) {
+        _geminiAuthBrokenCount += 1;
+        if (_geminiAuthBrokenCount >= AUTH_BROKEN_THRESHOLD && !_geminiAuthBrokenLogged) {
+          _geminiAuthBrokenLogged = true;
+          _geminiAuthBrokenMtime = await getGeminiCredsMtimeAsync();
+          logger.warn('Gemini keepalive disabled: OAuth refresh failed — open a Gemini session and run /auth. Will resume when ~/.gemini/oauth_creds.json is updated.', {
+            module: 'keepalive',
+            consecutiveFailures: _geminiAuthBrokenCount,
+            credsMtime: _geminiAuthBrokenMtime ? new Date(_geminiAuthBrokenMtime).toISOString() : null,
+          });
+          startGeminiCredsWatch();
+        } else if (!_geminiAuthBrokenLogged) {
+          logger.error('Gemini keepalive query failed (auth)', {
+            module: 'keepalive',
+            consecutiveFailures: _geminiAuthBrokenCount,
+            err: err.message?.substring(0, 200),
+          });
+        }
+        return null;
+      }
+      // Non-auth failure (Gemini binary missing, network blip, etc.) — log once
+      // per occurrence; don't trigger the auth-broken state machine.
+      logger.error('Gemini keepalive query failed', {
+        module: 'keepalive',
+        err: err.message?.substring(0, 1000),
+        stderr: err.stderr?.toString().substring(0, 1000),
+      });
+      return null;
+    }
+  }
+
+  async function geminiKeepalive() {
+    if (_geminiAuthBrokenLogged) return;
+    // Single keepalive query per Claude refresh tick. Mirrors the
+    // promptA/promptB pattern at a lower cost — one ping per refresh cycle
+    // is sufficient because Google access_tokens last ~1 hour and the Claude
+    // refresh cadence keeps us well inside that window.
+    try {
+      const ping = await geminiQuery('Say "ack" in a single short word.');
+      if (ping) {
+        logger.info('Gemini keepalive refreshed', {
+          module: 'keepalive',
+          ack: ping.substring(0, 40),
+        });
+      }
+    } catch (err) {
+      logger.error('Gemini keepalive error', { module: 'keepalive', err: err.message });
+    }
   }
 
   function scheduleFromRemaining(remaining) {
@@ -256,6 +384,10 @@ module.exports = function createKeepalive({ safe, config, logger }) {
       if (_credsWatchTimer) {
         clearInterval(_credsWatchTimer);
         _credsWatchTimer = null;
+      }
+      if (_geminiCredsWatchTimer) {
+        clearInterval(_geminiCredsWatchTimer);
+        _geminiCredsWatchTimer = null;
       }
       logger.info('Keepalive stopped', { module: 'keepalive' });
     },

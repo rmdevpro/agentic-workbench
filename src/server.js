@@ -107,6 +107,10 @@ const terminal = createWsTerminal({
 // ── Express setup ───────────────────────────────────────────────────────────
 
 const app = express();
+// #568: trust reverse-proxy hops so req.ip reflects x-forwarded-for instead of
+// the proxy's IP. Without this, the per-IP rate limiter at /api/gate/login
+// rate-limits the entire fleet behind a CDN / HF Space proxy as one IP.
+app.set('trust proxy', true);
 const server = createServer(app);
 const wss = new WebSocketServer({ noServer: true });
 
@@ -167,25 +171,43 @@ function serveGatePage(res) {
   res.type('html').send(renderGatePage(GATE_PAGE_TEMPLATE, authMode));
 }
 
-// #351 [D2]: per-IP token bucket for /api/gate/login. 10 attempts/minute,
-// refill 1/6s. Rate-limit response is 429; failed-but-not-rate-limited gets a
-// 500 ms async pause before responding to slow brute-force loops.
+// #351 [D2] / #568: per-IP token bucket for /api/gate/login. 10 attempts/minute,
+// refill 1/6s. Rate-limit response is 429 with Retry-After; failed-but-not-
+// rate-limited gets a 500 ms async pause before responding to slow brute-force
+// loops. Successful logins reset the bucket for that IP so legitimate clients
+// who mistype before getting it right keep full capacity for next session.
+const _LOGIN_BUCKET_REFILL_MS = 6000; // 1 token per 6 seconds = 10/min steady state
+const _LOGIN_BUCKET_CAP = 10;
 const _loginBuckets = new Map(); // ip → { tokens, lastRefill }
 function _consumeLoginBucket(ip) {
   const now = Date.now();
-  const refillRateMs = 6000; // 1 token per 6 seconds = 10/min steady state
-  const cap = 10;
   let b = _loginBuckets.get(ip);
-  if (!b) { b = { tokens: cap, lastRefill: now }; _loginBuckets.set(ip, b); }
+  if (!b) { b = { tokens: _LOGIN_BUCKET_CAP, lastRefill: now }; _loginBuckets.set(ip, b); }
   const elapsed = now - b.lastRefill;
-  const refill = Math.floor(elapsed / refillRateMs);
+  const refill = Math.floor(elapsed / _LOGIN_BUCKET_REFILL_MS);
   if (refill > 0) {
-    b.tokens = Math.min(cap, b.tokens + refill);
-    b.lastRefill = b.lastRefill + refill * refillRateMs;
+    b.tokens = Math.min(_LOGIN_BUCKET_CAP, b.tokens + refill);
+    b.lastRefill = b.lastRefill + refill * _LOGIN_BUCKET_REFILL_MS;
   }
   if (b.tokens <= 0) return false;
   b.tokens -= 1;
   return true;
+}
+// #568: seconds until the next token would refill for `ip` — used to populate
+// the Retry-After header on a 429 response so clients (and intermediate
+// caches / CDNs) have a machine-readable hint.
+function _loginBucketRetryAfterSeconds(ip) {
+  const b = _loginBuckets.get(ip);
+  if (!b) return 1;
+  const sinceLastRefill = Date.now() - b.lastRefill;
+  const msUntilNextToken = Math.max(0, _LOGIN_BUCKET_REFILL_MS - sinceLastRefill);
+  return Math.max(1, Math.ceil(msUntilNextToken / 1000));
+}
+// #568: reset the per-IP bucket after a successful login so a legitimate
+// user who mistyped 9 times before getting the password right doesn't carry
+// a depleted bucket into their next session.
+function _resetLoginBucket(ip) {
+  _loginBuckets.delete(ip);
 }
 
 // Login endpoint for password mode
@@ -193,6 +215,9 @@ app.post('/api/gate/login', async (req, res) => {
   if (authMode !== 'password') return res.status(404).json({ error: 'not found' });
   const ip = req.ip || req.connection?.remoteAddress || 'unknown';
   if (!_consumeLoginBucket(ip)) {
+    // #568: emit Retry-After so brute-force loops back off cooperatively and
+    // legitimate clients know when to retry.
+    res.set('Retry-After', String(_loginBucketRetryAfterSeconds(ip)));
     return res.status(429).json({ error: 'too many attempts' });
   }
   const { username, password } = req.body;
@@ -203,6 +228,9 @@ app.post('/api/gate/login', async (req, res) => {
     // OR in production. Local docker-compose (HTTP, no gate) never reaches this path.
     const isHttps = req.headers['x-forwarded-proto'] === 'https' || process.env.NODE_ENV === 'production';
     res.cookie('wb_session', token, { httpOnly: true, sameSite: 'lax', secure: isHttps });
+    // #568: reset the bucket on success so the user's next-session capacity
+    // isn't diminished by prior typos.
+    _resetLoginBucket(ip);
     res.json({ success: true });
   } else {
     // #351 [D2]: 500ms async pause on failed login to slow brute-force.

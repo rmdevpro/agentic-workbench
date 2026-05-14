@@ -153,6 +153,63 @@ async function tmuxExists(name) {
   }
 }
 
+// #573: locate the Codex rollout file for `cliSessId` and read its recorded
+// cwd from the session_meta line. Returns the cwd string, or null if no
+// matching rollout is found / its session_meta isn't readable. Synchronous
+// walk + read because buildResumeArgs is called on the hot path before
+// spawning a CLI; the rollout tree is small.
+function _findCodexRolloutCwd(cliSessId) {
+  const sessBase = join(HOME, '.codex', 'sessions');
+  if (!fs.existsSync(sessBase)) return null;
+  // Codex rollout files: ~/.codex/sessions/YYYY/MM/DD/rollout-<ts>-<uuid>.jsonl
+  // Find the one whose UUID matches cliSessId.
+  let matchPath = null;
+  const walk = (dir) => {
+    let entries;
+    try { entries = fs.readdirSync(dir, { withFileTypes: true }); }
+    catch { return; }
+    for (const e of entries) {
+      if (matchPath) return;
+      const full = join(dir, e.name);
+      if (e.isDirectory()) walk(full);
+      else if (e.name.endsWith('.jsonl') && e.name.includes(cliSessId)) {
+        matchPath = full;
+        return;
+      }
+    }
+  };
+  walk(sessBase);
+  if (!matchPath) return null;
+  try {
+    // Codex session_meta is on the first or second line; read up to ~4KB.
+    const head = fs.readFileSync(matchPath, { encoding: 'utf-8', flag: 'r' }).slice(0, 4096);
+    for (const line of head.split('\n')) {
+      if (!line.trim()) continue;
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      // session_meta line shape varies by Codex version; cwd may appear at the
+      // top level or under entry.payload.cwd. Check both.
+      const cwd = entry.cwd || entry.payload?.cwd || entry.payload?.session_meta?.cwd;
+      if (typeof cwd === 'string') return cwd;
+      // session_meta type marker — keep scanning if no cwd field on this line.
+      if (entry.type === 'session_meta' && entry.payload && typeof entry.payload.cwd === 'string') {
+        return entry.payload.cwd;
+      }
+    }
+  } catch { /* unreadable */ }
+  return null;
+}
+
+// #573: case-sensitive path equality with trailing-slash tolerance. We don't
+// normalize symlinks (path-equality after resolve() would matter only if
+// Codex and workbench recorded different absolute forms of the same target;
+// in practice both pass through the same WORKSPACE root).
+function _samePath(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string') return false;
+  const norm = (s) => s.replace(/\/+$/, '');
+  return norm(a) === norm(b);
+}
+
 // Build the per-CLI args to resume an existing session. Single source of truth
 // for both explicit resume (POST /api/sessions/:id/resume) and the auto-respawn
 // path in ws-terminal.js — those two MUST behave identically. Returns
@@ -199,11 +256,28 @@ async function buildResumeArgs(session, projectPath) {
   }
 
   if (cliType === 'codex') {
-    // Codex resumes via its rollout id (codex --session-id), stored as
+    // Codex resumes via its rollout id (codex resume <id>), stored as
     // cli_session_id in the workbench DB. If we don't have one yet, launch
     // fresh — codex will record a rollout on first run.
     const cliSessId = session.cli_session_id;
-    return { args: cliSessId ? ['resume', cliSessId] : [], missing: false };
+    if (!cliSessId) return { args: [], missing: false };
+
+    // #573: validate that the rollout file recorded by Codex for this
+    // cli_session_id was created with a cwd that matches THIS project's
+    // path. Otherwise `codex resume <id>` lands in Codex's "Choose working
+    // directory to resume" picker, which has been observed picking a stale
+    // rollout id from a completely different project (cross-project leak).
+    // If validation fails, fall back to a fresh spawn (no resume args) —
+    // matches the Claude branch's safety: don't silently respawn with the
+    // wrong state.
+    const rolloutCwd = _findCodexRolloutCwd(cliSessId);
+    if (rolloutCwd !== null && _samePath(rolloutCwd, projectPath)) {
+      return { args: ['resume', cliSessId], missing: false };
+    }
+    // Either no rollout found for this id, or its recorded cwd doesn't
+    // match this project — start fresh rather than leaking another
+    // project's rollout into this workbench session row.
+    return { args: [], missing: false };
   }
 
   return { args: [], missing: false };

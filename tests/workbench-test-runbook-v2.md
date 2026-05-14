@@ -202,6 +202,89 @@ Ask the orchestrator which option to use. If neither is available, fix the auth 
 
 **Result:** ☐ PASS ☐ FAIL
 
+### 0.C: OAUTH-MODAL-CLAUDE-01 — Claude `/login` triggers OAuth modal with extracted URL
+
+**Cascade-from:** 0.A
+**Closes gap for:** #339
+
+**Setup:**
+1. 0.A complete (fresh container, /health green, empty-state UI rendered).
+2. Hymie (or Hymie2) remote desktop is reachable via MCP. **0.C requires Hymie** — the Claude CLI's `/login` flow opens an OAuth window via the host browser; headless Chromium cannot drive the system-level OAuth handoff. This is the one mandatory Hymie entry in Section 0 (along with 0.D). All other entries in this runbook are headless.
+3. From Hymie, open the desktop's default browser to `${WORKBENCH_URL}`. Pass the gate page if applicable. The workbench shell renders (sidebar + main panel visible).
+4. In the sidebar, click the `+` icon on the `wb-seed` project header. The new-session dropdown opens.
+5. Click the `Claude` row in the dropdown. The session-create overlay appears.
+6. Type session name `oauth-bootstrap-claude` and click `Start Session`. Wait up to 30s for the Claude session tab to open in the tab bar and the Claude input area to render in the terminal pane (the input area's screen position is not asserted — see SMOKE-CHAT-01 step 5 claude note; confirm readiness by typing a single `x` character into the focused pane and observing it render inline as a glyph, then delete it).
+
+**Steps:**
+1. Click into the Claude terminal pane to focus it (real mouse via Hymie).
+2. Type `/login` using the Hymie keyboard.
+3. Press Enter.
+
+**Verify:**
+- ≤2s after step 3: the workbench OAuth modal (`Authenticate with Claude` heading visible at the top of an overlay covering the page) is rendered. → `0.C/assertion-01-modal-rendered.png`
+- ≤2s after step 3: the modal's `Authenticate with Claude` link button is visible with a tooltip / hover-revealed URL starting with `https://claude.ai/oauth/authorize?` — confirm against the URL the Claude CLI emitted in the terminal pane (same screenshot frame). → `0.C/assertion-02-modal-url-matches.png`
+- ≤2s after step 3: a `Paste authorization code here` input field is visible inside the modal, with a `Submit` button beside it. → `0.C/assertion-03-code-input-visible.png`
+
+**Teardown:**
+- Click the modal's `×` close affordance. Modal disappears ≤1s. The Claude session tab remains open. Authentication completion is not part of this entry; Claude credentials remain whatever they were after 0.B.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 0.D: OAUTH-MODAL-GEMINI-DETECTOR-01 — Gemini OAuth flow via the new oauth-detector module
+
+**Cascade-from:** 0.A
+**Closes gap for:** #363
+
+**Setup:**
+1. 0.A complete.
+2. Hymie reachable via MCP. **0.D requires Hymie** — Gemini CLI's OAuth handoff cannot be driven by headless Chromium for the same reason as 0.C.
+3. From Hymie, open the desktop browser to `${WORKBENCH_URL}`. Pass the gate. The workbench shell renders.
+4. Click the `+` icon on the `wb-seed` project header. The new-session dropdown opens.
+5. Click the `Gemini` row. Type session name `oauth-bootstrap-gemini` in the overlay and click `Start Session`. Wait up to 30s for the Gemini session tab to open and the `>` Gemini prompt to render at the bottom of the terminal pane.
+
+**Steps:**
+1. Click into the Gemini terminal pane to focus.
+2. Type `/auth` using the Hymie keyboard (the Gemini equivalent of `/login`).
+3. Press Enter. The Gemini CLI emits an authentication URL; under typical terminal widths this URL wraps across multiple visual lines — the new oauth-detector module must reassemble it.
+
+**Verify:**
+- ≤3s after step 3: the workbench OAuth modal renders as an overlay (heading visible, link button visible). → `0.D/assertion-01-modal-rendered.png`
+- ≤3s after step 3: the modal's link button reveals (via hover tooltip / Hymie copy-link inspection on the modal) a URL beginning with `https://accounts.google.com/` — the multi-line CLI emission has been reassembled by the oauth-detector module into a single contiguous URL. → `0.D/assertion-02-url-reassembled.png`
+- ≤5s after step 3: exactly one modal overlay is visible (no second modal stacked behind or in front of the first — confirm by the modal layer's z-index visual: one panel, one dimmed background). → `0.D/assertion-03-single-modal-no-duplicate.png`
+
+**Teardown:**
+- Click the modal's `×` close affordance. Modal disappears ≤1s. The Gemini session tab remains open. 0.D verifies modal trigger; authentication completion is out of scope.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 0.E: OAUTH-CHECKBOX-PERSIST-01 — OAuth-detection checkbox persists + raises no ReferenceError
+
+**Cascade-from:** 0.B
+**Closes gap for:** #457
+
+**Setup:**
+1. 0.B complete (Claude credentials seated; workbench shell renders).
+2. **0.E does NOT require Hymie** — runs headless via Playwright MCP against `${WORKBENCH_URL}`. Included in Section 0 because the bug class is the OAuth-detection checkbox's `oauthDetection` binding, which lives in the same code area as 0.C/0.D's modal trigger.
+3. Open the browser DevTools console (Playwright's `browser_console_messages` captures it). Clear the console buffer immediately before Steps so any captured message is attributable to this entry.
+
+**Steps:**
+1. Click the `⚙ Settings` button at the bottom of the sidebar.
+2. The Settings modal opens. Click the `General` tab in the modal's tab strip (it is the active tab by default — clicking it is a no-op but ensures focus).
+3. Locate the `OAuth detection` settings group within the General tab. Click the checkbox labeled `Claude` (it ships checked by default) to toggle it OFF.
+4. Press the `Escape` key. The Settings modal dismisses.
+5. Reload the page (F5 or Playwright `browser_navigate` to the same URL).
+6. After the workbench shell re-renders, click `⚙ Settings` again. Click the `General` tab. Locate the `OAuth detection` group.
+
+**Verify:**
+- ≤500ms after step 3: the `Claude` OAuth-detection checkbox visibly shows the unchecked state on screen (the checkmark glyph is absent from the box). → `0.E/assertion-01-checkbox-unchecked.png`
+- ≤2s after step 6: the `Claude` OAuth-detection checkbox is STILL visibly unchecked after the page reload (persistence across reload — the toggle handler successfully wrote the value, which means the binding did not throw). → `0.E/assertion-02-persisted-across-reload.png`
+- ≤2s after step 3: supplementary diagnostic — the DevTools console (Playwright `browser_console_messages` capture) shows zero entries containing the substring `oauthDetection` AND zero `ReferenceError` entries produced by the toggle click. (Persistence in the primary check is the screen-affirmable proof that the handler did not throw; the console snapshot is corroborating evidence.) → `0.E/assertion-03-console-clean.png`
+
+**Teardown:**
+- Click the `Claude` OAuth-detection checkbox to restore the default checked state. Click outside the modal to dismiss. State returns to 0.B baseline.
+
+**Result:** ☐ PASS ☐ FAIL
+
 ### Orchestrator-directed SKIP
 
 When the orchestrator explicitly directs "skip Section 0 — re-use existing dev container with persistent auth," then 0.A and 0.B both record SKIP with that orchestrator reason verbatim, and REG-FRESH-01 also records SKIP with the same reason. This is the only way SKIP appears for any test in this runbook.
@@ -243,23 +326,23 @@ The Tier-1 CLI assumption stated in the preamble applies throughout Section 1. F
 3. The session-create overlay appears. Type session name `smoke-chat-<cli>` into the name field.
 4. Click Start (or press Enter). The overlay closes; a new tab opens labeled with the session name.
 5. Wait for the per-CLI ready observable to appear in the terminal pane. Capture screenshots at 2s intervals up to a 60s bound. The ready observable is concrete per CLI:
-   - **claude:** the Claude input box is visible at the bottom of the pane (boxed input area with cursor blinking, prompt-line glyph).
+   - **claude:** a Claude input area is rendered in the terminal pane (an editable region distinct from any response output area; type a single test character `x` into the focused pane within the 60s window and confirm the glyph renders inline in the input area). The input area's screen position (top, bottom, or inline) is intentionally NOT asserted — Claude Code's input-area placement has changed across versions (`v2.1.123` on irina renders the input inline-at-top of the pane, earlier versions rendered a boxed area at the bottom). The version-stable observable is "typed character appears in the rendered view".
    - **gemini:** the Gemini `>` prompt is visible at the start of a new line at the bottom of the pane, with the cursor positioned after it.
    - **codex:** the Codex input field is visible at the bottom of the pane (rectangular input box with cursor positioned inside it).
-   Identify the first frame where the corresponding ready observable is rendered.
+   Identify the first frame where the corresponding ready observable is rendered. Delete the test character before proceeding.
 6. With the new tab focused, type the prompt `what is 7 times 8` into the terminal (use the terminal's input-handling — the same keystroke path a user would use; do not send to the WebSocket directly via internal JS).
 7. Press Enter.
 8. Wait for the response to render in the pane. Capture screenshots at 2s intervals up to a 30s bound. Identify the first frame where a coherent response is visible in the response area of that tab's pane. A coherent response contains "56" (the digit pair) or "fifty-six" (written form), in the response output area below the prompt echo.
-9. Wait up to a 5s bound for the input prompt indicator (same observable as step 5) to reappear at the bottom of the pane after the response, indicating the CLI is ready for the next prompt.
+9. Wait up to a 5s bound for the input prompt indicator (same observable as step 5) to be ready for the next prompt after the response. For claude: the input area accepts a typed character inline (position not asserted — see step 5's claude note). For gemini and codex: the prompt indicator reappears at the bottom of the pane as previously described in step 5.
 
 After all three CLIs complete the block, three tabs are open in the tab bar; subsequent SMOKE entries operate on this state.
 
 **Verify (numbered assertions — each requires a screenshot affirmation):**
 
 1. After Start click for claude, a tab labeled `smoke-chat-claude` is visible in the tab bar within 2s. → `SMOKE-CHAT-01/assertion-01-claude-tab-present.png`
-2. The claude ready observable (boxed input box at pane bottom) is visible within 60s of Start. → `SMOKE-CHAT-01/assertion-02-claude-ready.png`
+2. The claude ready observable (input area is rendered in the pane such that the test character `x` typed in step 5 appeared inline as a glyph) is affirmed within 60s of Start. The input-area screen position is not asserted. → `SMOKE-CHAT-01/assertion-02-claude-ready.png`
 3. A coherent response containing "56" is visible in the claude tab's response area within 30s of prompt Enter. → `SMOKE-CHAT-01/assertion-03-claude-response.png`
-4. The claude ready observable reappears at the pane bottom within 5s of the response landing. → `SMOKE-CHAT-01/assertion-04-claude-ready-again.png`
+4. The claude ready observable (input area accepts a new test character inline) is affirmed within 5s of the response landing, indicating the CLI is ready for the next prompt. The input-area screen position is not asserted. → `SMOKE-CHAT-01/assertion-04-claude-ready-again.png`
 5. After Start click for gemini, a tab labeled `smoke-chat-gemini` is visible in the tab bar within 2s. → `SMOKE-CHAT-01/assertion-05-gemini-tab-present.png`
 6. The gemini ready observable (`>` prompt at start of new line with cursor after it) is visible within 60s of Start. → `SMOKE-CHAT-01/assertion-06-gemini-ready.png`
 7. A coherent response containing "56" is visible in the gemini tab's response area within 30s of prompt Enter. → `SMOKE-CHAT-01/assertion-07-gemini-response.png`
@@ -454,16 +537,1057 @@ After all three CLIs complete the block, three tabs are open in the tab bar; sub
 
 ---
 
-## Sections 2+: Feature groups (pending)
+## Section 2: UI Shell / Cold-Load / Settings
 
-The feature-group sections — Core (sessions/projects), Features (file browser, tasks), CLI & Terminal, Settings & Vector Search, Multi-CLI & MCP, Comprehensive feature verification, and Regression coverage — are authored in subsequent step 3a.N iterations per milestone #7's plan.
+Establish the rendered-shell precondition for every later section. Verify F0 frontend monolith decomposition (#364) didn't break boot, E1/E2 perf wins (#371, #372) hold under a 300+ session workspace, the docker-build asset fix (#322) renders logos, the post-jQuery element-rename (#404) loads cleanly, and the Settings binding fix (#459) opens the modal without duplicate-export errors.
 
-Each section will be re-authored against STD-003 §12.7–§12.9: every verify clause replaced with screenshot-affirmable text against the rendered DOM; every internal-state read (`term.buffer.active`, `tabs.get(...).ws.readyState`, `document.querySelector(...).textContent`-driven verification) removed; every action → response assertion bounded per §12.8 / §12.9.
+---
 
-The legacy `tests/workbench-test-runbook.md` remains the operating runbook for any Gate C run between now and the project close. When this file's feature-group sections are complete, the swap to `tests/workbench-test-runbook.md` happens at project close per milestone #7's plan.
+### 2.1: SHELL-LOAD-01 — Cold-load app shell + sidebar paint within 1s on 300+ sessions
+
+**Cascade-from:** 0.A
+**Closes gap for:** #364, #371, #372
+
+**Setup:**
+1. 0.A complete (fresh container, empty-state UI rendering).
+2. Orchestrator seeds 300 sessions across 5 projects into the workbench DB before the first navigation. Seed via direct DB insert from the orchestrator's host shell (this is orchestration, allowed outside Verify): `ssh ${WORKBENCH_HOST} 'docker exec -i ${WORKBENCH_CONTAINER} node /app/scripts/seed-sessions.js 300 5'` or equivalent fixture seeder. Seeding leaves the workbench process untouched.
+3. The browser is NOT yet pointed at `${WORKBENCH_URL}` — this entry's Step 1 is the first navigation, which is what the timing bound measures.
+
+**Steps:**
+1. Navigate to `${WORKBENCH_URL}` (Playwright `browser_navigate`). Pass the gate if applicable using the Section 0 credentials, then continue once the gate has transitioned.
+2. Observe the workbench shell render. Capture screenshots at 100ms intervals up to a 1.5s bound.
+
+**Verify:**
+- ≤1s after step 1: the sidebar's project list is visibly populated (at least the 5 seeded project headers are rendered, each showing the project name and its session count). → `2.1/assertion-01-sidebar-painted.png`
+- ≤1s after step 1: the tab bar is rendered at the top of the main panel (empty or with default tabs, but the bar itself is visible). → `2.1/assertion-02-tab-bar-painted.png`
+- ≤1s after step 1: the right panel renders with the Files / Tasks tab strip and the file tree area visible. → `2.1/assertion-03-right-panel-painted.png`
+- ≤2s after step 1: supplementary diagnostic — the DevTools console (Playwright `browser_console_messages` capture, viewed as the rendered DevTools strip) shows zero `Uncaught` / `TypeError` / `ReferenceError` entries from the boot path. The primary boot-correctness affirmations are assertions 01-03 (sidebar, tab-bar, right-panel all painted). → `2.1/assertion-04-console-clean.png`
+
+**Teardown:**
+- Leave the page on the workbench shell — downstream entries cascade-from 2.1 use the rendered state.
+
+---
+
+### 2.2: SHELL-LOGO-01 — Header logo + gate-page background images render against locally-built image
+
+**Cascade-from:** cold (locally-built image, not standard registry image)
+**Closes gap for:** #322
+
+**Setup** (pre-run, outside the entry's verify path — orchestration, not a verify mechanism):
+1. Orchestrator builds a docker image from the current repo head: `ssh ${WORKBENCH_HOST} 'cd /tmp/agentic-workbench && docker build -t workbench:r1-322-local .'`.
+2. Orchestrator launches a container from that image and binds `${WORKBENCH_URL}` to its port: `docker run -d --name workbench-322-test -p <free-port>:7860 workbench:r1-322-local`. Wait up to 30s for `/health` to return 200.
+3. If a gate passcode is intended for the local image, set it via container env (orchestrator decision); otherwise leave ungated.
+
+**Steps:**
+1. Navigate to `${WORKBENCH_URL}` (Playwright `browser_navigate`).
+2. If a gate page is configured, observe the gate page. Otherwise observe the workbench shell directly.
+
+**Verify:**
+- ≤3s after step 1: the header logo `<img>` element in the sidebar renders the workbench logo glyph at the documented dimensions (48px tall). The browser's broken-image glyph or alt-text fallback ("Workbench" as text replacing the image) is NOT present — the actual image bitmap is visibly painted. → `2.2/assertion-01-header-logo-visible.png`
+- ≤3s after step 2 (if gated): the gate page's background image visibly fills the gate panel area (a discernible bitmap pattern, not a flat default color). → `2.2/assertion-02-gate-bg-visible.png`
+- ≤3s after step 1: supplementary diagnostic — zero `Failed to load resource` entries for `.png` paths under `/` appear in the DevTools network panel / console. The primary affirmations are assertions 01-02 (logo + gate-bg visibly rendered, which would be impossible if a 404 occurred — the broken-image glyph would replace the bitmap). → `2.2/assertion-03-no-png-404.png`
+
+**Teardown:**
+- Orchestrator stops + removes the `workbench-322-test` container. The standard deployment under test resumes from the next entry forward.
+
+---
+
+### 2.3: SHELL-FILETREE-ID-01 — File-tree picker renders with renamed (non-`jqft-`) selector
+
+**Cascade-from:** 2.1
+**Closes gap for:** #404
+
+**Setup:**
+1. 2.1 complete (workbench shell rendered).
+
+**Steps:**
+1. In the sidebar header, click the `+` button labeled "Add Program" (tooltip on hover).
+2. Observe the program-create flow; for this entry's purpose, click `Cancel` and instead exercise the file-tree picker via the path-input field used in project creation. Click the `+ Project` affordance under one of the existing programs.
+3. The project-create modal opens with a file-tree picker. Observe the file-tree panel area inside the modal.
+4. Click on the `/data/workspace` row in the file tree to expand it. The tree expands to show children.
+5. Click the expand chevron on one of the child directories.
+
+**Verify:**
+- ≤2s after step 3: the file-tree picker is visibly rendered inside the project-create modal — a tree panel showing the root path. → `2.3/assertion-01-filetree-rendered.png`
+- ≤2s after step 4: at least one child entry of `/data/workspace` is visible as an indented row under the expanded root. → `2.3/assertion-02-root-expanded.png`
+- ≤2s after step 5: the child directory expands and its grandchildren are visible as further-indented rows. → `2.3/assertion-03-child-expanded.png`
+
+**Teardown:**
+- Click `Cancel` on the project-create modal to dismiss without creating a project. State returns to 2.1 baseline.
+
+---
+
+### 2.4: SHELL-SETTINGS-OPEN-01 — Settings cog opens modal in <500ms with no duplicate-binding error
+
+**Cascade-from:** 2.1
+**Closes gap for:** #459
+
+**Setup:**
+1. 2.1 complete.
+2. Clear the DevTools console buffer (Playwright `browser_console_messages` snapshot before Steps).
+
+**Steps:**
+1. Click the `⚙ Settings` button at the bottom of the sidebar.
+2. Observe the Settings modal open.
+
+**Verify:**
+- ≤500ms after step 1: the Settings modal overlay is visibly rendered (modal panel against dimmed page background, with the `General` / `Claude Code` / `Git` / `Vector Search` / `System Prompts` tab strip visible at the top). → `2.4/assertion-01-settings-modal-open.png`
+- ≤500ms after step 1: supplementary diagnostic — the DevTools console (rendered DevTools strip) shows zero entries warning about a duplicate `window.openSettings` assignment. The primary affirmations are assertion-01 (modal opened) + assertion-03 (General tab active) — both impossible to satisfy if the duplicate binding had broken the click handler. → `2.4/assertion-02-no-duplicate-binding-warning.png`
+- ≤500ms after step 1: the `General` tab is the active tab in the modal's tab strip (visually distinct from inactive tabs). → `2.4/assertion-03-general-tab-active.png`
+
+**Teardown:**
+- Press `Escape` to dismiss the Settings modal. Modal disappears ≤500ms. State returns to 2.1 baseline.
+
+---
+
+## Section 3: Sidebar / State Polling
+
+Verify the sidebar handles (a) optimistic-mutation in-flight without flicker (#369) and (b) non-Claude session activity timestamps advancing as messages land (#408).
+
+---
+
+### 3.1: SIDEBAR-OPTIMISTIC-ARCHIVE-01 — Archive toggle holds during in-flight PUT under throttling
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #369
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-claude / smoke-chat-gemini / smoke-chat-codex sessions exist as sidebar rows under `wb-seed`).
+2. Orchestrator configures Playwright to hold `PUT /api/sessions/*/archive` responses for 4 seconds: `await page.route('**/api/sessions/*/archive', async (route) => { await new Promise(r => setTimeout(r, 4000)); return route.continue(); });`. This is a network-layer throttle at the test harness, not in-page state manipulation.
+
+**Steps:**
+1. In the sidebar, locate the `smoke-chat-claude` session row under `wb-seed`. The row has an Archive affordance (☐ checkbox glyph).
+2. Click the Archive (☐) glyph on `smoke-chat-claude`.
+3. While the PUT is in-flight (4s throttle window), observe the sidebar row continuously. Capture screenshots at 500ms intervals through the 4s window.
+4. After the 4s window completes and the PUT response lands, observe the row's final state.
+
+**Verify:**
+- ≤500ms after step 2: the `smoke-chat-claude` row's Archive glyph visibly transitions to the checked state (☑). The optimistic update is rendered immediately, before the PUT response returns. → `3.1/assertion-01-optimistic-archived.png`
+- ≤4s after step 2 (frames sampled every 500ms across the throttle window — 8 frames at 500ms / 1s / 1.5s / 2s / 2.5s / 3s / 3.5s / 4s after step 2): the Archive glyph remains in the checked (☑) state in every sampled frame; no frame shows the glyph reverted to unchecked (☐). → `3.1/assertion-02-no-flicker-frames.png` (8-frame composite)
+- ≤6s after step 2 (i.e. ≤2s after the throttled PUT response lands): the Archive glyph is still in the checked (☑) state and the row remains visible (or moved to the archived section if the sidebar's filter setting hides archived sessions — both outcomes are consistent with "archive persisted"). → `3.1/assertion-03-archived-persisted.png`
+
+**Teardown:**
+- Remove the Playwright network throttle. Click the Archive glyph on `smoke-chat-claude` again to un-archive (restore SMOKE-CHAT-01 baseline). State returned to SMOKE-CHAT-01 product.
+
+---
+
+### 3.2: SIDEBAR-NONCLAUDE-TIMESTAMPS-01 — Gemini + Codex sidebar timestamps advance with activity
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #408
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-gemini + smoke-chat-codex rows visible in sidebar).
+2. Note the current sidebar timestamp text shown beneath each row for `smoke-chat-gemini` and `smoke-chat-codex`. Take a baseline screenshot of the sidebar.
+
+**Steps:**
+1. Click the `smoke-chat-gemini` tab in the tab bar (or click the row in the sidebar) to focus its terminal pane.
+2. Type `please respond briefly with the word ack` into the Gemini terminal and press Enter.
+3. Wait for the Gemini response to land in the pane (response containing `ack` visible).
+4. Click the `smoke-chat-codex` tab. Type the same prompt into the Codex terminal and press Enter.
+5. Wait for the Codex response containing `ack`.
+
+**Verify:**
+- ≤5s after step 3: the sidebar timestamp under `smoke-chat-gemini` has visibly advanced compared to the baseline screenshot taken in Setup step 2 (e.g., "just now" or "1s ago" instead of the stale value). → `3.2/assertion-01-gemini-timestamp-advanced.png`
+- ≤5s after step 5: the sidebar timestamp under `smoke-chat-codex` has visibly advanced compared to the baseline. → `3.2/assertion-02-codex-timestamp-advanced.png`
+- ≤5s after step 5 (with the sidebar sort dropdown set to "Recent activity"): the `smoke-chat-codex` row is now positioned ABOVE `smoke-chat-gemini` and above `smoke-chat-claude` in the sidebar (sort-by-activity order reflects the most-recent message landing on Codex). → `3.2/assertion-03-codex-sorted-to-top.png`
+
+**Teardown:**
+- N/A — state used by no downstream entry; the smoke-chat-* sessions remain operative.
+
+---
+
+## Section 4: Sessions / Session Info / Lifecycle
+
+Cover session creation under load (#334, #444), path-encoding round-trips on restart (#326), per-CLI parser correctness (#335), env-var injection (#342), and MCP summarize on Codex (#450). The lifecycle backbone every other section assumes works.
+
+**Cascade base varies per entry** (documented upfront so the orchestrator does not re-derive at execution time): 4.1 from 0.B (Claude auth seated, fresh project allowed); 4.2 from 2.1 (rendered shell only); 4.3 / 4.4 / 4.6 from SMOKE-CHAT-01 (3-CLI sessions established); 4.5 from SMOKE-CHAT-01 (a session already polling is the race target).
+
+---
+
+### 4.1: SESS-PATH-ENCODING-01 — Project path with special chars round-trips through restart
+
+**Cascade-from:** 0.B
+**Closes gap for:** #326
+
+**Setup:**
+1. 0.B complete (Claude auth seated, shell rendered).
+2. Orchestrator creates the deliberately-unusual workspace path: `ssh ${WORKBENCH_HOST} 'docker exec ${WORKBENCH_CONTAINER} mkdir -p /data/workspace/foo.bar/sub_dir+with-stuff'`.
+
+**Steps:**
+1. In the sidebar, click `+ Project` under a program (or use Add Program first if needed). The project-create modal opens.
+2. Type project name `path-encode-test` in the name field.
+3. Type `/data/workspace/foo.bar/sub_dir+with-stuff` into the path field (or use the file-tree picker to navigate to it).
+4. Click `Save`. Wait ≤5s for the modal to dismiss and the new project row to appear in the sidebar.
+5. Click the `+` icon on the new project's header → click `Claude` row → name the session `pathenc-claude-01` → click `Start Session`. Wait up to 30s for the Claude tab and ready observable.
+6. Right-click the `pathenc-claude-01` session row in the sidebar (or use the row's context menu affordance). Click `Restart`.
+
+**Verify:**
+- ≤5s after step 4: the `path-encode-test` project row is visible in the sidebar with its name displayed. → `4.1/assertion-01-project-created.png`
+- ≤30s after step 5: the `pathenc-claude-01` session tab is visible in the tab bar and the Claude input area is rendered in its terminal pane (typing a single `x` into the focused pane renders the glyph inline; the input-area screen position is not asserted per SMOKE-CHAT-01 step 5 claude note). → `4.1/assertion-02-session-created.png`
+- ≤10s after step 6: the `pathenc-claude-01` row remains attached to the `path-encode-test` project in the sidebar (NOT a new orphan row, NOT a missing row). → `4.1/assertion-03-session-attached-after-restart.png`
+- ≤10s after step 6: the Claude input area is rendered again in the restarted session's terminal pane (post-restart ready observable — same neutral form as assertion-02; screen position not asserted). → `4.1/assertion-04-claude-ready-after-restart.png`
+
+**Teardown:**
+- Right-click `pathenc-claude-01` row → Remove session. Right-click `path-encode-test` project row → Remove project. Orchestrator removes the test workspace directory: `docker exec ${WORKBENCH_CONTAINER} rm -rf /data/workspace/foo.bar`. State returns to 0.B baseline.
+
+---
+
+### 4.2: SESS-RAPID-CREATE-01 — 5 rapid Claude session clicks → 5 distinct rows, no tmpId collision
+
+**Cascade-from:** 2.1
+**Closes gap for:** #334
+
+**Setup:**
+1. 2.1 complete.
+2. Note the current count of session rows under `wb-seed` in the sidebar (baseline screenshot).
+
+**Steps:**
+1. Click the `+` icon on the `wb-seed` project header → the new-session dropdown opens.
+2. Click `Claude`. The session-create overlay appears.
+3. Type session name `rapid-01` and click `Start Session`.
+4. Immediately (without waiting for the new row to render) click the `+` icon on `wb-seed` again → `Claude` → name `rapid-02` → click `Start Session`.
+5. Repeat for `rapid-03`, `rapid-04`, `rapid-05` — all five sessions must be requested within 1 wall-clock second of step 3's click.
+
+**Verify:**
+- ≤3s after step 5: five distinct rows labeled `rapid-01`, `rapid-02`, `rapid-03`, `rapid-04`, `rapid-05` are all visible in the sidebar under `wb-seed`. No row is missing. No two rows share the same label (other than the user-typed name which is intentionally unique). → `4.2/assertion-01-five-distinct-rows.png`
+- ≤30s after step 5: each of the five session tabs is openable from the sidebar (clicking the row opens a tab labeled with the session name) and each tab's terminal pane renders the Claude input area (typing a single `x` into the focused pane renders the glyph inline; screen position not asserted). → `4.2/assertion-02-all-five-openable.png`
+
+**Teardown:**
+- Right-click each of `rapid-01..05` rows → Remove session. Sidebar returns to the 2.1 / SMOKE-CHAT-01 baseline session count.
+
+---
+
+### 4.3: SESS-GEMINI-PARSER-01 — Gemini session row shows activity timestamp from JSONL
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #335
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-gemini exists; the SMOKE-CHAT-01 round-trip drove a "what is 7 times 8" prompt + response, so the Gemini session's `.jsonl` transcript file exists and has at least 2 message records).
+2. Note the sidebar's sort setting; for this entry, switch it to `Recent activity` if not already (click the `#session-sort` select in the sidebar filter bar).
+
+**Steps:**
+1. Click the sidebar refresh affordance (the circular-arrow button next to `+ Add Program` in the sidebar header).
+2. Observe the sidebar re-render. Find the `smoke-chat-gemini` row.
+
+**Verify:**
+- ≤5s after step 1: the `smoke-chat-gemini` row's timestamp shown below the row name reads a recent value (e.g., `just now`, `Ns ago`, `Nm ago`) — NOT a stale "session-start" timestamp or an empty value. → `4.3/assertion-01-gemini-timestamp-non-empty.png`
+- ≤5s after step 1: the `smoke-chat-gemini` row sorts ABOVE or AT THE SAME LEVEL as any session with no recent activity (verifying that the parser produced an advancing timestamp the sort consumed). → `4.3/assertion-02-sort-consistent.png`
+
+**Teardown:**
+- N/A — state used by 3.2 and other entries.
+
+---
+
+### 4.4: SESS-ENV-INJECT-01 — `WORKBENCH_SESSION_ID` echoes the sidebar's session id
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #342
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-claude session exists).
+
+**Steps:**
+1. Click the `smoke-chat-claude` row in the sidebar → tab focuses.
+2. Hover the `smoke-chat-claude` row in the sidebar — a tooltip appears showing the workbench session id (e.g., a UUID).
+3. Take a screenshot of the tooltip text (the visible session id string in the tooltip).
+4. Click into the terminal pane of `smoke-chat-claude` to focus it.
+5. Type `echo $WORKBENCH_SESSION_ID` and press Enter.
+
+**Verify:**
+- ≤2s after step 2: the sidebar row's tooltip is visible and contains a session-id-shaped string. → `4.4/assertion-01-sidebar-tooltip-id.png`
+- ≤2s after step 5: the terminal pane renders a new line below the prompt with the value of `WORKBENCH_SESSION_ID` printed. → `4.4/assertion-02-terminal-echo.png`
+- ≤2s after step 5: the session-id string visible in the terminal echo (assertion-02) is character-for-character identical to the session-id string captured from the sidebar tooltip (assertion-01). → `4.4/assertion-03-ids-match.png` (composite — show both screenshots side-by-side and assert by inspection)
+
+**Teardown:**
+- N/A — smoke-chat-claude state preserved.
+
+---
+
+### 4.5: SESS-TMUX-ASYNC-01 — New session creation does not freeze sidebar during in-flight loadState
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #444
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (three smoke-chat-* sessions are already polling — that polling is the race target).
+2. Observe the sidebar showing the three smoke-chat-* rows under `wb-seed`. The status bar (bottom of the main panel) shows a connected indicator for the active session.
+
+**Steps:**
+1. Click the `+` icon on the `wb-seed` project header.
+2. Click `Claude` in the dropdown. The session-create overlay appears.
+3. Type session name `tmux-async-01` and click `Start Session`.
+4. Immediately after clicking Start Session, mouse-hover over each of the three smoke-chat-* rows in the sidebar to confirm the tooltip still renders responsively (each hover should produce a tooltip within 200ms — a frozen sidebar would delay or miss the hover).
+
+**Verify:**
+- ≤2s after step 3: the `tmux-async-01` row appears in the sidebar under `wb-seed`. → `4.5/assertion-01-new-row-appears.png`
+- ≤200ms after each of the three hovers in step 4 (each hover initiated within the first 2s after step 3 — three discrete hover events, three discrete screenshot captures): the hovered row's tooltip is rendered in the captured frame; no frame shows a missing tooltip past the 200ms mark. → `4.5/assertion-02-tooltip-on-each-hover.png` (3-frame composite — one per hover)
+- ≤30s after step 3: the `tmux-async-01` tab opens with the Claude input area rendered in its terminal pane (typing a single `x` into the focused pane renders the glyph inline; screen position not asserted). → `4.5/assertion-03-session-ready.png`
+
+**Teardown:**
+- Right-click `tmux-async-01` row → Remove session. Sidebar returns to SMOKE-CHAT-01 baseline.
+
+---
+
+### 4.6: SESS-CODEX-SUMMARIZE-01 — `session_summarize` MCP tool produces summary for Codex session
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #450
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-codex exists with ≥2 messages of transcript; smoke-chat-claude is the calling session).
+2. Note the workbench session id of `smoke-chat-codex` (hover its sidebar row, read the tooltip, copy the id).
+
+**Steps:**
+1. Click the `smoke-chat-claude` tab in the tab bar to focus its Claude terminal.
+2. Type a natural prompt into the Claude pane: `Please call the workbench MCP tool session_summarize with session_id=<codex-id> and show me the result it returns.` (substitute the actual id from Setup step 2.)
+3. Press Enter. The Claude CLI invokes the MCP tool.
+4. Wait for the Claude pane to render the MCP tool's returned content.
+
+**Verify:**
+- ≤10s after step 3: the Claude pane visibly shows a tool-call invocation block for `mcp__workbench__session_summarize` with the session_id argument matching the Codex session id from Setup. → `4.6/assertion-01-tool-call-rendered.png`
+- ≤10s after step 3: the tool-result content rendered below the call shows a prose summary of the Codex session's transcript (paragraph(s) describing what happened in the Codex conversation) and DOES NOT contain the literal error string `Error: path argument must be string` (or any "must be of type string" message). → `4.6/assertion-02-summary-not-error.png`
+- ≤15s after step 3: the Claude pane's response continues with Claude's natural-language confirmation that the summary was successful (e.g., a sentence repeating or paraphrasing the summary content). → `4.6/assertion-03-claude-confirms.png`
+
+**Teardown:**
+- N/A — smoke-chat-* state preserved.
+
+---
+
+## Section 5: Projects + Programs
+
+Verify CRUD + cascade behavior for projects and programs at the sidebar level: rename conflict (#332) and project-remove cascade across tmux + JSONL + MCP unregister (#336).
+
+---
+
+### 5.1: PROJ-PROGRAM-RENAME-CONFLICT-01 — Program rename to existing name is rejected with visible conflict
+
+**Cascade-from:** SMOKE-PROJ-01
+**Closes gap for:** #332
+
+**Setup:**
+1. SMOKE-PROJ-01 complete (`smoke-proj-<timestamp>` project exists in the sidebar).
+2. Setup creates two distinct programs (containers for projects) inside the sidebar via the Add Program affordance:
+   - Click `+` (Add Program) in the sidebar header. The Add Program modal opens. Type `rename-prog-A` and click Save.
+   - Click `+` again. Type `rename-prog-B` and click Save.
+   Verify both program rows are visible in the sidebar before proceeding.
+
+**Steps:**
+1. Locate the `rename-prog-A` program row in the sidebar. Click the ✎ pencil affordance next to its name (or right-click → Rename).
+2. The rename input field becomes editable (or a small inline modal opens depending on the implementation pattern).
+3. Type `rename-prog-B` (the name already owned by the other program).
+4. Press Enter or click Save.
+
+**Verify:**
+- ≤2s after step 4: a visible error indicator appears (toast, banner, or inline error message) naming a conflict — the message contains text like "already exists", "conflict", or "name in use". → `5.1/assertion-01-conflict-message-visible.png`
+- ≤2s after step 4: the `rename-prog-A` program row STILL displays the name `rename-prog-A` (the rename did not commit). → `5.1/assertion-02-original-name-preserved.png`
+- ≤2s after step 4: the `rename-prog-B` program row also remains, named `rename-prog-B` (no duplicate, no clobber). → `5.1/assertion-03-target-name-untouched.png`
+
+**Teardown:**
+- Press Escape or click outside to dismiss the error/rename input. Right-click each of `rename-prog-A` and `rename-prog-B` rows → Remove program. Sidebar returns to SMOKE-PROJ-01 baseline.
+
+---
+
+### 5.2: PROJ-REMOVE-CASCADE-01 — Project remove cascades sidebar + JSONL + MCP unregister
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #336
+
+**Setup:**
+1. SMOKE-CHAT-01 complete. Precondition check (not under test in this entry): confirm the three `smoke-chat-claude` / `smoke-chat-gemini` / `smoke-chat-codex` rows are visible in the sidebar under `wb-seed` — this entry inherits SMOKE-CHAT-01's "three-CLI session-create primitive works" guarantee, then exercises that primitive on a sacrificial sister project (the smoke-chat-* state itself is NOT mutated; the cascade-from is documenting the upstream primitive, not the upstream rows).
+2. Setup creates a sacrificial sister project carrying its own three CLI sessions (so the cascade can be observed end-to-end without disturbing the smoke-chat-* sessions):
+   - Click `+ Project` under any program. Type `cascade-test-proj`. Set the path to `/data/workspace/cascade-test-proj` (orchestrator pre-creates this path if needed). Click Save.
+   - On the new `cascade-test-proj` row, click `+` → `Claude` → name `cascade-claude-01` → Start Session. Wait for ready.
+   - Repeat for Gemini (`cascade-gemini-01`) and Codex (`cascade-codex-01`).
+   - Verify three session rows exist under `cascade-test-proj` in the sidebar.
+
+**Steps:**
+1. Right-click the `cascade-test-proj` project row in the sidebar → click `Remove` in the context menu. (Or use the ✎ pencil → Remove flow per the workbench modal pattern.)
+2. A confirm modal appears asking to confirm removal. Click `Confirm`.
+3. After the confirmation, observe the sidebar state.
+4. Click the `Files` tab in the right panel. Navigate the file tree to `~/.claude/projects/` (or the equivalent path for the workspace's JSONL directory).
+5. Observe whether the directory entry for the just-removed project exists.
+
+**Verify:**
+- ≤10s after step 2: the `cascade-test-proj` project row is no longer visible in the sidebar. → `5.2/assertion-01-project-row-gone.png`
+- ≤10s after step 2: all three `cascade-claude-01` / `cascade-gemini-01` / `cascade-codex-01` session rows are no longer visible (they cascaded with their parent project). → `5.2/assertion-02-session-rows-gone.png`
+- ≤10s after step 2: any tabs that were open for the removed sessions show a "session removed" state or are closed — no tab continues live for a deleted session. → `5.2/assertion-03-tabs-closed.png`
+- ≤5s after step 4: the file tree visibly does NOT contain a directory entry for the just-removed project's JSONL store (the directory was deleted by the cascade). → `5.2/assertion-04-jsonl-dir-gone.png`
+
+**Teardown:**
+- Orchestrator removes `/data/workspace/cascade-test-proj` if it still exists. SMOKE-CHAT-01 baseline preserved on `wb-seed`.
+
+---
+
+## Section 6: Tabs + Terminal
+
+Verify tab switching does not thrash layout (#343) and the async session-resolver eliminates input-lag jank under concurrent session load (#338).
+
+---
+
+### 6.1: TABS-LAYOUT-NOTHRASH-01 — 10 rapid tab switches show no observable layout flash
+
+**Cascade-from:** SMOKE-TABS-01
+**Closes gap for:** #343
+
+**Setup:**
+1. SMOKE-TABS-01 complete (after that entry, 2 tabs remain in the tab bar: `smoke-chat-codex` and `smoke-chat-gemini`; the claude tab was closed in SMOKE-TABS-01).
+2. Mark the current visual position of a stable reference element in the main panel (e.g., the status bar's connection indicator) by screenshot — this anchor is used to detect layout shift.
+
+**Steps:**
+1. Click the `smoke-chat-codex` tab. For each click, bracket the click with `performance.now()` markers via Playwright `browser_evaluate` (`const t0 = performance.now(); /* click */; await new Promise(r => requestAnimationFrame(() => r())); const t1 = performance.now();`) — records the click-to-next-paint duration. Wait ≤500ms after the click before the next click.
+2. Click the `smoke-chat-gemini` tab. Same `performance.now()` bracketing. Capture a screenshot ≤500ms after the click.
+3. Repeat the click-codex / click-gemini sequence 5 more times (10 total switches). For each click: bracket with `performance.now()` to record duration AND capture a screenshot at ≤500ms.
+
+**Verify:**
+- ≤50ms after each of the 10 clicks (sub-second duration measurement via `performance.now()` bracketing per STD-003 §12.8 — the observable being measured is duration, not rendered content): the click-to-next-paint delta is ≤50ms in every measurement (p100 ≤50ms across the 10-click sample). → `6.1/assertion-01-paint-duration-table.png` (10 timing values rendered in the manifest)
+- ≤500ms after each of the 10 clicks (content affirmation at a wider screenshot-friendly bound per §12.8): the active terminal pane visibly shows the clicked CLI's prompt glyph in the captured frame (Codex input box on codex-tab clicks vs Gemini `>` prompt on gemini-tab clicks). → `6.1/assertion-02-pane-swap-{01..10}.png` (10 frames)
+- ≤500ms after each of the 10 clicks: the status bar's reference element position (pixel coordinates compared against the Setup anchor screenshot from Setup step 2) has drifted ≤2px in any direction in the captured frame — no layout reflow per click. → `6.1/assertion-03-no-layout-shift-{01..10}.png` (10 frames vs anchor)
+- ≤2s after step 3's final click: the scrollback content in the terminal pane is intact for whichever tab was last clicked (the last 5 lines of that tab's content from before the switching sequence are visible by scrolling). → `6.1/assertion-04-scrollback-intact.png`
+
+**Teardown:**
+- N/A — tab state preserved for downstream entries.
+
+---
+
+### 6.2: TERM-INPUT-LAG-01 — Keystrokes echo without jank under 6-session concurrent load
+
+**Cascade-from:** 4.2
+**Closes gap for:** #338
+
+**Setup:**
+1. 4.2 complete (5 rapid-create Claude sessions exist, but were torn down in 4.2's teardown). Setup recreates the concurrent-session load:
+   - In `wb-seed`, create 3 Claude sessions (`load-claude-01..03`) via the `+` → `Claude` dropdown flow.
+   - Create 3 Gemini sessions (`load-gemini-01..03`) via the `+` → `Gemini` dropdown flow.
+   - Verify all 6 session tabs are open and each terminal's ready observable is visible.
+
+**Steps:**
+1. Click the `load-claude-01` tab to focus.
+2. Use Playwright's `browser_evaluate` to capture `performance.now()` as `t0`.
+3. Send 100 keystrokes via `browser_press_key` in rapid succession (e.g., 100 individual `a` keypresses), each followed by capturing `performance.now()` — record the timestamp at which the `a` glyph appears in the rendered terminal pane (verified by screenshot polling, not by reading `term.buffer`).
+4. Compute the input-to-render latency for each keystroke: `frame_visible_time - keypress_time`.
+5. Aggregate to p95 latency.
+
+**Verify:**
+- ≤200ms p95 latency across the 100-keystroke sample: the per-keystroke input-to-render latency, measured as the elapsed `performance.now()` delta between `browser_press_key` and the next captured frame showing the new glyph, is below 200ms at the 95th percentile. (§12.8 sub-second timing: the observable being measured is duration, not rendered content — `performance.now()` is the legitimate instrument per §12.8.) → `6.2/assertion-01-p95-input-lag.png` (chart / table of latencies)
+- ≤2s after step 3 final keystroke: the terminal pane of `load-claude-01` visibly shows a run of 100 `a` glyphs as the most recent input. → `6.2/assertion-02-keystrokes-rendered.png`
+
+**Teardown:**
+- Right-click each of `load-claude-01..03` and `load-gemini-01..03` rows → Remove. Sidebar returns to 4.2 baseline.
+
+---
+
+## Section 7: Tasks Panel
+
+Verify task drag/reparent atomicity (#327) and v2 contract validation rejects orphan folder_path while accepting valid project bindings (#388).
+
+---
+
+### 7.1: TASK-DRAG-REPARENT-01 — Drag task between projects lands at correct rank
+
+**Cascade-from:** SMOKE-PROJ-01
+**Closes gap for:** #327
+
+**Setup:**
+1. SMOKE-PROJ-01 complete (`smoke-proj-<timestamp>` project exists; `wb-seed` is also present).
+2. Seed tasks via the Tasks panel UI (not via direct DB / MCP — keeps the entry self-contained as a UI flow):
+   - Click the `Tasks` tab in the right panel.
+   - With `wb-seed` selected in the sidebar, click `+ Task` and add three tasks: `wb-task-A`, `wb-task-B`, `wb-task-C` (one at a time, naming each in the task-detail modal that opens, clicking Save).
+   - Select `smoke-proj-<timestamp>` in the sidebar. Repeat: add `smoke-task-1`, `smoke-task-2`, `smoke-task-3`.
+
+**Steps:**
+1. Select `wb-seed` in the sidebar. Confirm `wb-task-A`, `wb-task-B`, `wb-task-C` are visible in the Tasks panel.
+2. Click and hold the `wb-task-B` row. Drag it onto the `smoke-proj-<timestamp>` project row in the sidebar (cross-project drop target).
+3. The drop should land `wb-task-B` between rank 2 (`smoke-task-2`) and rank 3 (`smoke-task-3`) in the destination project.
+4. Release the mouse.
+5. Select `smoke-proj-<timestamp>` in the sidebar to view its Tasks panel.
+
+**Verify:**
+- ≤3s after step 4: `wb-task-B` is no longer visible in the `wb-seed` Tasks panel (it left its source). → `7.1/assertion-01-task-left-source.png`
+- ≤3s after step 5: the `smoke-proj-<timestamp>` Tasks panel shows `wb-task-B` positioned between `smoke-task-2` and `smoke-task-3` (i.e., the order is `smoke-task-1`, `smoke-task-2`, `wb-task-B`, `smoke-task-3`). → `7.1/assertion-02-task-at-rank.png`
+- ≤5s after a sidebar refresh (click the refresh affordance): the position persists — `wb-task-B` is still between `smoke-task-2` and `smoke-task-3`. → `7.1/assertion-03-rank-persisted.png`
+
+**Teardown:**
+- Right-click each of the seeded tasks → Delete. Both projects' Tasks panels return to empty. State preserved for Section 9.
+
+---
+
+### 7.2: TASK-V2-CONTRACT-01 — task_add rejects orphan, accepts valid project binding
+
+**Cascade-from:** SMOKE-PROJ-01
+**Closes gap for:** #388
+
+**Setup:**
+1. SMOKE-PROJ-01 complete (project exists).
+2. Click the `Tasks` tab in the right panel. Click no project in the sidebar (or click to deselect — leave no active project, so a task add without explicit project binding is the failure case).
+
+**Steps:**
+1. With no active project selected, click `+ Task` in the Tasks panel header.
+2. The task-detail modal opens with empty Title field. The Project select dropdown shows `(no project)` or is empty.
+3. Type `orphan-task` in the Title field. Click `Save` without choosing a project.
+4. Click on the `smoke-proj-<timestamp>` row in the sidebar to select it as the active project. Click `+ Task` again.
+5. Type `bound-task` in the Title field. The Project dropdown now defaults to `smoke-proj-<timestamp>`. Click `Save`.
+
+**Verify:**
+- ≤3s after step 3: an error message is visibly rendered in the task-detail modal (or as a toast) indicating the project binding is required — message contains text like "project required", "must select project", or "cannot create without project". → `7.2/assertion-01-orphan-rejected.png`
+- ≤3s after step 3: NO new task row appears in the Tasks panel — neither under any project nor as an orphan. → `7.2/assertion-02-no-orphan-row.png`
+- ≤3s after step 5: the `bound-task` row is visible in the `smoke-proj-<timestamp>` Tasks panel. → `7.2/assertion-03-bound-task-appears.png`
+- ≤3s after step 5: NO copy of `bound-task` appears under any other project. → `7.2/assertion-04-bound-task-correct-project.png`
+
+**Teardown:**
+- Right-click `bound-task` → Delete. Tasks panel returns to SMOKE-PROJ-01 baseline.
+
+---
+
+## Section 8: File Tree / File Browser
+
+Verify post-jQuery-removal file tree renders cleanly with no `jquery is not defined` errors and the Add Project picker still expands directories.
+
+---
+
+### 8.1: FILES-NOJQUERY-01 — Cold-load + Add Project picker renders without jQuery references
+
+**Cascade-from:** 2.1
+**Closes gap for:** #319
+
+**Setup:**
+1. 2.1 complete (shell rendered).
+2. Clear the DevTools console buffer.
+
+**Steps:**
+1. Reload the page (`F5` or Playwright `browser_navigate` to the same URL). Wait for the shell to re-render.
+2. Click `+` (Add Program) in the sidebar header. Cancel the Add Program modal. Click `+ Project` under any existing program. The project-create modal opens with the file-tree picker.
+3. Click `/data/workspace` in the file tree to expand it.
+
+**Verify:**
+- ≤3s after step 2: the file-tree picker is visibly rendered with at least the workspace root row visible. (Primary affirmation: jQuery's removal did not break the picker — the legacy code path required `$.tree(...)`; the new vanilla code path is what produces this render.) → `8.1/assertion-01-picker-rendered.png`
+- ≤3s after step 3: at least one child directory of `/data/workspace` is visible as an indented row under the expanded root. → `8.1/assertion-02-child-visible.png`
+- ≤3s after step 1: supplementary diagnostic — the DevTools console (rendered DevTools strip) shows zero entries containing the literal text `jquery is not defined`, `$ is not defined`, or `jQuery is not defined`. The picker rendering in assertion-01 is the primary screen-affirmable proof; the console snapshot is corroborating evidence. → `8.1/assertion-03-no-jquery-console-error.png`
+
+**Teardown:**
+- Click `Cancel` on the project-create modal. State returns to 2.1 baseline.
+
+---
+
+## Section 9: Issue Picker
+
+Verify the issue picker honors GH Enterprise host / quoted-repo derivation (#328) and uses the configured org rather than hardcoded `rmdevpro/` (#329).
+
+---
+
+### 9.1: ISSUE-PICKER-GHE-01 — Picker lists issues from GH Enterprise host derived from project origin
+
+**Cascade-from:** 7.1
+**Closes gap for:** #328
+
+**Setup:**
+1. 7.1 complete (Tasks panel flow exercised).
+2. Orchestrator pre-configures a project with a GHE-style origin (or a quoted-repo origin): `ssh ${WORKBENCH_HOST} 'docker exec ${WORKBENCH_CONTAINER} bash -lc "cd /data/workspace && git init ghe-test && cd ghe-test && git remote add origin https://github.enterprise.example.com/team-x/ghe-test.git"'`.
+3. In the workbench UI, click `+ Project` under a program. Add the `ghe-test` project pointing at `/data/workspace/ghe-test`.
+4. Open the Tasks panel for `ghe-test`. Click `+ Task` and add a task named `ghe-task-01`. Click Save.
+
+**Steps:**
+1. With the `ghe-task-01` task visible in the Tasks panel, click the task row to open the task-detail modal.
+2. Locate the `GitHub issue` field. Click the `Pick…` button next to it.
+3. The issue-picker modal opens.
+
+**Verify:**
+- ≤5s after step 2: the issue-picker modal is visibly rendered with a header showing `Pick a GitHub issue` plus a path-like indicator naming the project's repo. The path-like indicator shows `github.enterprise.example.com/team-x/ghe-test` (NOT `github.com/...` and NOT `rmdevpro/...`). → `9.1/assertion-01-picker-shows-ghe-host.png`
+- ≤5s after step 3 (waiting for the issue list to populate): the picker either shows a list of issues from that GHE host OR shows a credentials/auth-required error message that names the GHE host explicitly. Either outcome is acceptable — what is NOT acceptable is a GraphQL error toast or a 5xx error indicating the request was malformed. → `9.1/assertion-02-no-graphql-error.png`
+
+**Teardown:**
+- Close the issue-picker modal (× or Escape). Close the task-detail modal (Cancel). Right-click `ghe-test` project → Remove. Orchestrator removes `/data/workspace/ghe-test`. State returns to 7.1 baseline.
+
+---
+
+### 9.2: ISSUE-PICKER-CUSTOM-ORG-01 — Picker uses configured org, not hardcoded rmdevpro
+
+**Cascade-from:** 7.1
+**Closes gap for:** #329
+
+**Setup:**
+1. 7.1 complete.
+2. Orchestrator clones a repo from a non-`rmdevpro` org into the workspace: `ssh ${WORKBENCH_HOST} 'docker exec ${WORKBENCH_CONTAINER} bash -lc "cd /data/workspace && git clone https://github.com/different-org/picker-test.git"'` (orchestrator picks any public test repo under a non-rmdevpro org — substitute the real URL).
+3. Add the project to the workbench: `+ Project` → `picker-test` at `/data/workspace/picker-test` → Save.
+4. Open the Tasks panel for `picker-test`. Add a task `org-task-01`. Save.
+
+**Steps:**
+1. Click `org-task-01` to open task-detail.
+2. Click `Pick…` next to the GitHub issue field.
+3. The issue-picker modal opens.
+
+**Verify:**
+- ≤3s after step 2: the issue-picker modal's header path-like indicator reads `github.com/different-org/picker-test` (or whatever the configured upstream org is). → `9.2/assertion-01-picker-shows-correct-org.png`
+- ≤3s after step 2: the indicator does NOT read `github.com/rmdevpro/<...>`. → `9.2/assertion-02-not-rmdevpro.png`
+
+**Teardown:**
+- Close the issue-picker. Close task-detail. Remove the `picker-test` project. Orchestrator removes the cloned repo. State returns to 7.1 baseline.
+
+---
+
+## Section 10: KB / Qdrant / Search
+
+Verify KB clone-on-cold-start completes (#368) and large-file ingestion does not OOM the qdrant-sync streaming path (#443).
+
+---
+
+### 10.1: KB-COLD-CLONE-01 — KB clone completes on cold container; roles dropdown populates
+
+**Cascade-from:** cold (standard registry image, fresh /data)
+**Closes gap for:** #368
+
+**Setup:**
+1. Orchestrator spins up a fresh container with an ephemeral `/data` volume and confirms `/data/knowledge-base` does NOT exist before workbench starts: `docker run -d --name workbench-kb-cold -v <ephemeral>:/data -p <port>:7860 <image>; sleep 5; docker exec workbench-kb-cold ls /data/knowledge-base` should error with `No such file or directory`.
+2. Bind `${WORKBENCH_URL}` to this fresh container.
+
+**Steps:**
+1. Navigate to `${WORKBENCH_URL}`. Pass the gate if applicable.
+2. Wait for the workbench shell to render.
+3. Click `⚙ Settings` in the sidebar footer. Click the `General` tab.
+4. Scroll to the `Knowledge Base` settings group within General. Observe the KB repo name + URL fields.
+5. Wait for the KB status line (`#kb-status-line` in the General tab) to render a populated status.
+
+**Verify:**
+- ≤30s after step 1: a KB status indicator visible in the General settings tab transitions from a "checking" or empty state to a populated state showing a non-zero file count or a "ready"-style label. → `10.1/assertion-01-kb-status-ready.png`
+- ≤30s after step 1: the KB repo URL field displays a populated URL (the configured upstream, e.g., `https://github.com/rmdevpro/workbench-kb`) — NOT empty, NOT an error placeholder. → `10.1/assertion-02-kb-url-populated.png`
+- ≤30s after step 1: the role-files / KB-content area of the workbench shell (whichever surface consumes `/api/kb/status` to display role files — e.g., the Project's role-selector dropdown when starting a new session) shows a non-empty list. (Open a project's `+` → `Claude` flow; the role dropdown should list role files cloned from the KB.) → `10.1/assertion-03-role-dropdown-populated.png`
+
+**Teardown:**
+- Leave the kb-cold container running for 10.2 (downstream cascades from this entry). State preserved.
+
+---
+
+### 10.2: KB-LARGE-FILE-01 — 5MB markdown file ingests + searches without OOM
+
+**Cascade-from:** 10.1
+**Closes gap for:** #443
+
+**Setup:**
+1. 10.1 complete (KB cloned, container `workbench-kb-cold` running).
+2. Orchestrator drops a 5MB markdown file into the KB working tree: `ssh ${WORKBENCH_HOST} 'docker exec workbench-kb-cold bash -lc "python3 -c \"print(\\\"## Section\\n\\\" * 100000)\" > /data/knowledge-base/large-test-doc.md"'`. The file contains a distinctive sentinel string `LARGEFILESENTINEL-7y3k` near the end.
+3. The KB file watcher should pick up the new file and queue it for vector indexing. Wait up to 60s for the qdrant-sync streaming path to ingest the file. Orchestrator may check progress via `/api/kb/status` only as a diagnostic (Verify cannot probe this).
+
+**Steps:**
+1. In the workbench UI, locate the KB search surface (typically a search field exposed inside the KB area of Settings, or the `#session-search` field if scoped to KB content — substitute the project's actual search affordance).
+2. Type `LARGEFILESENTINEL-7y3k` into the search field.
+3. Press Enter or trigger the search action.
+
+**Verify:**
+- ≤5s after step 3: the search results area renders at least one result whose content snippet contains the sentinel string `LARGEFILESENTINEL-7y3k`. → `10.2/assertion-01-result-contains-sentinel.png`
+- ≤5s after step 3: the workbench shell remains responsive — clicking another sidebar row responds within 1s (the container did not OOM and the page is not unresponsive). → `10.2/assertion-02-ui-responsive.png`
+- ≤5s after step 3: no error toast / banner indicating "Qdrant unreachable", "Out of memory", or "Service unavailable" is visible. → `10.2/assertion-03-no-error-banner.png`
+
+**Teardown:**
+- Orchestrator removes the test file: `docker exec workbench-kb-cold rm /data/knowledge-base/large-test-doc.md`. Orchestrator stops + removes the `workbench-kb-cold` container.
+
+---
+
+## Section 11: Gate / Auth UI
+
+Verify gate-page render consistency across boot-time loads (#337), sub-second login without Claude CLI fork (#333), rate-limit lockout (#351), and password-form structure on Settings + Git Accounts modals (#403).
+
+**Two distinct fresh containers are required in this section.** 11.1 + 11.2 share one fresh container (`cold-fresh-container-A`) — 11.1's 10 boot-time loads do not touch the gate rate-limit bucket, so 11.2 can submit a correct login afterward. 11.3 spends the rate-limit bucket with 11 wrong-password attempts, so it runs on a separate fresh container (`cold-fresh-container-B`) provisioned by the orchestrator before the entry. Both labels are `cold`-class preconditions; the suffix distinguishes them.
+
+---
+
+### 11.1: GATE-RENDER-CONSISTENT-01 — Gate page renders consistently across 10 boot-time loads
+
+**Cascade-from:** cold-fresh-container-A
+**Closes gap for:** #337
+
+**Setup:**
+1. Orchestrator launches a fresh container with `GATE_PASSCODE=test-passcode-A` (env var) and `WORKBENCH_USER=tester` / `WORKBENCH_PASS=test-passcode-A`. Name it `workbench-gate-A`. Bind `${WORKBENCH_URL}` to it.
+2. Capture a reference screenshot of the gate page on the first load to use as the comparison anchor.
+
+**Steps:**
+1. Navigate to `${WORKBENCH_URL}`. Capture screenshot at the moment the gate page renders.
+2. Navigate away (e.g., `about:blank`). Then navigate back to `${WORKBENCH_URL}`. Capture screenshot.
+3. Repeat step 2 eight more times (10 total loads).
+
+**Verify:**
+- ≤1s after each of the 10 navigations: the gate page renders with the username field + password field + Sign In button visible at the same screen position as the reference screenshot (pixel-position drift ≤4px). → `11.1/assertion-01-load-{01..10}.png` (10 frames)
+- ≤1s after each of the 10 navigations: the gate-page background image / branding is identical across all 10 frames (no first-render visual jank where elements appear progressively after the first load only). → `11.1/assertion-02-background-stable.png` (composite diff)
+
+**Teardown:**
+- Leave `workbench-gate-A` running for 11.2 (which cascades from this entry). State preserved.
+
+---
+
+### 11.2: GATE-LOGIN-SPEED-01 — Correct password completes login ≤1s (no Claude CLI fork)
+
+**Cascade-from:** 11.1
+**Closes gap for:** #333
+
+**Setup:**
+1. 11.1 complete (`workbench-gate-A` container running, gate page reachable).
+2. Navigate to `${WORKBENCH_URL}` to render the gate page if not already on it.
+
+**Steps:**
+1. Click into the username field. Type `tester`.
+2. Click into the password field. Type `test-passcode-A`.
+3. Click the `Sign In` button. Capture screenshots at 100ms intervals up to a 1.5s bound after the click.
+
+**Verify:**
+- ≤1s after step 3: the gate page is no longer visible — the workbench shell (sidebar + main panel) is rendered in its place. → `11.2/assertion-01-shell-loaded.png`
+- ≤1s after step 3: the first captured frame showing the shell renders within the 1s bound — proving the login response path is sub-second, NOT the multi-second path the pre-fix Claude-CLI-fork would have produced. → `11.2/assertion-02-sub-second-transition.png`
+
+**Teardown:**
+- Click `⚙ Settings` → Logout (or use the explicit logout affordance). Orchestrator stops + removes `workbench-gate-A`.
+
+---
+
+### 11.3: GATE-RATE-LIMIT-01 — 11 wrong-password attempts trigger lockout with named limit
+
+**Cascade-from:** cold-fresh-container-B
+**Closes gap for:** #351
+
+**Setup:**
+1. Orchestrator launches a SEPARATE fresh container with `GATE_PASSCODE=test-passcode-B` / `WORKBENCH_USER=tester` / `WORKBENCH_PASS=test-passcode-B`. Name it `workbench-gate-B`. Bind `${WORKBENCH_URL}` to it. The rate-limit bucket is fresh.
+2. Navigate to `${WORKBENCH_URL}` and confirm the gate page renders.
+
+**Steps:**
+1. Type `tester` in username. Type `wrong-password-attempt-01` in password. Click Sign In.
+2. Wait for the error banner to render. Clear the password field. Type `wrong-password-attempt-02`. Click Sign In.
+3. Repeat for attempts 03 through 10, each with a distinct wrong-password string, within a total wall-clock window of 5 seconds.
+4. On the 11th attempt: type `wrong-password-attempt-11`. Click Sign In.
+5. Wait 60 seconds (the rate-limit cooldown). After the wait, clear the password field and type the correct password `test-passcode-B`. Click Sign In.
+
+**Verify:**
+- ≤2s after step 4: a visibly rendered error banner names the rate-limit (text contains "rate limit", "too many attempts", or "try again in"). → `11.3/assertion-01-rate-limit-banner.png`
+- ≤2s after step 4: the Sign In button's response latency is visibly ~500ms longer than the previous attempts' responses (the post-failure backoff delay is observable as a button-disabled or spinner state). → `11.3/assertion-02-backoff-delay.png`
+- ≤2s after step 5 (after the 60s wait + correct password): the workbench shell renders, indicating the rate-limit bucket reset after cooldown. → `11.3/assertion-03-recovery-after-cooldown.png`
+
+**Teardown:**
+- Orchestrator stops + removes `workbench-gate-B`.
+
+---
+
+### 11.4: GATE-PASSWORD-FORM-01 — Password-input DOM warning is absent on Settings + Git Accounts modals
+
+**Cascade-from:** 2.4
+**Closes gap for:** #403
+
+**Setup:**
+1. 2.4 complete (Settings modal verified to open ≤500ms).
+2. Clear the DevTools console buffer.
+
+**Steps:**
+1. Click `⚙ Settings` in the sidebar.
+2. The Settings modal opens. Click the `General` tab if not active. Click into the Gemini API Key input and type the character `x` (a single keystroke). Click into the Codex API Key input and type `x`. Click into the Hugging Face API Key input and type `x`.
+3. Capture a screenshot of the General tab with the three fields visible (cursor in the last field; the typed characters render as masked glyphs).
+4. Click the `Git` tab in the Settings modal's tab strip. Click into the `Personal access token` input and type the character `x`.
+5. Capture a screenshot of the Git tab with the token field visible (typed character renders as masked glyph).
+6. Keep both areas observed for a 5s window each — the supplementary console diagnostic spans these windows.
+
+**Verify:**
+- ≤1s after step 2: the General tab's AI Keys section renders three password input fields with placeholder text `Enter key...` for Gemini, Codex, and Hugging Face — each field is visibly a password input (characters render as dots / asterisks when typed). Test by typing a single character into each field and observing it renders as a masked glyph (not the literal character). → `11.4/assertion-01-general-password-fields-masked.png`
+- ≤1s after step 4: the Git tab's Git Accounts section renders a `Personal access token` password input field — typing a character into it renders as a masked glyph. → `11.4/assertion-02-git-token-field-masked.png`
+- ≤1s after step 2 + 5s observation: supplementary diagnostic — the DevTools console (Playwright `browser_console_messages` capture) shows zero `[DOM] Password field is not contained in a form` warning entries during the General tab observation window. → `11.4/assertion-03-general-console-clean.png`
+- ≤1s after step 4 + 5s observation: supplementary diagnostic — same console check for the Git tab observation window. → `11.4/assertion-04-git-console-clean.png`
+
+**Teardown:**
+- Clear any test characters typed into the password fields. Press Escape to dismiss Settings. State returns to 2.4 baseline.
+
+---
+
+## Section 12: MCP Tools (UI surface)
+
+Verify the MCP tool catalog matches the registry (#361), project-MCP enable propagates to non-Claude sessions (#445), and `session_list` returns all three CLI types (#437). Every MCP-tool entry verifies through the **terminal pane the user is looking at** — the user types the MCP invocation (or asks the CLI to invoke it) and the screen renders the response. Stays inside §12.7's mouse / keyboard / monitor envelope.
+
+---
+
+### 12.1: MCP-CATALOG-LIST-01 — `tools/list` returns expected tool count from terminal
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #361
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-claude is the calling session).
+
+**Steps:**
+1. Click the `smoke-chat-claude` tab to focus its terminal.
+2. Type a natural prompt: `Please list all tools available from the workbench MCP server and tell me the total count.` Press Enter.
+3. Wait for the Claude CLI to produce a response, which should include a tool list and count derived from the catalog.
+
+**Verify:**
+- ≤5s after step 2: the Claude pane renders a response listing workbench MCP tools by name (at minimum: `session_new`, `session_list`, `task_add`, `file_find` — substantive named tools, not an empty/error response). → `12.1/assertion-01-tool-list-rendered.png`
+- ≤5s after step 2: the response includes an explicit count number (e.g., "23 tools" or similar) corresponding to the catalog size at the current image. → `12.1/assertion-02-count-stated.png`
+- ≤5s after step 2: the response does NOT include the literal text `mcp-server.js` and `mcp-tools.js` count discrepancy (the catalog single-source-of-truth fix means the counts cannot drift). → `12.1/assertion-03-no-drift-mention.png`
+
+**Teardown:**
+- N/A — smoke-chat-claude state preserved.
+
+---
+
+### 12.2: MCP-PROJECT-ENABLE-PARITY-01 — Project MCP enable propagates to Gemini + Codex sessions
+
+**Cascade-from:** SMOKE-PROJ-01
+**Closes gap for:** #445
+
+**Setup:**
+1. SMOKE-PROJ-01 complete (`smoke-proj-<timestamp>` exists as project P).
+2. Click `smoke-proj-<timestamp>` in the sidebar. Open its Project Settings (right-click → Settings, or the per-project ✎ pencil affordance).
+3. Locate the per-project MCP-servers section. Click `+ Add MCP Server`. Set Name: `test-mcp` and Command: `echo test-mcp-running` (a no-op MCP that any registered CLI can see). Click Save.
+4. Start two new sessions in P: a Gemini session named `parity-gemini` and a Codex session named `parity-codex` via the standard `+` → CLI dropdown flow.
+5. Wait for both terminals to render their ready observables.
+
+**Steps:**
+1. Click the `parity-gemini` tab to focus its terminal.
+2. Type `/mcp` and press Enter (Gemini's slash command to list MCP servers).
+3. Wait for the response to render.
+4. Click the `parity-codex` tab.
+5. Type the Codex equivalent (`/mcp` or whatever the Codex MCP-list slash is at the current pinned version).
+6. Press Enter. Wait for the response.
+
+**Verify:**
+- ≤10s after step 3: the Gemini terminal pane visibly shows `test-mcp` (or whatever name was set in Setup step 3) in its MCP-servers list output. → `12.2/assertion-01-gemini-sees-mcp.png`
+- ≤10s after step 6: the Codex terminal pane visibly shows `test-mcp` in its MCP-servers list output. → `12.2/assertion-02-codex-sees-mcp.png`
+
+**Teardown:**
+- Right-click `parity-gemini` row → Remove session. Right-click `parity-codex` row → Remove session. Open Project Settings for `smoke-proj-<timestamp>` again; remove the `test-mcp` server. State returns to SMOKE-PROJ-01 baseline.
+
+---
+
+### 12.3: MCP-SESSION-LIST-VISIBILITY-01 — `session_list` returns Claude + Gemini + Codex sessions
+
+**Cascade-from:** SMOKE-CHAT-01
+**Closes gap for:** #437
+
+**Setup:**
+1. SMOKE-CHAT-01 complete (smoke-chat-claude / smoke-chat-gemini / smoke-chat-codex all exist under `wb-seed`).
+
+**Steps:**
+1. Click the `smoke-chat-claude` tab to focus.
+2. Type a natural prompt: `Please call the workbench MCP tool session_list with project=wb-seed and show me the cli_type of every session it returns.` Press Enter.
+3. Wait for Claude to invoke the MCP tool and render the result.
+
+**Verify:**
+- ≤5s after step 2: the Claude pane shows a tool-call block for `mcp__workbench__session_list` with `project: "wb-seed"` argument visible. → `12.3/assertion-01-tool-call.png`
+- ≤5s after step 2: the rendered tool result lists at least three sessions and the rendered cli_type values include `claude`, `gemini`, AND `codex` — each appearing at least once (proving non-Claude sessions are no longer omitted). → `12.3/assertion-02-all-three-cli-types.png`
+- ≤5s after step 2: the Claude response paraphrases the result accurately (e.g., "I found 3 sessions: smoke-chat-claude (claude), smoke-chat-gemini (gemini), smoke-chat-codex (codex)"). → `12.3/assertion-03-claude-paraphrase.png`
+
+**Teardown:**
+- N/A — smoke-chat-* state preserved.
+
+---
+
+## Section 13: Modals + Dialogs Sweep
+
+Verify the workbench modal pattern replaces every native browser dialog (#340) and that `escapeHtml` consolidation round-trips dangerous strings safely (#341).
+
+---
+
+### 13.1: MODAL-NATIVE-DIALOG-SWEEP-01 — Every CRUD that previously used native dialog now renders workbench modal
+
+**Cascade-from:** 4.5 (sessions exist) + 5.1 (programs exist) + 7.1 (tasks exist)
+**Closes gap for:** #340
+
+**Setup:**
+1. 4.5 complete (sessions available — uses `tmux-async-01` or one of the smoke-chat-* rows under `wb-seed`); 5.1 complete (`rename-prog-A` and `rename-prog-B` programs available); 7.1 complete (the `bound-task` task created in 7.2's setup, or a freshly-added task in this entry's setup).
+2. Orchestrator may optionally instrument a Playwright tripwire on `window.prompt` / `window.alert` / `window.confirm` invocations to surface a hard failure diagnostic during the run — the tripwire is a Setup-only diagnostic, not a verify mechanism. The verify is the screenshot of the rendered overlay vs. an OS-chrome native dialog (which is visually distinct).
+3. Open the file `/data/workspace/wb-seed/README.md` in the editor by clicking it in the right-panel Files tree (or create such a file as part of orchestrator setup if it does not exist). The file opens as an editor tab in the main panel. This is the file Step 1 will Save-As.
+4. Create a sacrificial program `sweep-target-prog` and a sacrificial session `sweep-target-sess` (under `wb-seed`) for Steps 2 / 3 / 6 to delete / rename without disturbing upstream state. Create a sacrificial task `sweep-target-task` for Step 5.
+
+**Steps:**
+1. **Save As.** With the README editor tab focused, click the explicit `Save As` affordance in the editor toolbar. The workbench input-modal-styled prompt for filename appears.
+2. Click `Cancel` on the Save As modal. **Delete project.** Right-click the `sweep-target-prog` row in the sidebar → click `Remove` in the context menu. The workbench confirm-modal appears.
+3. Click `Cancel` on the confirm modal. **Delete session.** Right-click the `sweep-target-sess` row → click `Remove`. The workbench confirm-modal appears.
+4. Click `Cancel`. **Save settings.** Click `⚙ Settings` → General tab → change the font-size value from 14 to 15 by typing in the input. Click the explicit `Save` affordance (or the workbench's per-product save behavior — if save is implicit-on-change, this site verifies "no native dialog fires when value changes" instead; per the entry's pass condition, the workbench input-modal-or-toast renders OR the change persists silently with no native dialog).
+5. Click `Cancel` / dismiss settings. **Save tasks.** Right-click `sweep-target-task` → `Edit`. The task-detail modal opens. Type a new title. Click the `Save` button. The workbench confirm/save-feedback appears (toast or modal — both are workbench-styled, neither is a native dialog).
+6. Dismiss any save feedback. **Rename.** Click the `sweep-target-prog` row's ✎ pencil affordance → `Rename`. The workbench rename input appears as either an in-page modal-styled overlay OR an inline-edit field — both are workbench patterns and visually distinct from native dialogs. Type `sweep-target-prog-renamed` and press Escape (cancel the rename without committing).
+
+**Verify:**
+- ≤500ms after step 1's Save As click: the workbench-styled modal overlay is visibly rendered for the Save-As prompt (rounded-corner modal panel against dimmed page background, matching the SMOKE-PROJ-01 / SMOKE-SETTINGS-01 modal pattern). The captured frame shows zero OS-chrome native dialog (a browser-native `prompt` would carry OS chrome — title bar, browser-specific button styling — that is visually distinct from the in-page panel). → `13.1/assertion-01-save-as.png`
+- ≤500ms after step 2's Remove click on the project: the workbench-styled confirm-modal overlay is visibly rendered. No OS-chrome native `confirm` dialog is visible. → `13.1/assertion-02-delete-project.png`
+- ≤500ms after step 3's Remove click on the session: the workbench-styled confirm-modal overlay is visibly rendered. No OS-chrome native dialog is visible. → `13.1/assertion-03-delete-session.png`
+- ≤500ms after step 4's Save click on settings: either the workbench-styled save feedback is visibly rendered (toast OR modal styled per the rest of the runbook), OR the settings value persists silently with the Settings modal still open and no native dialog. In neither case does an OS-chrome native dialog appear. → `13.1/assertion-04-save-settings.png`
+- ≤500ms after step 5's Save click on task-detail: the workbench-styled save feedback is visibly rendered (toast or modal); no OS-chrome native dialog. → `13.1/assertion-05-save-tasks.png`
+- ≤500ms after step 6's Rename activation: the workbench-styled rename UI is visibly rendered (modal overlay OR inline-edit input — both have workbench styling distinct from OS chrome). No OS-chrome native dialog appears. → `13.1/assertion-06-rename.png`
+- ≤500ms after each of steps 1-6 (composite, six frames): the captured frame for that step contains NO OS-chrome native dialog (no browser title bar styled differently from the page, no OS-specific button widget, no dialog positioned outside the page viewport). → `13.1/assertion-07-no-os-chrome-dialogs.png` (composite)
+
+**Teardown:**
+- Dismiss any open workbench modals. Right-click `sweep-target-sess` → confirm Remove (commit the delete). Right-click `sweep-target-prog` → confirm Remove. Delete `sweep-target-task` via task-detail → Delete (commit). Discard the README editor tab without saving. State returns to upstream-cascade baselines.
+
+---
+
+### 13.2: MODAL-ESCAPEHTML-XSS-01 — Session named with HTML entities renders as escaped text
+
+**Cascade-from:** 4.2
+**Closes gap for:** #341
+
+**Setup:**
+1. 4.2 complete (session-create flow exercised).
+2. Orchestrator may optionally instrument an `alert()` tripwire on the page as a hard-failure diagnostic during the run — Setup-only, not a verify mechanism. The verify is the screenshot: a browser-native `alert` dialog carries OS chrome (title bar, OK button widget) that is visually distinct from any in-page rendering and is screenshot-affirmable.
+
+**Steps:**
+1. Click `+` on `wb-seed` → `Claude`. The session-create overlay opens.
+2. In the session-name field, type exactly: `<bad>&"'name` (six visible characters / escapes).
+3. Click `Start Session`. Wait for the session row to appear in the sidebar.
+
+**Verify:**
+- ≤2s after step 3: a new session row is visible in the sidebar under `wb-seed`. The row's visible display text shows the literal characters `<bad>&"'name` rendered as glyphs (the `<` is a left-angle-bracket glyph, the `>` is a right-angle-bracket glyph, the `&` is an ampersand glyph, the `"` is a double-quote glyph, the `'` is a single-quote glyph). → `13.2/assertion-01-row-shows-literal.png`
+- ≤2s after step 3: the sidebar's overall layout is intact — no DOM mangling that would have produced a hidden `<bad>` element, a missing `name` suffix, or a broken layout in the sidebar. → `13.2/assertion-02-layout-intact.png`
+- ≤2s after step 3: no browser-native `alert` dialog (OS-chrome window with OK button) is visible anywhere on screen. Script execution from the payload would render as such a dialog; its absence is the screenshot-affirmable proof that the escape worked. → `13.2/assertion-03-no-os-chrome-alert.png`
+
+**Teardown:**
+- Right-click the malicious-named row → Remove session. Sidebar returns to 4.2 baseline.
+
+---
+
+## Section 14: Error / Banner UI
+
+Verify the `showErrorBanner insertBefore` regression does not recur during the 60s polling cycle (#402).
+
+---
+
+### 14.1: ERROR-BANNER-NOTFOUND-01 — No `NotFoundError` in console during 2-minute polling cycle
+
+**Cascade-from:** 2.1
+**Closes gap for:** #402
+
+**Setup:**
+1. 2.1 complete (workbench shell rendered).
+2. Take a baseline screenshot of the sidebar showing all currently-visible project + session rows. This is the reference for verifying the polling cycle did not corrupt the sidebar render.
+3. Clear the DevTools console buffer at start of Steps.
+
+**Steps:**
+1. At wall-clock time `t0`, take a screenshot of the workbench shell — the sidebar shows its current row inventory, the tab bar shows current tabs, the right panel renders.
+2. Leave the workbench shell idle (no user interaction) for 120 seconds. The loadState polling cycle (every ~60s) fires at least twice during this window. The polling re-renders the sidebar and tab bar from server state.
+3. At `t0+60s`, take a screenshot of the sidebar.
+4. At `t0+120s`, take a screenshot of the sidebar.
+5. At `t0+120s`, click any project row in the sidebar (the reference row from Setup step 2 is a good choice).
+6. At `t0+120s`, capture a Playwright `browser_console_messages` snapshot — the buffer captures the entire 120s window.
+
+**Verify:**
+- ≤60s after step 1 (screenshot from step 3): the sidebar render is intact — all baseline rows from Setup step 2 are still visible at the same positions; no error banner, no "Lost connection" indicator, no missing rows. → `14.1/assertion-01-sidebar-intact-at-60s.png`
+- ≤120s after step 1 (screenshot from step 4): the sidebar render is still intact — same row inventory as baseline, no error banner has appeared. → `14.1/assertion-02-sidebar-intact-at-120s.png`
+- ≤1s after step 5: the clicked project row visibly responds (highlight, selection, or per-product active styling) — the shell is responsive after 120s of polling. → `14.1/assertion-03-shell-responsive.png`
+- ≤120s after step 1 (console snapshot from step 6): supplementary diagnostic — the captured `browser_console_messages` log contains zero entries with the substring `NotFoundError`. (The primary screen-affirmable proof is the intact sidebar + responsive shell across assertions 01-03; a `NotFoundError` thrown during polling would have prevented re-rendering and shown as missing rows or a broken sidebar.) → `14.1/assertion-04-no-notfounderror.png`
+
+**Teardown:**
+- N/A — shell state preserved.
+
+---
+
+## Section 15: CLI Parity (Gemini / Codex slash + compaction)
+
+Verify CLI-parity slash commands auto-install on fresh container (#451) and that `session_prepare_pre_compact` / `session_resume_post_compact` render CLI-appropriate prompts for non-Claude sessions (#446).
+
+---
+
+### 15.1: CLI-PARITY-SLASH-AUTOINSTALL-01 — `/session:transition` autocompletes in fresh Gemini + Codex sessions
+
+**Cascade-from:** cold
+**Closes gap for:** #451
+
+**Setup:**
+1. Orchestrator spins a fresh container from the current image with NO manual slash-command placement: `docker run -d --name workbench-parity -v <ephemeral>:/data -p <port>:7860 <image>`. Confirm `/data/.gemini/commands/session/` and `/data/.codex/skills/session-transition/` (or the current canonical Codex skill path) do NOT exist before workbench starts — proves auto-install is the only source.
+2. Bind `${WORKBENCH_URL}` to this container. Pass the gate if applicable. Workbench shell renders.
+3. Provision Gemini and Codex credentials (via 0.B-style injection — out of scope for this entry's verify; orchestrator setup only).
+4. Start a Gemini session in `wb-seed` named `parity-slash-gemini` and a Codex session named `parity-slash-codex`. Wait for both ready observables.
+
+**Steps:**
+1. Click the `parity-slash-gemini` tab to focus. Click into the terminal pane.
+2. Type the partial slash `/sessio` (do NOT press Enter; observe the autocomplete dropdown).
+3. Capture the autocomplete dropdown content visible in the terminal pane.
+4. Press Escape to dismiss the autocomplete. Click `parity-slash-codex` tab.
+5. Type `/sessio` in the Codex pane. Capture the autocomplete dropdown content.
+
+**Verify:**
+- ≤2s after step 2: the Gemini terminal's autocomplete dropdown visibly lists `/session:transition` AND `/session:resume` as suggestions. → `15.1/assertion-01-gemini-autocomplete.png`
+- ≤2s after step 5: the Codex terminal's autocomplete dropdown visibly lists `/session:transition` (and `/session:resume` if implemented) — the SAME slash form as Gemini, NOT the legacy `/prompts:session-transition`. → `15.1/assertion-02-codex-autocomplete.png`
+
+**Teardown:**
+- Leave the `workbench-parity` container running for 15.2 (which cascades from this entry). State preserved.
+
+---
+
+### 15.2: CLI-PARITY-COMPACT-PROMPT-01 — `/session:transition` renders CLI-appropriate prompt
+
+**Cascade-from:** 15.1
+**Closes gap for:** #446
+
+**Setup:**
+1. 15.1 complete (`workbench-parity` container running; `parity-slash-gemini` + `parity-slash-codex` sessions exist with auto-installed slash commands).
+
+**Steps:**
+1. Click the `parity-slash-gemini` tab.
+2. Type `/session:transition` and press Enter.
+3. Wait for the prompt to render in the Gemini terminal pane.
+4. Click the `parity-slash-codex` tab.
+5. Type `/session:transition` and press Enter.
+6. Wait for the prompt to render in the Codex terminal pane.
+
+**Verify:**
+- ≤5s after step 2: the Gemini pane renders a transition prompt containing the literal text `/compress` (Gemini's compaction slash) AND does NOT contain the literal text `/compact` (which is Claude-only) AND does NOT contain a Claude `~/.claude/plans/` path reference. → `15.2/assertion-01-gemini-compress-prompt.png`
+- ≤5s after step 5: the Codex pane renders a transition prompt that does NOT contain the literal text `/compact`, does NOT contain `/compress`, and does NOT reference `~/.claude/plans/` (Codex has no in-session compaction). The Codex prompt instead reflects Codex's session-transition flow without a compaction instruction. → `15.2/assertion-02-codex-no-compact-ref.png`
+
+**Teardown:**
+- Orchestrator stops + removes `workbench-parity`. State returns to pre-Section 15 baseline.
 
 ---
 
 **Authored:** step 3a.1 of milestone #7 (UI runbook refactor), 2026-05-14.
 **Source proposal:** `/mnt/storage/dev_artifacts/workbench/r1/plan/baseline-ui-smoke-proposal.md`.
 **Round-1 findings folded:** #495–#514 against review-request #498. Specific defects addressed in this rewrite: `term.buffer.active` removed (§12.7); "Tester recognizes" wording replaced with concrete per-CLI ready observables (#504); chat content assertion strengthened to require coherent reply containing "56" per agent screenshot judgment (#501); numbered assertions cite-able by cell-6 grids; timing bounds applied per §12.8–§12.9; per-run subdir path aligned with PROC-004 `runbook-runs/` convention (#500).
+
+**Sections 0.C–E + 2–15 authored:** step 4 of milestone #7 (UI runbook refactor), 2026-05-14. 38 entries built from the 3-CLI-approved outline at `/mnt/storage/dev_artifacts/workbench/r1/runbook-build/outline.md`.
+
+---
+
+## Round 1 fix dispositions (step 4b)
+
+Three reviewers audited Sections 0.C–E + 2–15. Codex's strictest §12.7 reading (browser_console_messages and detector instrumentation count as host-side telemetry rather than monitor observables) is treated as authoritative on severity per the severity-max rule. The dispositions below address every finding from all three reviewers.
+
+| ID | Sev | Where | Disposition | Justification |
+|---|---|---|---|---|
+| Codex F1 | **blocker** | 11.4 both verify clauses are console-only | **fix** | Steps 2–5 rewritten to type a single character into each password input and observe the masked-glyph render — this is the user-observable, screen-affirmable proof that the field IS a password input and the surrounding form-wrapping did not break its type. New assertions 01–02 are the primary screen affirmations; the original console-warning checks remain as supplementary diagnostics (assertions 03–04). |
+| Codex F2 | major | 0.E / 2.1 / 2.2 / 2.4 / 8.1 / 13.1 / 13.2 / 14.1 mix console & detector instrumentation | **fix** | Each entry's primary verify clause now affirms a visible UI outcome; the console/detector lines are demoted to supplementary diagnostics flagged inline as such. Specifics: 0.E assertion order swapped (checkbox-visual + persistence are primary; console is supplementary); 2.1 console flagged supplementary (sidebar/tab-bar/right-panel paints are primary); 2.2 PNG-404 flagged supplementary (logo + gate-bg visibly rendered is primary); 2.4 console flagged supplementary (modal-opened + General-tab-active are primary); 8.1 picker-rendered promoted to primary (jQuery removal would have broken it), console demoted; 13.1 JS interceptor replaced with OS-chrome screenshot affirmation (see Claude F1 below); 13.2 xssAlertFired binding replaced with OS-chrome alert-dialog screenshot affirmation; 14.1 sidebar-render-intact at 60s + 120s promoted to primary (a polling NotFoundError would have prevented re-render), console demoted to supplementary. |
+| Codex F3 | major | 3.1 / 4.5 / 6.1 / 13.1 / 14.1 use During/Across wording | **fix** | All five rewritten to strict `≤Ns after step <K>:` form. 3.1 "During the 4s window" → `≤4s after step 2 (frames sampled every 500ms)`; 4.5 "During step 4 (each hover frame)" → `≤200ms after each of the three hovers in step 4`; 6.1 "Across the 10 captured frames" → `≤500ms after each of the 10 clicks`; 13.1 "During the same 500ms window" + "Across the screenshots" → `≤500ms after each click in steps 1-6`; 14.1 "Across the 2-minute observation window" → `≤120s after step 1`. |
+| Claude F1 | minor | 13.1 assertion-07 + 13.2 assertion-03 use JS interceptor | **fix** (overlaps with Codex F2) | 13.1 assertion-07 rewritten as composite OS-chrome screenshot check — a browser-native `confirm`/`alert`/`prompt` carries OS chrome (title bar, OS-specific button widget, dialog positioned outside the page viewport) visually distinct from the in-page workbench modal pattern. 13.2 assertion-03 rewritten to drop the `xssAlertFired` binding clause and keep only the OS-chrome screenshot affirmation. JS interceptors retained in Setup as optional orchestration tripwires, not as verify mechanisms. |
+| Claude F2 | minor | 14.1 missing step anchor on Across-window phrasing | **fix** (overlaps with Codex F3) | 14.1 rewritten as four assertions with explicit `≤Ns after step K:` anchors — sidebar intact at 60s (assertion 01), sidebar intact at 120s (assertion 02), shell responsive at click (assertion 03), supplementary console snapshot at 120s (assertion 04). |
+| Claude F3 | moderate | 6.1 ≤50ms bound below screenshot polling's noise floor | **fix** | Split the original single assertion into (a) sub-second duration measurement via `performance.now()` bracketing per §12.8 — observable IS duration, not rendered content — verifying click-to-paint ≤50ms per click (assertion 01); plus (b) content affirmation at ≤500ms via screenshot polling for the prompt-glyph swap (assertion 02); plus (c) layout-shift check at ≤500ms via pixel-diff against the Setup anchor (assertion 03 — also tightened from the previous Across-frames phrasing). The original conflated assertion is now three deterministic ones. |
+| Claude F4 | minor | 5.2 cascade-from documentation clarity | **fix** (option b — keep SMOKE-CHAT-01 cascade-from + add precondition check) | Setup step 1 now reads: "SMOKE-CHAT-01 complete. Precondition check (not under test in this entry): confirm the three smoke-chat-* rows are visible in the sidebar under wb-seed — this entry inherits SMOKE-CHAT-01's 'three-CLI session-create primitive works' guarantee, then exercises that primitive on a sacrificial sister project (the smoke-chat-* state itself is NOT mutated; the cascade-from is documenting the upstream primitive, not the upstream rows)." This makes the §12.10 inheritance reasoning explicit at execution time. |
+| Claude F5 | minor | 13.1 Steps 1, 4, 6 ambiguity | **fix** | Step 1 (Save As) now names a specific file (`/data/workspace/wb-seed/README.md`) and a specific Save-As affordance in the editor toolbar. Step 4 (Save settings) replaces "may appear (per product)" with definite expectation language and a unified pass condition that covers either save-feedback rendering OR silent persistence (both consistent with "no native dialog"). Step 6 (Rename) explicitly names both possible workbench patterns (modal OR inline-edit) as acceptable, both screenshot-distinct from native dialogs. Setup steps 3–4 added to create the sacrificial program / session / task / file required by the new Step wording so the entry is self-contained. |
+| Gemini | — | (no findings, APPROVE 0/0/0/0) | n/a | Gemini's audit independently confirmed §12.7/§12.8/§12.10 PASS with no findings. No action required. |
+
+### Net effect
+
+- **Blocker resolved:** 1 (11.4 — primary verify is now the masked-glyph render of password inputs after typed input).
+- **§12.7 compliance hardened:** 8 entries (0.E / 2.1 / 2.2 / 2.4 / 8.1 / 13.1 / 13.2 / 14.1) reworked so every primary verify clause is a screen-affirmable observable; console / interceptor mechanisms either moved to Setup as tripwires or demoted to supplementary verify lines explicitly flagged as such.
+- **§12.8 form compliance:** 5 entries (3.1 / 4.5 / 6.1 / 13.1 / 14.1) rewritten to use only the strict `≤Ns after step <K>:` form; zero remaining `During...` / `Across...` phrasings.
+- **§12.8 instrument-fit:** 6.1's ≤50ms bound now uses `performance.now()` per §12.8's sub-second-duration exception; content affirmation moved to ≤500ms screenshot polling.
+- **§12.10 inheritance clarity:** 5.2 cascade-from inheritance from SMOKE-CHAT-01 now documented as a precondition check in Setup.
+- **Quality:** 13.1 Steps now name specific affordances and unambiguous expected modal patterns per site.
+
+Coverage after fixes: 40/40 UI-gap issues, 38 entries (3 Section 0 + 35 Sections 2–15). No entries added or removed.
+
+---
+
+## Phase A corrections (post-step-5 tester run)
+
+Tester run `run-20260514T081936Z` (irina dev, Claude Code v2.1.123) surfaced runbook drift in SMOKE-CHAT-01's Claude ready-observable spec: the runbook described "boxed input area at pane bottom" but Claude Code v2.1.x renders the input area inline-at-top. Two other dispositions from the same run are tracked outside the runbook (a GitHub issue for the SMOKE-PROJ-01 product bug + a comment on issue #404 for a `#jqft-tree` side-finding).
+
+### Runbook entries touched in Phase A
+
+| Entry | Change |
+|---|---|
+| SMOKE-CHAT-01 step 5 (claude bullet) | Replaced "boxed input area at the bottom of the pane with cursor blinking, prompt-line glyph" with a version-stable observable: "an editable region distinct from any response output area; typing a single test `x` character into the focused pane renders the glyph inline." Position (top/bottom/inline) is intentionally NOT asserted — Claude Code's input-area placement has changed across versions. Gemini and Codex ready-observable bullets unchanged (their renderings were not flagged stale). |
+| SMOKE-CHAT-01 step 9 | Per-CLI ready-reappearance check split: claude affirms "input area accepts a typed character inline" (no position); gemini/codex retain "reappears at the bottom of the pane". |
+| SMOKE-CHAT-01 assertion 02 | Replaced "boxed input box at pane bottom" with the version-stable form. |
+| SMOKE-CHAT-01 assertion 04 | Same — "reappears at the pane bottom" replaced with the version-stable form. |
+| 0.C OAUTH-MODAL-CLAUDE-01 Setup step 6 | "Claude input box to render at the bottom" → "Claude input area to render in the terminal pane" with the same version-stable observable + cross-reference to SMOKE-CHAT-01 step 5. |
+| 4.1 SESS-PATH-ENCODING-01 assertion 02 + 04 | Same Claude-input-area rewording. |
+| 4.2 SESS-RAPID-CREATE-01 assertion 02 | Same rewording for the "five sessions ready" check. |
+| 4.5 SESS-TMUX-ASYNC-01 assertion 03 | Same rewording for the new-session ready check. |
+
+### Not touched in Phase A (explicit decisions)
+
+- **2.4 Git tab + 11.4 Git Accounts modal:** PM verified `public/index.html:104` registers `<button data-settings-tab="git">Git</button>` and `routes.js:10` registers the `git-accounts` route; the Git tab IS a current feature. Irina was running a stale build at run time. Phase B fresh-deploy re-run will pick this up. No runbook change needed.
+- **All other Sections 0+1 entries and Sections 2–15 entries:** untouched — every other FAIL in the run was an environment limitation (no MCP into target, fresh-container unavailable, ungated deployment, cascade-precondition unmet, context-budget skipped), not runbook drift.
+
+### External follow-ups (filed outside the runbook)
+
+1. **GitHub issue filed** — sidebar auto-refresh does not recover from `loadState` `Failed to fetch` after Add Project: manual `↻` works, but the bounded ≤5s auto-refresh that SMOKE-PROJ-01 assertion-03 verifies is currently silently broken. Evidence: `SMOKE-PROJ-01/assertion-01..04*.png` in the run-20260514T081936Z subdir.
+2. **Comment on issue #404** — `#jqft-tree` element id is still emitted by the dir-picker despite #404's closure title naming the rename. Tester noted this as a side-finding during entry 2.3 (which PASSed on visible rendering but emits the legacy id). Decision recorded in the issue thread.

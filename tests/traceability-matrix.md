@@ -448,7 +448,7 @@ watch, and that `server.js` no longer contains the inline clone block.
 
 **Why `_cloneIfMissing` is not exercised by live tests:**
 
-The sandbox test container (`workbench-test-workbench-1`) has no outbound network
+The workbench-test container (`workbench-test-workbench-1`) has no outbound network
 access to `github.com`. When the container starts, kb-watcher `start()` calls
 `_cloneIfMissing()`, which attempts `git clone https://github.com/rmdevpro/workbench-kb`
 and fails with `"fatal: unable to access … Could not resolve host: github.com"`.
@@ -467,7 +467,7 @@ the SQLite DB — `/api/logs?module=kb-watcher` returns 0 rows. Inside the conta
 
 Live behavioral verification of the clone path requires either a network-capable
 test environment (real `github.com` access) or a local git server fixture. Neither
-is available in the current sandbox. File under "infrastructure gap" — not a product
+is available in the current test environment. File under "infrastructure gap" — not a product
 gap.
 
 ---

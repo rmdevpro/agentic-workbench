@@ -54,7 +54,7 @@ The frontend monolith decomposition (F0, #364) extracted the inline `<script>` i
 | P2-460-01    | #460            | Sidebar renders relative timestamps via `timeAgo`, not raw ISO strings                 |
 | P2-461-01    | #461            | REMOVED — `file_find` is MCP-only; ERE fix is covered by `#461-LIVE-01/02/03`         |
 
-All entries are headless-browser tests (Playwright) running against the isolated `workbench-test` sandbox stack (`logo_variant=development`), not the production instance. Setup steps may use `docker exec` to plant DB state per the runbook; verify steps always observe the rendered DOM via Playwright.
+All entries are headless-browser tests (Playwright) running against the isolated `workbench-test` stack (`logo_variant=development`), not the production instance. Setup steps may use `docker exec` to plant DB state per the runbook; verify steps always observe the rendered DOM via Playwright.
 
 ---
 

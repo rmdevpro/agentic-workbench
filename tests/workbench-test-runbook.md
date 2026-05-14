@@ -6004,7 +6004,7 @@ Pre-fix the option label/value, indicator class, and any legacy DB rows would st
 ---
 ## Phase 2 Milestone — UI Runbook Entries
 
-**`WORKBENCH_URL`** — executor binds this at run time to the Phase 2 sandbox container. Requirements: isolated workbench-test stack (not the production instance — confirm `logo_variant = development` before proceeding), container serving the `milestone/phase-2` branch. All entries below use `${WORKBENCH_URL}` as a placeholder.
+**`WORKBENCH_URL`** — executor binds this at run time to the Phase 2 test container. Requirements: isolated workbench-test stack (not the production instance — confirm `logo_variant = development` before proceeding), container serving the `milestone/phase-2` branch. All entries below use `${WORKBENCH_URL}` as a placeholder.
 
 Branch: `milestone/phase-2` @ `d1cc89f`.
 

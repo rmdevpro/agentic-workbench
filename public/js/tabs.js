@@ -163,13 +163,18 @@ export function _makeTabEl(id, tab, isActive) {
     return `<span style="font-size:13px;color:${c};line-height:1">${icons[cli] || '?'}</span>`;
   })();
   const saveBtn = tab.type === 'file'
-    ? `<button class="tab-save" title="Save (Ctrl+S)" style="background:none;border:none;color:${tab.dirty ? 'var(--accent)' : 'var(--text-muted)'};cursor:pointer;font-size:12px;padding:2px 4px;border-radius:3px;margin-right:2px${tab.dirty ? ';font-weight:bold' : ''}">&#128190;</button>`
+    ? `<button class="tab-save" draggable="false" title="Save (Ctrl+S)" style="background:none;border:none;color:${tab.dirty ? 'var(--accent)' : 'var(--text-muted)'};cursor:pointer;font-size:12px;padding:2px 4px;border-radius:3px;margin-right:2px${tab.dirty ? ';font-weight:bold' : ''}">&#128190;</button>`
     : '';
+  // #522: draggable="false" on inner buttons keeps the tab itself as the
+  // unambiguous drag handle. Without it, some browsers' mousedown-on-button
+  // path can swallow the drag-start gesture when the user grabs the tab
+  // near a button — particularly visible on file tabs which carry an extra
+  // save button between the name and the close button.
   el.innerHTML = `
     ${icon}
     <span class="tab-name">${window.escapeHtml(tab.name)}</span>
     ${saveBtn}
-    <button class="tab-close" title="Close tab">&#10005;</button>
+    <button class="tab-close" draggable="false" title="Close tab">&#10005;</button>
   `;
   el.addEventListener('click', (e) => {
     if (e.target.closest('.tab-close') || e.target.closest('.tab-save')) return;
@@ -305,25 +310,34 @@ export function _wireDropZones() {
       if (!id || !tabs.has(id)) return;
       const tab = tabs.get(id);
       const sourcePanel = tab.panel || 'primary';
+      // #522: route array surgery through the pure helper in util.js so the
+      // behavior is testable in isolation and the drop-on-empty-bar case
+      // (no target tab — drop past the last tab) is handled uniformly across
+      // all tab types instead of being a silent no-op as it was previously.
+      const reorder = (typeof window !== 'undefined' && window.computeReorderedTabOrder)
+        || ((cur, dragged, target, before) => {
+          // Defensive inline fallback if util.js hasn't loaded.
+          const without = (cur || []).filter(x => x !== dragged);
+          if (!target || target === dragged) return [...without, dragged];
+          const ti = without.indexOf(target);
+          if (ti === -1) return [...without, dragged];
+          const r = [...without];
+          r.splice(before ? ti : ti + 1, 0, dragged);
+          return r;
+        });
       if (sourcePanel !== panel) {
         moveTabToPanel(id, panel);
         if (targetTabId && targetTabId !== id) {
-          tabOrders[panel] = tabOrders[panel].filter(x => x !== id);
-          const ti = tabOrders[panel].indexOf(targetTabId);
-          if (ti !== -1) {
-            tabOrders[panel].splice(dropBefore ? ti : ti + 1, 0, id);
-            _persistTabOrders();
-            renderTabs();
-          }
+          tabOrders[panel] = reorder(tabOrders[panel], id, targetTabId, dropBefore);
+          _persistTabOrders();
+          renderTabs();
         }
-      } else if (targetTabId && targetTabId !== id) {
-        tabOrders[panel] = tabOrders[panel].filter(x => x !== id);
-        const ti = tabOrders[panel].indexOf(targetTabId);
-        if (ti !== -1) {
-          tabOrders[panel].splice(dropBefore ? ti : ti + 1, 0, id);
-        } else {
-          tabOrders[panel].push(id);
-        }
+      } else {
+        // Same-panel reorder. Even when targetTabId is null (drop on bar
+        // background), append to end rather than silently dropping the
+        // gesture on the floor.
+        if (targetTabId === id) return;
+        tabOrders[panel] = reorder(tabOrders[panel], id, targetTabId, dropBefore);
         _persistTabOrders();
         renderTabs();
       }

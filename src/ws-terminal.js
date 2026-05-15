@@ -1,5 +1,40 @@
 'use strict';
 
+// WebSocket terminal: bridges a browser xterm.js tab to a tmux-attached PTY.
+//
+// Connection lifecycle (each WS open follows this ordering — load-bearing for
+// correctness; see #483 + #589):
+//
+//   1. WS upgrade. `src/server.js` `handleUpgrade` validates auth + parses the
+//      URL `?cols=X&rows=Y` query into `initialDims` (or `null` if absent /
+//      invalid), then hands off here via `handleTerminalConnection(ws,
+//      tmuxSession, initialDims)`.
+//   2. `tmuxExists` check. If the session's tmux pane is gone (idle cleanup,
+//      container restart, etc.) and the session id resolves to a workbench
+//      row, auto-respawn via `tmuxCreateCLI` (deduped through
+//      `_respawnsInFlight`). Otherwise send `{type:'error'}` + close.
+//   3. `tmux resize-window` to `initialDims`. tmux reflows pane content to
+//      the new cols × rows BEFORE capture so the captured visual layout
+//      matches what xterm will render it at. Skip when `initialDims` is null
+//      (older clients) — fallback to the historical 120x40 default. Failure
+//      is non-fatal (logged); the subsequent PTY attach resizes tmux on its
+//      own.
+//   4. `tmuxCaptureScrollback` → `ws.send`. The captured pane bytes flow to
+//      the client first so they land in xterm's scrollback above the live
+//      viewport; the PTY's `attach-session` redraws the visible pane on top.
+//   5. `ptySpawn('tmux','attach-session',...)` at `targetCols × targetRows`
+//      (either `initialDims` or 120x40 default). Live PTY ↔ WS forwarding
+//      begins. `_registerPty` stores the handle for graceful shutdown reap.
+//   6. PTY ↔ WS bidirectional forwarding + heartbeat. `ptyProcess.onData → ws.send`
+//      with backpressure pause/resume around `ws.bufferedAmount`. `ws.on('message')`
+//      consumes JSON control frames (`resize`, `ping`) and forwards everything
+//      else to `ptyProcess.write`. Heartbeat ping every `pingIntervalMs`;
+//      terminate on missed pong.
+//
+// Steps 1-3 must precede steps 4-6 — if capture (step 4) runs before resize
+// (step 3), captured bytes encode layout for the wrong width and the user
+// sees the "progressive right-indent + reshuffle" artifact #483 fixed.
+
 const ptyDefault = require('node-pty');
 
 module.exports = function createWsTerminal({

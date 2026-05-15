@@ -414,6 +414,74 @@ test('MCP session_resume_post_compact 404s on missing session (#446 no-silent-fa
   });
 });
 
+// #252: session_resume_post_compact writes the requested tail to
+// `/tmp/workbench-resume-<sid>.txt` and returns a prompt that references that
+// path — instead of stuffing the full tail inline (which blew past the CLI's
+// tool-result token cap on long sessions, the original #252 symptom). Commit
+// `f5d3bb1` is the file-based fix; this test pins the file-write contract +
+// the prompt-references-path shape directly, so a regression that reverts to
+// inline tail fails here at the mock layer rather than only at live.
+test('MCP session_resume_post_compact writes tail to /tmp file and returns prompt referencing path (#252)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const fsp = require('fs/promises');
+  const { join } = require('path');
+  const safe = require('../../src/safe-exec.js');
+  const sid = 'mock-252-claude-session';
+  const projName = 'mock_252_proj';
+  const projPath = join(process.env.WORKSPACE || '/data/workspace', projName);
+  fs.mkdirSync(projPath, { recursive: true });
+  const proj = db.ensureProject(projName, projPath);
+  const sessDir = safe.findSessionsDir(projPath);
+  fs.mkdirSync(sessDir, { recursive: true });
+  const jsonlPath = join(sessDir, `${sid}.jsonl`);
+  // Seed a JSONL fixture with 5 lines so tail_lines:3 returns the last 3
+  // (the substring check below pins this ordering — line-3, line-4, line-5).
+  const fixtureLines = [
+    JSON.stringify({ type: 'user', message: { content: 'line-1' } }),
+    JSON.stringify({ type: 'assistant', message: { content: 'line-2' } }),
+    JSON.stringify({ type: 'user', message: { content: 'line-3' } }),
+    JSON.stringify({ type: 'assistant', message: { content: 'line-4' } }),
+    JSON.stringify({ type: 'user', message: { content: 'line-5' } }),
+  ];
+  fs.writeFileSync(jsonlPath, fixtureLines.join('\n') + '\n', 'utf-8');
+  db.upsertSession(sid, proj.id, 'resume-tail-test', 'claude');
+  const tmpResumeFile = `/tmp/workbench-resume-${sid}.txt`;
+  try {
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, {
+        tool: 'session_resume_post_compact',
+        args: { session_id: sid, tail_lines: 3 },
+      });
+      assert.equal(r.status, 200, `expected 200; got ${r.status}: ${JSON.stringify(r.body)}`);
+      const prompt = typeof r.body.result === 'string' ? r.body.result : JSON.stringify(r.body.result);
+      assert.ok(
+        prompt.includes(tmpResumeFile),
+        `returned prompt must reference the tail file path ${tmpResumeFile}; got: ${prompt.slice(0, 200)}…`,
+      );
+      // The tail file exists with the last 3 lines of the JSONL fixture.
+      const tail = await fsp.readFile(tmpResumeFile, 'utf-8');
+      assert.ok(tail.includes('line-5'), `tail must include last line; got: ${tail}`);
+      assert.ok(tail.includes('line-4'), `tail must include penultimate line; got: ${tail}`);
+      assert.ok(tail.includes('line-3'), `tail must include third-from-last line; got: ${tail}`);
+      assert.ok(!tail.includes('line-2'), `tail must NOT include lines beyond tail_lines:3; got: ${tail}`);
+      assert.ok(!tail.includes('line-1'), `tail must NOT include lines beyond tail_lines:3; got: ${tail}`);
+      // The fix is "tail goes to file, prompt points at it" — pin the
+      // negative: the response body MUST NOT contain the raw tail content
+      // inline (that was the pre-fix shape causing the unreadable dump).
+      assert.ok(
+        !prompt.includes('line-5'),
+        `pre-fix regression: tail content must NOT be inlined in the prompt; got: ${prompt.slice(0, 400)}…`,
+      );
+    });
+  } finally {
+    try { fs.unlinkSync(tmpResumeFile); } catch { /* ignore */ }
+    try { fs.unlinkSync(jsonlPath); } catch { /* ignore */ }
+    try { db.deleteSession(sid); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+  }
+});
+
 // #450: session_summarize previously threw "path argument must be string" when
 // called without an explicit `project` arg (e.g. from a CLI tab calling
 // session_summarize {session_id: <sid>}). Root cause: db.getProject(undefined)

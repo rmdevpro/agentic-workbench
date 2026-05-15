@@ -57,8 +57,6 @@ These documents define the standards and context this project must be reviewed a
 - `README.md` — architecture, module structure, dependency graph, configuration reference, and compliance notes. **Read on every session.**
 - `tests/workbench-test-plan-backend.md` — backend test plan. Read before writing backend tests or reviewing backend changes.
 - `tests/workbench-test-plan-ui.md` — UI test plan. Read before writing UI tests or reviewing UI changes.
-- `tests/workbench-test-runbook.md` — master UI test runbook. Read before running UI tests.
-- `tests/traceability-matrix.md` — test coverage traceability matrix. Read to understand current coverage status before adding or modifying tests.
 - `/data/workspace/repos/Admin/docs/guides/workbench-deployment.md` — deployment specifics for this repo: safety rules, architecture, `/data` volume, dev/prod indicator, add-on installation. Read before deploying or working on container/infrastructure code.
 
 ## Engineering Standards

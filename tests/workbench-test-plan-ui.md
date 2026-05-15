@@ -36,26 +36,6 @@ This plan was originally written for a single-CLI (Claude) system with notes, me
 - **Filter/sort dropdowns** — replaced filter buttons
 - **45 MCP tools** — flat names grouped by domain: `file_*` (8), `session_*` (19), `project_*` (11), `task_*` (5), `log_*` (1)
 
-### Phase 2 Milestone Coverage (Stage 8 runbook entries)
-
-The frontend monolith decomposition (F0, #364) extracted the inline `<script>` in `public/index.html` (6,113 lines) into `public/js/app.js` plus 11 ESM sub-modules (`state.js`, `sidebar.js`, `tabs.js`, `terminal.js`, `file-tree.js`, `files.js`, `tasks.js`, `issue-picker.js`, `oauth-detector.js`, `modal.js`, `util.js`). Acceptance for the decomposition itself plus the reviewer findings that surfaced during the milestone is covered by these runbook entries in `tests/workbench-test-runbook.md` §"Phase 2 Milestone":
-
-| Entry        | Issue           | What it proves                                                                       |
-| ------------ | --------------- | ------------------------------------------------------------------------------------ |
-| P2-F0-01     | #364            | ESM module load — no console errors; `<script type="module" src="/js/app.js">` lives |
-| P2-F0-02     | #364            | Sidebar renders and session list populates; `window.loadState` is a function          |
-| P2-F0-03     | #364            | `+` button → CLI picker → `createSession` modal → new tab appears in `#tab-bar`       |
-| P2-F0-04     | #364            | `switchTab` (tabs.js) — clicking a second tab makes it `.active`                      |
-| P2-F0-05     | #364            | `openSettings` / `closeSettings` reachable via real click on sidebar-footer button    |
-| P2-F0-06     | #364            | `togglePanel` / `switchPanel('files')` via real `#panel-toggle` + `.panel-tab` clicks |
-| P2-F0-07     | #364            | Tasks tab via real `.panel-tab[data-panel="tasks"]` click                              |
-| P2-452-01    | #452 / #457     | `window.sessionSortBy` setter via `Object.defineProperty`, exercised by `<select>`    |
-| P2-452-02    | #452 / #457     | `window.refreshFileTree` callable from `#panel-refresh-files`                          |
-| P2-460-01    | #460            | Sidebar renders relative timestamps via `timeAgo`, not raw ISO strings                 |
-| P2-461-01    | #461            | REMOVED — `file_find` is MCP-only; ERE fix is covered by `#461-LIVE-01/02/03`         |
-
-All entries are headless-browser tests (Playwright) running against the isolated `workbench-test` stack (`logo_variant=development`), not the production instance. Setup steps may use `docker exec` to plant DB state per the runbook; verify steps always observe the rendered DOM via Playwright.
-
 ---
 
 ## 0. Executive Summary

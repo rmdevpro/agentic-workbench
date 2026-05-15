@@ -68,7 +68,7 @@ test('M1-LIVE-01: GET /api/kb/status returns 200 (watcher alive, no crash on uni
     `response must include 'initialized' field; got: ${JSON.stringify(r.data)}`);
 });
 
-// M1-LIVE-03 (REMOVED — gap documented in tests/traceability-matrix.md §7):
+// M1-LIVE-03 (REMOVED — gap documented in the originating issue):
 // _cloneIfMissing is called from kb-watcher start() on every container boot.
 // In the sandbox test container, the git clone fails (no network to github.com),
 // so KB_PATH never gets created and the assertion "directory exists" was not

@@ -601,14 +601,14 @@ After all three CLIs complete the block, three tabs are open in the tab bar; sub
 **Source:** PROC-003 §2 — Surface 6
 **Priority:** Baseline (FAIL stops Gate C)
 
-**Setup:** the codex tab from SMOKE-STATUS-01 is active. The status bar's connection indicator is in the "connected" visual state. The Playwright session supports `browser_context.setOffline(true)` (or `cdp.send('Network.emulateNetworkConditions', ...)`) for the network disruption — this simulates a real disconnect at the browser network layer, not in-app state manipulation.
+**Setup:** the codex tab from SMOKE-STATUS-01 is active. The status bar's connection indicator is in the "connected" visual state. The Tester executor's Playwright MCP exposes `browser_evaluate` — used here as a setup trigger (not as a verify), per §12.7's setup vs verify distinction.
 
 **Steps:**
 
 1. Observe the status bar — connection indicator in "connected" visual state for the codex tab.
-2. Invoke Playwright `context.setOffline(true)` (or equivalent network-layer disconnect).
+2. Disconnect trigger: `browser_evaluate(() => { const t = window.tabs.get(window.activeTabId); if (t?.ws) t.ws.close(); return 'closed'; })` — closes the active tab's WebSocket. This is a setup trigger, not a verify (per §12.7); the verify is the screenshot of the indicator's state after the trigger. If the Playwright MCP additionally exposes `context.setOffline(true)`, prefer that as it disconnects at the browser network layer rather than via the app's WS handle; either is acceptable for this entry's verify.
 3. Wait, capturing screenshots at 1s intervals up to a 5s bound.
-4. Invoke Playwright `context.setOffline(false)` to restore the network.
+4. Reconnect trigger: if step 2 used `context.setOffline(true)`, invoke `context.setOffline(false)`; if step 2 closed the ws directly, the workbench's tab-reconnect logic should re-establish a new WS automatically (verify it happens within the 10s bound; if it doesn't, that's a workbench bug — FAIL).
 5. Wait, capturing screenshots at 1s intervals up to a 10s bound.
 
 **Verify (numbered assertions):**
@@ -2471,8 +2471,8 @@ Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test)
 4. In the same pane, send a prompt that produces enough wrapped output to fill scrollback: via `browser_type` on `#pane-<tabId> .xterm-helper-textarea` (per the Canonical input selectors section), type `list every two-letter combination from aa to zz, one per line`; press Enter via `browser_press_key {key:"Enter"}` on the same selector; wait up to 60s for the response to complete (capture a frame showing the last line near `zz`).
 
 **Steps:**
-1. Force a WS disconnect: in Playwright, `context.setOffline(true)`. Hold for 2s.
-2. Re-enable: `context.setOffline(false)`. The terminal pane reconnects (status indicator moves from disconnected → connected within 5s).
+1. Force a WS disconnect: `browser_evaluate(() => { const t = window.tabs.get(window.activeTabId); if (t?.ws) t.ws.close(); return 'closed'; })` — closes the active tab's WebSocket (setup trigger, not a verify; the verify is screenshot-based on the indicator state). If `context.setOffline(true)` is exposed by the Tester's Playwright MCP, prefer it (network-layer disconnect); the verify is the same either way. Hold for 2s.
+2. Re-connect: if step 1 used `context.setOffline(true)`, invoke `setOffline(false)`; if it closed the ws directly, the workbench's tab-reconnect logic should auto-reattach. The terminal pane reconnects (status indicator moves from disconnected → connected within 5s).
 3. After reconnect, scroll the terminal pane up using the mouse wheel (or keyboard `Shift+PageUp`) until the original anchor line `what is 7 times 8` is visible at the top of the viewport.
 4. Capture a screenshot of the scrolled-up viewport.
 
@@ -2507,7 +2507,7 @@ Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test)
 1. Baseline tab order is `smoke-chat-claude`, `smoke-chat-gemini`, `smoke-chat-codex`, `<file-1>`, `<file-2>`. → `16.2/assertion-01-baseline-order.png`
 2. Within 1s of step 1's drop, the tab bar shows `<file-2>` immediately to the LEFT of `smoke-chat-claude` — i.e. the new order is `<file-2>, smoke-chat-claude, smoke-chat-gemini, smoke-chat-codex, <file-1>`. → `16.2/assertion-02-file-tab-reordered-before-cli.png`
 3. Within 1s of step 2's drop, the tab bar shows `smoke-chat-codex` immediately to the RIGHT of `<file-1>` — i.e. the new order is `<file-2>, smoke-chat-claude, smoke-chat-gemini, <file-1>, smoke-chat-codex`. This assertion confirms CLI session tabs also reorder cleanly (peer-parity with the file-tab case in assertion 2). → `16.2/assertion-03-cli-tab-reordered-after-file.png`
-4. Within 5s of page reload, the persisted order from assertion 3 is restored. → `16.2/assertion-04-order-persisted-after-reload.png`
+4. Within 5s of page reload, the persisted order from assertion 3 is restored. → `16.2/assertion-04-order-persisted-after-reload.png`. *(Note: reload-persistence FAILed in stage 5 run `20260515T170716Z` with no tabs restored at all — surfaced as issue #597, a separate product bug from #522's drop-handler fix. If #597 remains open at the next stage-5 run, this assertion FAILs by-design until #597 lands; the rest of 16.2 still verifies the #522 mechanic.)*
 
 **Teardown:** close the two file tabs (`×` on each). The three CLI tabs remain.
 
@@ -2520,11 +2520,11 @@ Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test)
 
 **Setup:**
 1. Browser at `${WORKBENCH_URL}`, sidebar visible. SMOKE-PROJ-01 has PASSED on the happy path.
-2. Open Playwright DevTools (or use the page's `context.route(...)` API in the executor) to register a one-shot intercept that fails the FIRST request to `/api/state` after the next Add Project click — return a network failure (abort) so the client sees `TypeError: Failed to fetch`. Subsequent `/api/state` requests proceed normally. The intercept self-disarms after firing once.
+2. Register a one-shot fetch-intercept via `browser_evaluate` (setup trigger, not a verify, per §12.7's setup vs verify distinction): `browser_evaluate(() => { const _orig = window.fetch; let _armed = true; window.fetch = function(...a) { if (_armed && typeof a[0] === 'string' && a[0].includes('/api/state')) { _armed = false; window.fetch = _orig; return Promise.reject(new TypeError('Failed to fetch')); } return _orig.apply(this, a); }; return 'armed'; })` — wraps `window.fetch` so the NEXT `/api/state` call rejects with `TypeError`; subsequent calls go through the original fetch (the wrapper self-restores after firing). Confirm the return value is `'armed'`. If `context.route(...)` becomes available in a future Playwright MCP version, prefer it (intercepts at the network layer rather than monkey-patching JS). Both are setup triggers — the verify is the screenshot of the sidebar after Save.
 3. No project named `retry-proj-<timestamp>` exists.
 
 **Steps:**
-1. Click the `+ Project` affordance at the top of the sidebar.
+1. Click the per-program `+` affordance on the `wb-seed` parent program (per finding #591: the deployed UI has per-program `+` for Add Project, not a top-of-sidebar affordance).
 2. Project-create modal appears.
 3. Type `retry-proj-<timestamp>` into the name field and `/data/workspace/retry-proj-<timestamp>` into the path field.
 4. Click Save. The modal dismisses; under the hood `loadState()` fires; the one-shot intercept causes the first `/api/state` fetch to fail with `TypeError`; the new `fetchWithRetry` helper (#564) retries within 500-1000ms and the second attempt succeeds.
@@ -2547,23 +2547,22 @@ Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test)
 **Closes gap for:** #198 (session_config returns full metadata after write — the sidebar is the consumer surface). Per PM dispatch, also baseline-smoke-cascades for #252 (`session_resume_post_compact` tail-to-file: returns a prompt referencing a `/tmp` path; the consumer surface is the terminal pane that renders the returned prompt — exercised by the next-prompt step in SMOKE-CHAT-01 and 16.1), #253 (`session_send_text` `maxLength` + description: tool metadata visible via the executor's MCP discovery — no separate render surface, baseline smoke is the verification), #268 (`session_export` empty-transcript shape: returned via MCP; sidebar is not the consumer — the executor reads the returned shape directly; baseline-smoke equivalent), and #275 (codex role-seed bounded time: exercised by SMOKE-CHAT-01's codex branch which creates a codex session within bound).
 
 **Setup:**
-1. Browser at `${WORKBENCH_URL}`, sidebar visible. The three `smoke-chat-{claude,gemini,codex}` tabs from SMOKE-CHAT-01 are open; their session rows are visible in the sidebar under `wb-seed`.
+1. Browser at `${WORKBENCH_URL}`, sidebar visible. The three `smoke-chat-{claude,gemini,codex}` tabs from SMOKE-CHAT-01 are open; their session rows are visible in the sidebar under `wb-seed`. (If codex is unavailable due to provider quota — see #594 — the codex iteration is recorded FAIL per env-class rules, the claude + gemini iterations still run.)
 2. For each `<cli>` in `[claude, gemini, codex]` in turn, perform Steps + Verify in sequence (three iterations of the same flow — explicit per-CLI peer parity per §12.11 axis-2).
 
 **Steps (per CLI iteration):**
-1. From the executor, invoke `mcp__workbench__session_config` with `{session_id: "<the cli's session id from the sidebar row>", name: "renamed-<cli>-<timestamp>", notes: "stage-5-test"}`.
-2. The MCP call returns; the result body contains the full session metadata (id, cli_type, name, state, notes per #198) — the executor records the result for diagnostic purposes only (the verify is on the sidebar's rendered view).
-3. Capture screenshots of the sidebar at 1s intervals for 3s total starting from the MCP call return.
+1. Resolve the session id from the sidebar's rendered row for that cli (via `browser_snapshot` + DOM read of the row's `data-session-id` attribute — read for use in the next step's URL, NOT used as a verify mechanism). Record as `<sid>`.
+2. Trigger the rename via the workbench's REST endpoint (setup-trigger, not verify, per §12.7): `browser_evaluate(({ sid, name, notes }) => fetch('/api/sessions/' + sid + '/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name, notes }) }).then(r => r.json()), { sid: '<sid>', name: 'renamed-<cli>-<timestamp>', notes: 'stage-5-test' })`. The endpoint at `src/routes/sessions.js:708` accepts `{name, state, notes}` and returns `{saved: true}` (the REST endpoint returns the bare-shape; the metadata-merged shape from #198 is exposed via the MCP layer, asserted by mock + live MCP tests, not by this entry). The REST trigger is what a user's rename click would actually invoke server-side.
+3. Capture screenshots of the sidebar at 1s intervals for 3s total starting from the REST trigger.
 
-**Verify (numbered assertions, three per CLI = 9 total):**
+**Verify (numbered assertions, two per CLI = 6 total — the third per-CLI assertion from the original v1 of this entry was on MCP response shape; that is verified by #198's mock + live MCP tests in commit `c78bf16` and is not re-asserted here at the UI surface):**
 
 For each `<cli>`:
 
-- **N (per cli):** Within 2s of the MCP `session_config` call returning, the sidebar row under `wb-seed` that previously read `smoke-chat-<cli>` now reads `renamed-<cli>-<timestamp>`. Screenshot polling per §12.8. → `16.4/assertion-<N>-<cli>-sidebar-renamed.png`
+- **N (per cli):** Within 2s of the REST trigger returning, the sidebar row under `wb-seed` that previously read `smoke-chat-<cli>` now reads `renamed-<cli>-<timestamp>`. Screenshot polling per §12.8. → `16.4/assertion-<N>-<cli>-sidebar-renamed.png`
 - **N+1 (per cli):** The renamed session row remains under the `wb-seed` project (not moved, not duplicated, not vanished) — only the displayed name changed. Static content read against the same frame as N. → `16.4/assertion-<N+1>-<cli>-row-stable.png`
-- **N+2 (per cli):** The MCP call's returned body (recorded in step 2 — diagnostic, not the primary verify, but pinned here so the executor confirms the read-after-write metadata shape from #198 actually came back) carries `result.name == "renamed-<cli>-<timestamp>"`, `result.cli_type == "<cli>"`, `result.id == "<the session id>"`, `result.notes == "stage-5-test"`, and `result.saved == true`. Affirmed by the agent reading the MCP-call response text in the executor pane (this assertion uses the executor's MCP response display — the rendered text in the executor terminal — not internal-JS reads). → `16.4/assertion-<N+2>-<cli>-mcp-response.png`
 
-**Teardown:** for each CLI, rename the session back to `smoke-chat-<cli>` via a second `session_config` call to leave state clean for downstream entries.
+**Teardown:** for each CLI, rename the session back to `smoke-chat-<cli>` via a second REST `PUT /api/sessions/<sid>/config` to leave state clean for downstream entries.
 
 **Result:** ☐ PASS ☐ FAIL
 

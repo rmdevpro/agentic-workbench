@@ -55,25 +55,45 @@ module.exports = function createKeepalive({ safe, config, logger }) {
     catch { return 0; }
   }
 
-  function startCredsWatch() {
-    if (_credsWatchTimer) return;
-    _credsWatchTimer = setInterval(async () => {
-      const mtime = await getCredsMtimeAsync();
-      if (mtime && _authBrokenMtime && mtime !== _authBrokenMtime) {
-        logger.info('Keepalive credentials file changed — re-enabling refresh attempts', {
+  // #588: shared creds-watcher factory. Both Claude (`startCredsWatch`) and
+  // Gemini (`startGeminiCredsWatch`) needed identical timer lifecycle —
+  // setInterval polling mtime, fire onChange + clear-self when mtime moves
+  // forward. The per-CLI distinction (path, state vars, on-resume callback)
+  // stays at the call site; the timer orchestration consolidates here.
+  function _startCredsWatcher({ label, getMtime, readStoredMtime, onChange, getTimer, setTimer }) {
+    if (getTimer()) return;
+    const timer = setInterval(async () => {
+      const mtime = await getMtime();
+      const storedMtime = readStoredMtime();
+      if (mtime && storedMtime && mtime !== storedMtime) {
+        logger.info(`${label} credentials file changed — re-enabling refresh attempts`, {
           module: 'keepalive',
-          oldMtime: new Date(_authBrokenMtime).toISOString(),
+          oldMtime: new Date(storedMtime).toISOString(),
           newMtime: new Date(mtime).toISOString(),
         });
+        clearInterval(timer);
+        setTimer(null);
+        onChange();
+      }
+    }, CREDS_WATCH_INTERVAL_MS);
+    if (typeof timer.unref === 'function') timer.unref();
+    setTimer(timer);
+  }
+
+  function startCredsWatch() {
+    _startCredsWatcher({
+      label: 'Keepalive',
+      getMtime: getCredsMtimeAsync,
+      readStoredMtime: () => _authBrokenMtime,
+      onChange: () => {
         _authBrokenCount = 0;
         _authBrokenLogged = false;
         _authBrokenMtime = 0;
-        clearInterval(_credsWatchTimer);
-        _credsWatchTimer = null;
         if (running) check();
-      }
-    }, CREDS_WATCH_INTERVAL_MS);
-    if (typeof _credsWatchTimer.unref === 'function') _credsWatchTimer.unref();
+      },
+      getTimer: () => _credsWatchTimer,
+      setTimer: (t) => { _credsWatchTimer = t; },
+    });
   }
 
   async function getTokenExpiryAsync() {
@@ -206,23 +226,18 @@ module.exports = function createKeepalive({ safe, config, logger }) {
   }
 
   function startGeminiCredsWatch() {
-    if (_geminiCredsWatchTimer) return;
-    _geminiCredsWatchTimer = setInterval(async () => {
-      const mtime = await getGeminiCredsMtimeAsync();
-      if (mtime && _geminiAuthBrokenMtime && mtime !== _geminiAuthBrokenMtime) {
-        logger.info('Gemini credentials file changed — re-enabling Gemini keepalive', {
-          module: 'keepalive',
-          oldMtime: new Date(_geminiAuthBrokenMtime).toISOString(),
-          newMtime: new Date(mtime).toISOString(),
-        });
+    _startCredsWatcher({
+      label: 'Gemini',
+      getMtime: getGeminiCredsMtimeAsync,
+      readStoredMtime: () => _geminiAuthBrokenMtime,
+      onChange: () => {
         _geminiAuthBrokenCount = 0;
         _geminiAuthBrokenLogged = false;
         _geminiAuthBrokenMtime = 0;
-        clearInterval(_geminiCredsWatchTimer);
-        _geminiCredsWatchTimer = null;
-      }
-    }, CREDS_WATCH_INTERVAL_MS);
-    if (typeof _geminiCredsWatchTimer.unref === 'function') _geminiCredsWatchTimer.unref();
+      },
+      getTimer: () => _geminiCredsWatchTimer,
+      setTimer: (t) => { _geminiCredsWatchTimer = t; },
+    });
   }
 
   function isGeminiAuthBrokenError(err) {

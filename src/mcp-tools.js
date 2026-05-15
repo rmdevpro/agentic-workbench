@@ -466,14 +466,32 @@ handlers.session_resume_post_compact = async (args) => {
 handlers.session_export = async (args) => {
   requireSessionId(args);
   const session = db.getSessionFull(args.session_id);
+  // #268 Case B: truly-invalid session_id (no row in DB) — keep the 404.
   if (!session) throw new ToolError('session not found', 404);
   const projectPath = session.project_path || '';
   const cliType = session.cli_type || 'claude';
   if (cliType === 'claude') {
     const sessDir = sessionUtils.sessionsDir(projectPath);
     const path = join(sessDir, `${args.session_id}.jsonl`);
-    try { return { format: 'jsonl', path, content: fs.readFileSync(path, 'utf-8') }; }
-    catch (e) { throw new ToolError(`session file not found: ${path}`, 404); }
+    try {
+      return { format: 'jsonl', path, content: fs.readFileSync(path, 'utf-8') };
+    } catch (e) {
+      // #268: session exists in DB but the JSONL transcript file isn't on
+      // disk yet — typical for a freshly-created Claude session before any
+      // messages. Return an empty-content shape (distinguishes "no
+      // transcript yet" from "invalid session_id" above) rather than
+      // throwing. Other read errors (permission, IO) still throw 404.
+      if (e.code === 'ENOENT') {
+        return {
+          format: 'jsonl',
+          path,
+          content: '',
+          session_id: args.session_id,
+          note: 'no transcript',
+        };
+      }
+      throw new ToolError(`session file not found: ${path}`, 404);
+    }
   }
   // Gemini/Codex — return parsed transcript via summarizer's tail mechanism
   return await sessionUtils.summarizeSession(args.session_id, args.project);

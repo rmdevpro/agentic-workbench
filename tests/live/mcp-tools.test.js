@@ -82,6 +82,54 @@ test('MCP unknown tool returns 404', async () => {
   assert.equal(r.status, 404);
 });
 
+// #268: session_export on a freshly-created Claude session (row in DB but
+// JSONL transcript file not yet written) used to throw `ToolError(404)`;
+// now returns an empty-transcript shape that distinguishes "no messages
+// yet" from "session never existed". Direct DB insert via dockerExec/sqlite3
+// is used so the assertion targets the exact `ENOENT-on-readFileSync`
+// branch without the Claude standby-hint side effect that POST /api/sessions
+// would trigger.
+const { dockerExec: _dockerExec } = require('../helpers/reset-state');
+test('#268: session_export on fresh Claude session returns empty-transcript shape', async () => {
+  await resetBaseline();
+  const proj = 'issue268_proj';
+  _dockerExec(`mkdir -p /data/workspace/${proj}`);
+  await post('/api/projects', { path: `/data/workspace/${proj}`, name: proj });
+  const sid = 'live-268-fresh-claude';
+  // Insert a Claude session row directly so the JSONL transcript file is
+  // guaranteed absent.
+  _dockerExec(
+    `sqlite3 /data/.workbench/workbench.db ` +
+    `"INSERT INTO sessions(id, project_id, name, cli_type) ` +
+    `VALUES('${sid}', (SELECT id FROM projects WHERE name='${proj}'), 'fresh-claude', 'claude');"`,
+  );
+
+  try {
+    const r = await post('/api/mcp/call', {
+      tool: 'session_export',
+      args: { session_id: sid },
+    });
+    assert.equal(r.status, 200, `expected 200; got ${r.status}: ${JSON.stringify(r.data)}`);
+    const result = r.data.result;
+    assert.equal(result.format, 'jsonl', `format must be 'jsonl'; got ${result.format}`);
+    assert.equal(result.content, '', `content must be empty string; got ${JSON.stringify(result.content)}`);
+    assert.equal(result.session_id, sid, `session_id must echo arg; got ${result.session_id}`);
+    assert.equal(result.note, 'no transcript', `note must be 'no transcript'; got ${result.note}`);
+    assert.ok(result.path && result.path.endsWith('.jsonl'), `path must end with .jsonl; got ${result.path}`);
+  } finally {
+    _dockerExec(`sqlite3 /data/.workbench/workbench.db "DELETE FROM sessions WHERE id='${sid}';"`);
+  }
+});
+
+test('#268: session_export 404s on truly-invalid session_id (Case B preserved)', async () => {
+  const r = await post('/api/mcp/call', {
+    tool: 'session_export',
+    args: { session_id: 'definitely-not-a-real-268-live-session-id' },
+  });
+  assert.equal(r.status, 404, `expected 404; got ${r.status}: ${JSON.stringify(r.data)}`);
+  assert.match(r.data.error || '', /session not found/i);
+});
+
 // #198 / REG-META-04: session_config used to return `{saved:true}` only. The
 // fix makes it read-after-write via getSessionInfo (cache invalidated first)
 // and return the merged metadata. Three variants — one per cli_type — verify

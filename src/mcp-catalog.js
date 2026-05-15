@@ -94,7 +94,7 @@ const TOOLS = [
     session_id: P.session_id,
     tail_lines: { type: 'number', description: 'Lines of session tail to write to the temp file (default 60). Honored exactly — no size cap. The model reads the file in chunks via Read offset/limit.' },
   }, ['session_id']),
-  T('session_export', 'Export a session — raw JSONL for Claude, structured summary for Gemini/Codex.', {
+  T('session_export', 'Export a session — raw JSONL for Claude, structured summary for Gemini/Codex. A freshly-created Claude session with no transcript on disk yet returns `{format, path, content:"", session_id, note:"no transcript"}` (not a 404); a truly-invalid session_id still throws 404. #268.', {
     session_id: P.session_id, project: P.project,
   }, ['session_id']),
   T('session_info', 'Unified session info: model, tokens, message count, timestamp, cli_type, active (tmux alive).', {

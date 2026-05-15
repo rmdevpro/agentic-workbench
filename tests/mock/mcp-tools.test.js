@@ -443,6 +443,53 @@ test('MCP session_summarize resolves project from session row when arg missing (
   }
 });
 
+// #268: session_export on a freshly-created Claude session previously threw
+// `ToolError('session file not found: <path>', 404)` even when the session
+// row was valid — the transcript file just hadn't been written yet because
+// no messages had been sent. Now distinguishes the two cases: truly-invalid
+// session_id still 404s; valid-row-but-no-transcript-yet returns
+// `{format:'jsonl', path, content:'', session_id, note:'no transcript'}`.
+test('MCP session_export returns empty-transcript shape for fresh Claude session (#268)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const { join } = require('path');
+  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_268_proj');
+  fs.mkdirSync(projPath, { recursive: true });
+  const proj = db.ensureProject('mock_268_proj', projPath);
+  try {
+    // Seed a Claude session row but DO NOT create the JSONL transcript file.
+    // This mirrors a freshly-created session before any messages have flowed.
+    db.upsertSession('mock-268-fresh-claude', proj.id, 'fresh-claude', 'claude');
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, {
+        tool: 'session_export',
+        args: { session_id: 'mock-268-fresh-claude' },
+      });
+      assert.equal(r.status, 200, `expected 200; got ${r.status}: ${JSON.stringify(r.body)}`);
+      const result = r.body.result;
+      assert.equal(result.format, 'jsonl', `format must be 'jsonl'; got ${result.format}`);
+      assert.equal(result.content, '', `content must be empty string; got ${JSON.stringify(result.content)}`);
+      assert.equal(result.session_id, 'mock-268-fresh-claude', `session_id must echo arg; got ${result.session_id}`);
+      assert.equal(result.note, 'no transcript', `note must be 'no transcript'; got ${result.note}`);
+      assert.ok(result.path && result.path.endsWith('.jsonl'), `path must point at the missing JSONL; got ${result.path}`);
+    });
+  } finally {
+    try { db.deleteSession('mock-268-fresh-claude'); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+  }
+});
+
+test('MCP session_export 404s on truly-invalid session_id (#268 Case B preserved)', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'session_export',
+      args: { session_id: 'definitely-not-a-real-268-session-id' },
+    });
+    assert.equal(r.status, 404, `expected 404; got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.match(r.body.error || '', /session not found/i);
+  });
+});
+
 // #198: session_config previously returned `{saved:true}` only. Callers that
 // needed post-write metadata (id, name, state, cli_type, model, …) had to
 // follow up with session_info — costly and racy under cache TTL. The fix

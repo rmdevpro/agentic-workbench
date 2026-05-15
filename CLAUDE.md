@@ -5,7 +5,7 @@ This repository is the source code for the Agentic Workbench application — the
 # Current Project + Milestone
 
 - **Project:** r1
-- **Milestone:** `08-sdlc-redesign` — SDLC redesign work (branch `milestone/08-sdlc-redesign`). Previous milestone `07-ui-runbook-refactor` is paused pending this redesign.
+- **Milestone:** `01-stabilization` — first slug-order milestone after the 2026-05-15 r1 reset. Branch `milestone/01-stabilization`. 28 open issues; mix of B/C/N/O/Q-series past-closed work that needs stage-5 UI test backfill per STD-003 §12.7-§12.11, plus fresh bug reports requiring full pipeline.
 
 The Project Manager maintains this block. Update on milestone open and milestone close per [SDLC-3 §Branch Strategy](/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md). Plan files are session-private; this block is the team-shared declaration of what cycle is active.
 

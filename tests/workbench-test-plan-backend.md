@@ -2940,7 +2940,7 @@ The pure helpers exported from `public/js/util.js` are unit-testable as mocks un
 | MCP-EXPORT-INVALID-live | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #268 — invalid `session_id` still 404s (Case B preserved) |
 | CODEX-SEED-275 | Live | tests/live/issue-275-codex-role-seed.test.js | Written | - | Not run | #275 — codex role-seed Phase 1 completes within bounded time via workbench HTTP path |
 
-### 15.37 Fresh-Container Checks
+### 15.39 Fresh-Container Checks
 
 | ID | Layer | Test File | Status | Last Run | Result | Notes |
 |----|-------|-----------|--------|----------|--------|-------|

@@ -3088,7 +3088,7 @@ Gate A must pass before Gate B and C are attempted. Gate B and Gate C run agains
 | Claude H-1 | SRV-05 "test endpoint" | Removed; child process only |
 | Claude H-2 | ENG-06/07 manual gate undefined | Added checklist, reviewer procedure, sign-off |
 | Claude H-3 | No CI enforcement | Added §18 |
-| Claude H-4 | prime-test-session.js self-test | Added UTIL-01/02 (§3.7) |
+| Claude H-4 | prime-test-session.js self-test | ~~Added UTIL-01/02 (§3.7)~~ — REMOVED in #320 (Phase 0); `scripts/prime-test-session.js`, UTIL-01/02, and §3.7 were all retired together. |
 | Claude H-5 | No concurrent write test | Added DB-12, RTE-01 |
 | Claude M-1 | MCS stdio methodology | Added §3.6 |
 | Claude M-3 | BRW-01 console error unspecified | Added console capture spec in §12.3 |
@@ -3146,7 +3146,7 @@ Gate A must pass before Gate B and C are attempted. Gate B and Gate C run agains
 | Claude MIN-01 | AUTH-ANSI-01..03 missing from traceability | Added to §15.36 |
 | Claude MIN-02 | `shared-state.js` not addressed | Added to §14.1 exclusions with justification |
 | Claude MIN-04 | Screenshot capture failure-only | Changed §3.5 step 9 to capture every browser test |
-| Claude MIN-05 | `prime-test-session.js` path unspecified | Added path and invocation detail to §3.3 |
+| Claude MIN-05 | `prime-test-session.js` path unspecified | ~~Added path and invocation detail to §3.3~~ — REMOVED in #320 (Phase 0); the §3.3 priming guidance and the script itself were retired with smart-compaction (test plan v7.0). |
 | Claude MIN-06 | §4.2 references §6.2 instead of scenario ID | Replaced with SES-01 reference |
 | Claude MIN-07 | ENT-02, 04, 06, 07, 08, 10 lack §5 detail | Added scenario detail in §5.26 |
 | Claude MIN-08 | ENT-12 mechanism unspecified | Added execution method in §5.26 |
@@ -3209,7 +3209,7 @@ Gate A must pass before Gate B and C are attempted. Gate B and Gate C run agains
 | Gemini | `lockedAppend` dead-code trap | Added implementation note to §14.1 warning test authors |
 | Gemini | Playwright xterm.js buffer extraction | Added fixture entry in §3.4 with correct extraction method |
 | Gemini | Host vs container tmux commands | Fixed §9.4 to use `docker exec` prefix |
-| Gemini | `prime-test-session.js` automation + append mode | Updated §3.3 to require programmatic execution and `--append` mode |
+| Gemini | `prime-test-session.js` automation + append mode | ~~Updated §3.3 to require programmatic execution and `--append` mode~~ — REMOVED in #320 (Phase 0); the script and §3.3 priming guidance no longer exist. |
 | Gemini | WAT-13 V8 crash risk | Covered by existing scenario; test author warned via WAT-13 description |
 | GPT/Grok | ENT-12 brittle tmux binary mutation | Changed to PATH override method in §5.26 |
 | GPT/Grok | Watcher timing tolerance | Added tolerance window note in §3.5 |

@@ -2,6 +2,13 @@
 
 This repository is the source code for the Agentic Workbench application — the system you are running inside. You are using the workbench to develop the workbench. The application is a Node.js server (`server.js`) decomposed into focused modules using factory-based dependency injection. The full architecture, module responsibilities, and configuration reference are in `README.md`.
 
+# Current Project + Milestone
+
+- **Project:** r1
+- **Milestone:** `08-sdlc-redesign` — SDLC redesign work (branch `milestone/08-sdlc-redesign`). Previous milestone `07-ui-runbook-refactor` is paused pending this redesign.
+
+The Project Manager maintains this block. Update on milestone open and milestone close per [SDLC-3 §Branch Strategy](/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md). Plan files are session-private; this block is the team-shared declaration of what cycle is active.
+
 # Operating Modes
 
 You operate in one of two modes at any given moment. See [PROC-001 — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md) for the canonical statement.
@@ -40,11 +47,11 @@ These documents define the standards and context this project must be reviewed a
 
 - `/data/workspace/repos/Admin/docs/process/SDLC-1-version-creation.md` — open a new release `rN`, set up team + artifact paths. Read when starting a new project or just after release close.
 - `/data/workspace/repos/Admin/docs/process/SDLC-2-release-planning.md` — populate the open `rN` Project with milestones + issues + release-specific scope matrix. Read at planning time.
-- `/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md` — 13-stage pipeline for executing one milestone. Read whenever you're executing a milestone.
-- `/data/workspace/repos/Admin/docs/process/SDLC-4-release-close.md` — full-regression release gate, prod deploy, close `rN` Project, open `rN+1`. Read at release close.
+- `/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md` — seven-stage label-driven milestone pipeline (implement / mock / deploy / integration / ui / docs / close). Read whenever you're executing a milestone.
+- `/data/workspace/repos/Admin/docs/process/SDLC-4-release-close.md` — full-scope release-close test pass, prod deploy, close `rN` Project, open `rN+1`. Read at release close.
 - `/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md` — conversational vs autonomous mode rules. Read at session start.
 - `/data/workspace/repos/Admin/docs/process/PROC-002-test-execution-policy.md` — canonical policy for which tests run and when (includes the UI-headless-browser rule in Principle 8). Read before authoring or running tests.
 - `/data/workspace/repos/Admin/docs/process/PROC-003-test-scope-matrix.md` — global test scope matrix (consumed during SDLC-2 to produce the release-specific matrix).
-- `/data/workspace/repos/Admin/docs/process/PROC-004-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Used by SDLC-3 (UI test stages) and SDLC-4 (release-gate UI run).
-- `/data/workspace/repos/Admin/docs/process/PROC-005-review.md` — unified review procedure (code and docs) via 3-CLI quorum: round structure, review-request issue contract, PM dispatch contract, findings contract, per-round and per-milestone Definitions of Done, Stage 12 PR variant, content variations for code vs doc reviews.
+- `/data/workspace/repos/Admin/docs/process/PROC-004-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Used by SDLC-3 (UI test stage) and SDLC-4 (release-close UI run).
+- `/data/workspace/repos/Admin/docs/process/PROC-005-review.md` — unified review procedure (code and docs) via 3-CLI quorum. Reviewer verdict is a stage-pass label flip on each in-scope issue (backed by cited evidence in the issue's seven-row workflow grid) plus optional supplementary notes. Stage 7 (close) variant uses GitHub PR reviews instead of labels.
 - `/data/workspace/repos/Admin/docs/runbooks/RUN-001-deployment.md` — step-by-step deploy procedure (build → push → pull → up). Read before any deploy.

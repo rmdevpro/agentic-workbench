@@ -36,9 +36,10 @@ This plan was originally written for a single-CLI (Claude) system with notes, me
 - **Filter/sort dropdowns** — replaced filter buttons
 - **45 MCP tools** — flat names grouped by domain: `file_*` (8), `session_*` (19), `project_*` (11), `task_*` (5), `log_*` (1)
 
----
+### Milestone 01-stabilization additions (2026-05-15)
 
-## 0. Executive Summary
+- **Runbook Section 16 — stage-5 backfill entries.** Four new feature entries (`16.1` through `16.4`) plus four SMOKE/baseline entries (`SMOKE-CHAT-01`, `SMOKE-WS-01`, `SMOKE-NAV-01`, `SMOKE-VEC-01`) added to `tests/workbench-test-runbook.md`. Section 16 covers the UI-consumer surface for milestone 01-stabilization fixes: #198 (session_config rename via sidebar), #483 (terminal scrollback resize-before-capture), #522 (tab reorder drop semantics), #564 (loadState retry on transient `/api/state` failure). Section 16 also baseline-smoke-cascades #252 / #253 / #268 / #275 (no separate UI consumer surface; baseline verifies these).
+- **Canonical xterm input selector — `.xterm-helper-textarea`.** Per commit `874571c`, every runbook entry that types into an xterm pane MUST cite this selector. The previous mix (`canvas[role="presentation"]`, `.xterm-screen`, blind page-level `keyboard.press`) was non-deterministic — only the helper textarea reliably receives synthetic key events under Playwright. Cited at runbook §16.0 Conventions and enforced by stage-5 review.
 
 Workbench is a **UI-first system** (WPR-103 §12.1). Browser tests are the primary acceptance gate -- not backend API tests. The UI IS the product.
 
@@ -1483,6 +1484,7 @@ Playwright tests use a custom reporter. On failure: capture screenshot, DOM snap
 | CST-01..20 | `context-stress.spec.js` | Live/Stress | Not started | Not run | -- | ~15 min runtime |
 | HR-01..04 | `hot-reload.spec.js` | Live | Not started | Not run | -- | -- |
 | FR-01 | `fresh-boot.spec.js` | Live | Not started | Not run | -- | -- |
+| RUN-16.1..16.4, SMOKE-CHAT-01, SMOKE-WS-01, SMOKE-NAV-01, SMOKE-VEC-01 | `tests/workbench-test-runbook.md` §16 (agent-driven) | Live | Not started | Not run | -- | Milestone 01-stabilization stage-5 backfill: 16.1 (#522 tab reorder), 16.2 (#483 terminal scrollback resize-before-capture), 16.3 (#198 session_config rename via sidebar), 16.4 (#564 loadState retry on transient /api/state failure). SMOKE-* entries baseline-smoke-cascade #252/#253/#268/#275 (no separate consumer surface). All entries cite the canonical xterm input selector `.xterm-helper-textarea` per §16.0 Conventions. |
 
 ---
 

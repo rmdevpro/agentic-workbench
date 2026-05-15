@@ -2461,6 +2461,9 @@ Single source of truth. Updated on every write/run. One row per scenario.
 | WS-09 | Mock + Live | tests/mock/ws-terminal.test.js, tests/live/ws-terminal.test.js | Not started | - | Not run | |
 | WS-10 | Mock | tests/mock/ws-terminal.test.js | Not started | - | Not run | |
 | WS-11 | Mock | tests/mock/ws-terminal.test.js | Not started | - | Not run | |
+| WS-12 | Mock | tests/mock/ws-terminal.test.js | Written | - | Not run | #483 — no `initialDims` falls back to hardcoded 120×40 and skips pre-resize |
+| WS-13 | Mock | tests/mock/ws-terminal.test.js | Written | - | Not run | #483 — with `initialDims`, tmux `resize-window` fires BEFORE capture and PTY spawns at those dims |
+| WS-14 | Mock | tests/mock/ws-terminal.test.js | Written | - | Not run | #483 — `resize-window` failure is non-fatal (capture + PTY still proceed) |
 
 ### 15.12 Authentication & Keepalive
 
@@ -2902,6 +2905,40 @@ QRM-01..15: REMOVED — quorum.js deleted.
 | AUTH-ANSI-01 | Mock | tests/mock/auth-parsing.test.js | Not started | - | Not run | |
 | AUTH-ANSI-02 | Mock | tests/mock/auth-parsing.test.js | Not started | - | Not run | |
 | AUTH-ANSI-03 | Mock | tests/mock/auth-parsing.test.js | Not started | - | Not run | |
+
+### 15.37 Frontend Utility Helpers (`public/js/util.js`)
+
+The pure helpers exported from `public/js/util.js` are unit-testable as mocks under `tests/mock/util.test.js` (no DOM, no fetch unless stubbed). Existing UTL-01..07 cover the HTML escapers; milestone 01-stabilization adds two new helpers.
+
+| ID | Layer | Test File | Status | Last Run | Result | Notes |
+|----|-------|-----------|--------|----------|--------|-------|
+| UTL-01..07 | Mock | tests/mock/util.test.js | Written | - | Not run | `escapeHtml`, `escapeAttr` HTML-escaping suite (pre-existing) |
+| UTL-08 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` returns first successful response without retrying |
+| UTL-09 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` retries on `TypeError` and succeeds before exhaustion |
+| UTL-10 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` throws after exhausting all attempts |
+| UTL-11 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` does NOT retry on HTTP 5xx (response returned, not thrown) |
+| UTL-12 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` honors custom `attempts`/`backoffMs` settings |
+| UTL-13 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` drop-before-target reorders correctly (CLI tabs) |
+| UTL-14 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` drop-after-target reorders correctly (file tabs) |
+| UTL-15 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` drop on empty bar (no `targetTabId`) appends to end |
+| UTL-16 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` drop on self is a no-op |
+| UTL-17 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` dragged id not in `currentOrder` is inserted relative to target |
+| UTL-18 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` handles null/empty `currentOrder` |
+
+### 15.38 Milestone 01-stabilization MCP-tool regressions
+
+| ID | Layer | Test File | Status | Last Run | Result | Notes |
+|----|-------|-----------|--------|----------|--------|-------|
+| REG-META-04-mock | Mock | tests/mock/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` returns full session metadata after write (read-after-write) |
+| REG-META-04-mock-404 | Mock | tests/mock/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` 404s on missing session (read-after-write contract) |
+| REG-META-04-live-claude | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` per-CLI parity, claude variant (notes/name reflected in response) |
+| REG-META-04-live-gemini | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` per-CLI parity, gemini variant |
+| REG-META-04-live-codex | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` per-CLI parity, codex variant |
+| MCP-EXPORT-EMPTY-mock | Mock | tests/mock/mcp-tools.test.js | Written | - | Not run | #268 — `session_export` empty-transcript shape on fresh Claude session |
+| MCP-EXPORT-EMPTY-mock-404 | Mock | tests/mock/mcp-tools.test.js | Written | - | Not run | #268 — `session_export` 404s on truly-invalid `session_id` (Case B preserved) |
+| MCP-EXPORT-EMPTY-live | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #268 — fresh Claude session returns `{format, content:'', session_id, note:'no transcript'}` |
+| MCP-EXPORT-INVALID-live | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #268 — invalid `session_id` still 404s (Case B preserved) |
+| CODEX-SEED-275 | Live | tests/live/issue-275-codex-role-seed.test.js | Written | - | Not run | #275 — codex role-seed Phase 1 completes within bounded time via workbench HTTP path |
 
 ### 15.37 Fresh-Container Checks
 

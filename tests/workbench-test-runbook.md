@@ -80,6 +80,21 @@ These forbidden mechanisms remain useful as **diagnostic** tools during debuggin
 - **Cascading assertions on the same render.** When a prior bounded clause established the surface is rendered within bound N, subsequent assertions on that same render cite the upstream bound rather than restating it.
 - **Explicit no-time-dimension justification.** Visual layout correctness independent of when the layout rendered, for example. Justify inline in the entry.
 
+## Canonical input selectors (apply across every runbook entry)
+
+Whenever a step says "type into X" or "send the prompt," the runbook MUST cite the specific user-visible input element selector — the same DOM element a user's keystrokes reach. Internal APIs (`term.paste(...)`, `term.write(...)`, `browser_evaluate` that calls into a framework's state, WebSocket payload injection) are FORBIDDEN as input mechanisms. Per `feedback_no_fabricated_ui_flows.md`: calling underlying JS to deliver input and then claiming "I typed it" is a fabricated UI flow; the test must drive the real affordance.
+
+The canonical selectors:
+
+| Surface | Selector (within the active pane) | Playwright primitive | Submit affordance |
+|---|---|---|---|
+| Terminal pane (claude / gemini / codex CLI session) | `#pane-<tabId> .xterm-helper-textarea` — xterm.js's hidden input textarea that receives keystrokes for the canvas. A real `<textarea>` element; `browser_type` drives it directly. | `browser_type` (multi-character) or `browser_press_key` (single-key, named keys like Enter) on the focused element | Press Enter — the keystroke flows through xterm → PTY → tmux → CLI. There is no separate Send button. |
+| File / doc tab (text editor) | `#pane-<tabId> .cm-editor [contenteditable="true"]` for CodeMirror; per-file selector for other editor types | `browser_type` after `browser_click` to focus | Editor-defined (Ctrl+S save shortcut, save button in the toolbar) |
+| Sidebar search | `#session-search` | `browser_type` | None — filters reactively |
+| Modal text inputs (project create, session config, etc.) | The modal's named input field — selector is per-modal (e.g. `#project-create-modal input[name="name"]`) | `browser_type` | The modal's Save / Submit button — click it |
+
+For terminal panes specifically: the xterm canvas is the OUTPUT surface, not the input. `browser_type` against `#pane-<tabId>` (the canvas's parent div) OR against `#terminal-area` directly FAILS with `Element is not an <input>... and does not have a role allowing [aria-readonly]` — that's the wrong target. The xterm.js `xterm-helper-textarea` inside the pane is the input. The Tester verifies this by confirming `.xterm-helper-textarea` exists in the rendered DOM (a known xterm.js v5 structural element — see `public/lib/xterm/lib/xterm.js`) before typing.
+
 ## Tier-1 CLI assumption (applies to Section 1)
 
 The three CLIs under test (claude, gemini, codex) are Tier-1 production tools. Their realistic failure modes are binary: either the CLI is alive and producing a coherent response to a simple prompt, or it is visibly broken — login screen, connection-refused banner, crash dialog, empty pane, response never arriving within the timing bound.
@@ -448,12 +463,12 @@ The Tier-1 CLI assumption stated in the preamble applies throughout Section 1. F
 3. The session-create overlay appears. Type session name `smoke-chat-<cli>` into the name field.
 4. Click Start (or press Enter). The overlay closes; a new tab opens labeled with the session name.
 5. Wait for the per-CLI ready observable to appear in the terminal pane. Capture screenshots at 2s intervals up to a 60s bound. The ready observable is concrete per CLI:
-   - **claude:** a Claude input area is rendered in the terminal pane (an editable region distinct from any response output area; type a single test character `x` into the focused pane within the 60s window and confirm the glyph renders inline in the input area). The input area's screen position (top, bottom, or inline) is intentionally NOT asserted — Claude Code's input-area placement has changed across versions (`v2.1.123` on irina renders the input inline-at-top of the pane, earlier versions rendered a boxed area at the bottom). The version-stable observable is "typed character appears in the rendered view".
+   - **claude:** a Claude input area is rendered in the terminal pane (an editable region distinct from any response output area; type a single test character `x` via `browser_type` on `#pane-<tabId> .xterm-helper-textarea` — per the Canonical input selectors section — within the 60s window and confirm the glyph renders inline in the input area on screenshot). The input area's screen position (top, bottom, or inline) is intentionally NOT asserted — Claude Code's input-area placement has changed across versions (`v2.1.123` on irina renders the input inline-at-top of the pane, earlier versions rendered a boxed area at the bottom). The version-stable observable is "typed character appears in the rendered view".
    - **gemini:** the Gemini `>` prompt is visible at the start of a new line at the bottom of the pane, with the cursor positioned after it.
    - **codex:** the Codex input field is visible at the bottom of the pane (rectangular input box with cursor positioned inside it).
-   Identify the first frame where the corresponding ready observable is rendered. Delete the test character before proceeding.
-6. With the new tab focused, type the prompt `what is 7 times 8` into the terminal (use the terminal's input-handling — the same keystroke path a user would use; do not send to the WebSocket directly via internal JS).
-7. Press Enter.
+   Identify the first frame where the corresponding ready observable is rendered. Delete the test character via `browser_press_key {key:"Backspace"}` on the same `.xterm-helper-textarea` before proceeding.
+6. With the new tab focused, type the prompt `what is 7 times 8` into the active pane's input. Per the Canonical input selectors section above, the input element is `#pane-<tabId> .xterm-helper-textarea` (the xterm.js hidden input textarea — a real `<textarea>` element). Drive with `browser_type` on that selector. The xterm canvas (the parent div) is the OUTPUT surface and is NOT typeable — `browser_type` against it returns `Element is not an <input>...` and is the wrong target. `browser_press_key` on the same `xterm-helper-textarea` is the per-key alternative when needed (e.g. named keys like Enter, Escape).
+7. Press Enter on the same `.xterm-helper-textarea` (via `browser_press_key {key:"Enter"}` after the type completes — the keystroke flows xterm → PTY → tmux → CLI; there is no Send button).
 8. Wait for the response to render in the pane. Capture screenshots at 2s intervals up to a 30s bound. Identify the first frame where a coherent response is visible in the response area of that tab's pane. A coherent response contains "56" (the digit pair) or "fifty-six" (written form), in the response output area below the prompt echo.
 9. Wait up to a 5s bound for the input prompt indicator (same observable as step 5) to be ready for the next prompt after the response. For claude: the input area accepts a typed character inline (position not asserted — see step 5's claude note). For gemini and codex: the prompt indicator reappears at the bottom of the pane as previously described in step 5.
 
@@ -810,9 +825,9 @@ Verify the sidebar handles (a) optimistic-mutation in-flight without flicker (#3
 
 **Steps:**
 1. Click the `smoke-chat-gemini` tab in the tab bar (or click the row in the sidebar) to focus its terminal pane.
-2. Type `please respond briefly with the word ack` into the Gemini terminal and press Enter.
+2. Type `please respond briefly with the word ack` via `browser_type` on `#pane-<gemini-tabId> .xterm-helper-textarea` (per the Canonical input selectors section) and press Enter via `browser_press_key {key:"Enter"}` on the same selector.
 3. Wait for the Gemini response to land in the pane (response containing `ack` visible).
-4. Click the `smoke-chat-codex` tab. Type the same prompt into the Codex terminal and press Enter.
+4. Click the `smoke-chat-codex` tab. Type the same prompt via `browser_type` on `#pane-<codex-tabId> .xterm-helper-textarea` and press Enter the same way.
 5. Wait for the Codex response containing `ack`.
 6. Click the `smoke-chat-claude` tab (or the row in the sidebar). Click into the Claude terminal pane. Type `please respond briefly with the word ack` and press Enter. Wait for the Claude response containing `ack` (§12.11 axis-2 Claude peer trigger).
 
@@ -2453,7 +2468,7 @@ Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test)
 1. Browser at `${WORKBENCH_URL}`, gate passed if applicable, sidebar visible. SMOKE-CHAT-01 already PASSED, so a `smoke-chat-claude` session tab exists with a multi-screen response rendered in its terminal pane.
 2. Click the `smoke-chat-claude` tab to make it active.
 3. Resize the browser window to a non-default width — drag the window's right edge so the terminal pane is rendered at approximately 100 cols (visible character columns in the pane; the agent affirms by counting the pane's visible monospace columns at a frame). Capture a baseline screenshot of the active pane showing a known anchor line (e.g. the prompt `what is 7 times 8`) and the response below it, fully visible without horizontal scrollbar.
-4. In the same pane, send a prompt that produces enough wrapped output to fill scrollback: type `list every two-letter combination from aa to zz, one per line`, press Enter, wait up to 60s for the response to complete (capture a frame showing the last line near `zz`).
+4. In the same pane, send a prompt that produces enough wrapped output to fill scrollback: via `browser_type` on `#pane-<tabId> .xterm-helper-textarea` (per the Canonical input selectors section), type `list every two-letter combination from aa to zz, one per line`; press Enter via `browser_press_key {key:"Enter"}` on the same selector; wait up to 60s for the response to complete (capture a frame showing the last line near `zz`).
 
 **Steps:**
 1. Force a WS disconnect: in Playwright, `context.setOffline(true)`. Hold for 2s.

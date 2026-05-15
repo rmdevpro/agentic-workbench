@@ -239,3 +239,104 @@ test('WS: error event kills PTY', async () => {
   ws.trigger('error', new Error('test error'));
   assert.equal(env.fakePty.killed, true, 'Error should kill the PTY');
 });
+
+// #483: scrollback capture race fix. Without initialDims the capture is taken
+// at the tmux pane's last-known size and the PTY spawns at the historical
+// hardcoded 120x40 default — preserves prior behavior for clients that don't
+// send dims in the WS URL. With initialDims the handler resizes the tmux
+// window to those dims BEFORE capture so the captured bytes' visual layout
+// matches what xterm will render them at; PTY then spawns at the matching
+// dims (no longer hardcoded 120x40).
+
+function makeEnvWithDimsSpies(overrides = {}) {
+  const tmuxExecCalls = [];
+  const captureCalls = [];
+  const spawnCalls = [];
+  const env = {
+    safe: {
+      sanitizeTmuxName: (v) => v.replace(/[^a-zA-Z0-9_-]/g, '_'),
+      tmuxCaptureScrollback: (name, lines) => {
+        captureCalls.push({ name, lines });
+        return 'CAPTURED-BYTES';
+      },
+      tmuxExecAsync: async (args) => { tmuxExecCalls.push(args); return ''; },
+    },
+    keepalive: { onBrowserConnect() {}, onBrowserDisconnect() {} },
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    config: {
+      get: (k, fb) => ({ 'ws.bufferHighWaterMark': 1024, 'ws.bufferLowWaterMark': 512,
+                          'ws.pingIntervalMs': 50, 'ws.scrollbackReplayLines': 10000 })[k] ?? fb,
+    },
+    sessionWsClients: new Map(),
+    getBrowserCount: () => 0,
+    incrementBrowserCount: () => 1,
+    decrementBrowserCount: () => 0,
+    tmuxExists: async () => true,
+    cancelTmuxCleanup() {},
+    scheduleTmuxCleanup() {},
+    startJsonlWatcher() {},
+    stopJsonlWatcher() {},
+    spawnPty: (cmd, args, opts) => {
+      spawnCalls.push({ cmd, args, opts });
+      return new FakePty();
+    },
+    ...overrides,
+  };
+  env.terminal = createWsTerminal(env);
+  env.spies = { tmuxExecCalls, captureCalls, spawnCalls };
+  return env;
+}
+
+test('WS-12: #483 — no initialDims falls back to hardcoded 120x40 and skips pre-resize', async () => {
+  const env = makeEnvWithDimsSpies();
+  const ws = makeWs();
+  await env.terminal.handleTerminalConnection(ws, 'wb_test');
+  assert.equal(env.spies.tmuxExecCalls.length, 0, 'no resize-window should fire without initialDims');
+  assert.equal(env.spies.spawnCalls.length, 1, 'PTY spawn should still happen');
+  const opts = env.spies.spawnCalls[0].opts;
+  assert.equal(opts.cols, 120, `PTY cols should be 120 default; got ${opts.cols}`);
+  assert.equal(opts.rows, 40, `PTY rows should be 40 default; got ${opts.rows}`);
+  // Capture should still happen (using the pane's existing size).
+  assert.equal(env.spies.captureCalls.length, 1, 'capture should fire once');
+  assert.ok(ws.sent.includes('CAPTURED-BYTES'), 'capture bytes should reach the client');
+});
+
+test('WS-13: #483 — with initialDims, tmux resize-window fires BEFORE capture and PTY spawns at those dims', async () => {
+  const env = makeEnvWithDimsSpies();
+  const ws = makeWs();
+  // Capture call-order via interleaved indexing on the same arrays.
+  // resize-window must precede capture; spawnPty receives matching dims.
+  await env.terminal.handleTerminalConnection(ws, 'wb_test', { cols: 200, rows: 60 });
+  assert.equal(env.spies.tmuxExecCalls.length, 1, 'one resize-window invocation expected');
+  const resizeArgs = env.spies.tmuxExecCalls[0];
+  assert.deepEqual(
+    resizeArgs,
+    ['resize-window', '-t', 'wb_test', '-x', '200', '-y', '60'],
+    `resize-window args must match initialDims; got ${JSON.stringify(resizeArgs)}`,
+  );
+  assert.equal(env.spies.captureCalls.length, 1, 'capture should fire once after resize');
+  assert.equal(env.spies.spawnCalls.length, 1, 'PTY spawn should fire once');
+  const opts = env.spies.spawnCalls[0].opts;
+  assert.equal(opts.cols, 200, `PTY cols should match initialDims; got ${opts.cols}`);
+  assert.equal(opts.rows, 60, `PTY rows should match initialDims; got ${opts.rows}`);
+});
+
+test('WS-14: #483 — resize-window failure is non-fatal (capture + PTY still proceed)', async () => {
+  // Failing tmuxExecAsync (e.g. session detached or tmux glitch) must not
+  // block the connection. Capture + spawn proceed; only the pre-resize is
+  // skipped (PTY attach will resize tmux on its own).
+  const env = makeEnvWithDimsSpies({
+    safe: {
+      sanitizeTmuxName: (v) => v.replace(/[^a-zA-Z0-9_-]/g, '_'),
+      tmuxCaptureScrollback: () => 'CAPTURED-BYTES',
+      tmuxExecAsync: async () => { throw new Error('resize-window failed'); },
+    },
+  });
+  const ws = makeWs();
+  await env.terminal.handleTerminalConnection(ws, 'wb_test', { cols: 100, rows: 30 });
+  assert.equal(env.spies.spawnCalls.length, 1, 'PTY spawn should still occur on resize failure');
+  const opts = env.spies.spawnCalls[0].opts;
+  assert.equal(opts.cols, 100, `PTY cols should still match initialDims; got ${opts.cols}`);
+  assert.equal(opts.rows, 30, `PTY rows should still match initialDims; got ${opts.rows}`);
+  assert.ok(ws.sent.includes('CAPTURED-BYTES'), 'capture should still proceed');
+});

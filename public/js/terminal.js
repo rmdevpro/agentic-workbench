@@ -33,8 +33,24 @@ export function connectTab(tabId) {
   renderTabs();
   tabDbg('connectTab:opening', { tabId, tmux: tab.tmux });
 
+  // #483: pass the xterm's actual dims to the server in the WS URL query
+  // string. The server uses these to resize the tmux pane BEFORE capturing
+  // scrollback, eliminating the race where the capture is taken at the
+  // pane's old (possibly stale) cols width and then rendered at a different
+  // xterm cols width — that mismatch is what produced the "progressive
+  // right-indent" + reshuffle artifact in #483. Falls back to no query if
+  // proposeDimensions() isn't ready (defensive — the server then keeps its
+  // historical 120x40 hardcoded default which preserves prior behavior).
+  let dimsQuery = '';
+  try {
+    const dims = tab.fitAddon && tab.fitAddon.proposeDimensions && tab.fitAddon.proposeDimensions();
+    if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows) && dims.cols > 0 && dims.rows > 0) {
+      dimsQuery = `?cols=${dims.cols}&rows=${dims.rows}`;
+    }
+  } catch { /* fitAddon not ready — server falls back to default */ }
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/ws/${tab.tmux}`);
+  const ws = new WebSocket(`${proto}//${location.host}/ws/${tab.tmux}${dimsQuery}`);
   ws.binaryType = 'arraybuffer';
   tab.ws = ws;
 

@@ -311,7 +311,18 @@ function handleUpgrade(req, socket, head) {
     socket.destroy();
     return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => terminal.handleTerminalConnection(ws, match[1]));
+  // #483: extract optional cols/rows query params so the WS handler can
+  // resize the tmux pane to match the client's xterm width BEFORE
+  // capturing scrollback. Without this the capture is taken at the pane's
+  // last-known cols (which can differ from the client's xterm cols) and the
+  // visual layout corrupts on render. Missing/invalid params → handler
+  // falls back to the historical 120x40 default.
+  const cols = Number.parseInt(url.searchParams.get('cols'), 10);
+  const rows = Number.parseInt(url.searchParams.get('rows'), 10);
+  const initialDims = (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0)
+    ? { cols, rows }
+    : null;
+  wss.handleUpgrade(req, socket, head, (ws) => terminal.handleTerminalConnection(ws, match[1], initialDims));
 }
 
 server.on('upgrade', handleUpgrade);

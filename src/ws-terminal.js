@@ -69,9 +69,9 @@ module.exports = function createWsTerminal({
   // calling tmuxCreateCLI (which would double-spawn or race the existence check).
   const _respawnsInFlight = new Map();
 
-  async function handleTerminalConnection(ws, tmuxSession) {
+  async function handleTerminalConnection(ws, tmuxSession, initialDims = null) {
     tmuxSession = safe.sanitizeTmuxName(tmuxSession);
-    dbgTab('connect:enter', { tmuxSession });
+    dbgTab('connect:enter', { tmuxSession, initialDims });
 
     if (!(await tmuxExists(tmuxSession))) {
       // #157: tab is reconnecting to a session whose tmux pane is gone (idle
@@ -149,12 +149,40 @@ module.exports = function createWsTerminal({
       }
     }
 
-    // #241: replay the tmux pane's scrollback BEFORE attaching the PTY so a
-    // reconnecting browser sees history above the visible viewport. tmux
-    // attach-session only redraws the visible pane on its own; without this
-    // the user loses everything they could previously scroll up to. We send
-    // the captured bytes first so they land in xterm's scrollback, then the
-    // PTY's tmux attach-session redraws the visible pane on top.
+    // #483: resolve the dims that will govern (a) tmux pane size at capture
+    // time, (b) the capture itself, and (c) the spawned PTY's initial dims.
+    // Without these matching the client's xterm cols, the capture bytes
+    // encode visual layout for a different width and re-rendering at the
+    // client width produces the "progressive right-indent + reshuffle"
+    // artifact reported in the bug. Missing initialDims → fall back to the
+    // historical 120x40 default (preserves prior behavior for older clients
+    // that don't send dims).
+    const targetCols = (initialDims && initialDims.cols) || 120;
+    const targetRows = (initialDims && initialDims.rows) || 40;
+
+    // #483: resize the tmux window to the target dims BEFORE capture. tmux
+    // reflows visible buffer content to match; the capture afterwards is at
+    // the correct width. Detached sessions accept resize-window; failure is
+    // non-fatal (PTY attach below will resize regardless).
+    if (initialDims) {
+      try {
+        await safe.tmuxExecAsync(['resize-window', '-t', tmuxSession, '-x', String(targetCols), '-y', String(targetRows)]);
+      } catch (err) {
+        logger.warn('Pre-capture tmux resize-window failed (non-fatal)', {
+          module: 'ws-terminal', tmuxSession, targetCols, targetRows, err: err.message,
+        });
+      }
+    }
+
+    // #241 / #483: replay the tmux pane's scrollback BEFORE attaching the
+    // PTY so a reconnecting browser sees history above the visible viewport.
+    // tmux attach-session only redraws the visible pane on its own; without
+    // this the user loses everything they could previously scroll up to. We
+    // send the captured bytes first so they land in xterm's scrollback,
+    // then the PTY's tmux attach-session redraws the visible pane on top.
+    // Per #483, the pane has been resized to `targetCols x targetRows`
+    // immediately above, so the capture's visual layout matches what
+    // xterm will render it at.
     try {
       const replayLines = config ? config.get('ws.scrollbackReplayLines', 10000) : 10000;
       const captured = safe.tmuxCaptureScrollback(tmuxSession, replayLines);
@@ -173,10 +201,12 @@ module.exports = function createWsTerminal({
     // TODO(async): ERQ-001 §4.1 — if a non-blocking PTY library becomes available, migrate.
     let ptyProcess;
     try {
+      // #483: spawn the PTY at the client's actual dims (or default 120x40)
+      // — was previously hardcoded 120x40 regardless of client width.
       ptyProcess = ptySpawn('tmux', ['attach-session', '-t', tmuxSession], {
         name: 'xterm-256color',
-        cols: 120,
-        rows: 40,
+        cols: targetCols,
+        rows: targetRows,
         env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
       });
     } catch (err) {

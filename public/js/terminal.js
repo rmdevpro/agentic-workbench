@@ -168,6 +168,13 @@ export function connectTab(tabId) {
     tab.status = 'disconnected';
     if (tab.heartbeat) { clearInterval(tab.heartbeat); tab.heartbeat = null; }
     renderTabs();
+    // #596: refresh status bar so the connection indicator transitions to the
+    // disconnected visual state. Pre-fix, `tab.status` flipped in memory and
+    // renderTabs() updated the tab badge, but the bottom status-bar's
+    // `${tab.status}` value (set in updateStatusBar) stayed stale at
+    // 'connected'. Symmetric with ws.onopen which already calls
+    // _updateStatusBarRef.
+    _updateStatusBarRef && _updateStatusBarRef();
 
     if (tabs.has(tabId) && !tab.noReconnect) {
       tab.reconnectTimer = setTimeout(() => {
@@ -177,7 +184,13 @@ export function connectTab(tabId) {
     }
   };
 
-  ws.onerror = (ev) => { tabDbg('ws:error', { tabId, tmux: tab.tmux }); tab.status = 'disconnected'; renderTabs(); };
+  ws.onerror = (ev) => {
+    tabDbg('ws:error', { tabId, tmux: tab.tmux });
+    tab.status = 'disconnected';
+    renderTabs();
+    // #596: same status-bar refresh symmetry as ws.onclose.
+    _updateStatusBarRef && _updateStatusBarRef();
+  };
 }
 
 export function createTerminalTab(tabId, tmuxSession, name, project, cliType, targetPanel, targetAreaId) {

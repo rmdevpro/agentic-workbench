@@ -9,7 +9,7 @@ import {
   _settingsCache, setSettingsCache, db_getSetting,
   REFRESH_MS, TERM_THEME, setFilter,
   _lastClickedProjectPath, sessionSortBy, setSessionSortBy,
-  _appendToOrder,
+  _appendToOrder, tabOrders,
 } from './state.js';
 
 import {
@@ -1186,6 +1186,19 @@ async function pickerSelect(overlayId) {
         body: JSON.stringify({ program_id: window._pendingProgramId }),
       }).catch(() => {});
     }
+    // #592: auto-expand the destination program so the new project is visible
+    // immediately. Pre-fix the program kept its prior collapsed state and the
+    // user had to manually toggle the header to see their just-created project
+    // (a confusing "did Save work?" UX). The CSS rule
+    // `.program-header.collapsed + .program-children { display: none; }` was
+    // hiding the new child until the manual toggle. Match the existing
+    // pattern from program-create at line 245 (`expandedPrograms.add(...)
+    // + persist`). For `_pendingProgramId == null` (Add Project from the
+    // Unassigned context) the `__unassigned__` virtual program is the
+    // bucket; auto-expand that too.
+    const expandKey = window._pendingProgramId == null ? '__unassigned__' : String(window._pendingProgramId);
+    expandedPrograms.add(expandKey);
+    try { localStorage.setItem('expandedPrograms', JSON.stringify([...expandedPrograms])); } catch {}
     window._pendingProgramId = null;
     document.getElementById(overlayId).remove();
     loadState();
@@ -2033,7 +2046,35 @@ async function scheduleLoadState() {
 // solo regardless. Now both paths share the same self-rescheduling entry.
 window._loadStateRef = scheduleLoadState;
 
-scheduleLoadState();
+// #597: restore previously-open CLI session tabs from persisted `tabOrders`
+// after the initial /api/state populates projectState. tabOrders is already
+// localStorage-backed (state.js:14-21); pre-fix, no init pass iterated it
+// to actually re-open the tabs, so the tab bar reset to empty on every
+// reload. File tabs are intentionally NOT restored — they're keyed by an
+// ephemeral `file-<timestamp>` id with no persisted filePath; restoring
+// them needs a separate "file tabs panel" feature beyond this fix's scope.
+async function restoreOpenTabsFromOrder() {
+  const allIds = [...(tabOrders.primary || []), ...(tabOrders.side || [])];
+  if (allIds.length === 0) return;
+  const lookup = new Map();
+  for (const p of projectState) {
+    for (const s of p.sessions) lookup.set(s.id, { session: s, project: p.name });
+  }
+  for (const id of allIds) {
+    if (id.startsWith('file-') || id.startsWith('new_') || id.startsWith('t_')) continue;
+    if (tabs.has(id)) continue;
+    const entry = lookup.get(id);
+    if (!entry) continue; // session deleted upstream; leave order entry as-is (harmless)
+    openSession(entry.session, entry.project);
+  }
+}
+
+// Initial load + tab-restore, THEN start the rescheduling loop.
+(async () => {
+  await loadState();
+  restoreOpenTabsFromOrder();
+  _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+})();
 loadFiles();
 setTimeout(checkAuth, 1000);
 setInterval(checkAuth, 60000);

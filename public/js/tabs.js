@@ -72,6 +72,11 @@ export function switchTab(tabId) {
 
   renderTabs();
   _renderSidebarRef && _renderSidebarRef();
+  // #595: refresh status bar so its model/context/connection indicator reflect
+  // the newly-active tab, not the prior tab's cached values. Pre-fix the
+  // status bar only updated on pollTokenUsage ticks + ws.onopen — switchTab
+  // itself left it stale on the previous tab's data.
+  _updateStatusBarRef && _updateStatusBarRef(panel);
   tabDbg('switchTab:exit', { fromTabId: prevActive, toTabId: tabId, panel });
 }
 

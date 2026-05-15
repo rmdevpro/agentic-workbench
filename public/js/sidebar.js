@@ -388,7 +388,17 @@ export async function loadState() {
       window._cliCreds = await credRes.json();
     } catch { window._cliCreds = { gemini: false, openai: false }; }
 
-    const res = await fetch('/api/state');
+    // #564: short-window retry on transient network failure. The bare
+    // single-attempt fetch used to error out on a TypeError ("Failed to
+    // fetch") and never recover until the next 10s poll, blowing past
+    // SMOKE-PROJ-01 assertion-03's bounded ≤5s window for new-project-
+    // appears-in-sidebar-after-Save. Retries only on thrown errors
+    // (network flake); HTTP 4xx/5xx are not retried (would mask app
+    // failures). 3 attempts × 500ms backoff = worst-case 1.0s extra.
+    // Falls back to the bare fetch if util.js hasn't loaded (defensive;
+    // util.js is loaded before app.js in index.html).
+    const _fetch = (typeof window !== 'undefined' && window.fetchWithRetry) || fetch;
+    const res = await _fetch('/api/state');
     const data = await res.json();
     if (Array.isArray(data.projects)) {
       for (const p of data.projects) {

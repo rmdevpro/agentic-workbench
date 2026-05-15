@@ -243,6 +243,73 @@ module.exports = function createWatchers({
         });
       }
     }
+
+    // #572: also patch the user-scope ~/.claude/.claude.json's
+    // mcpServers.workbench block. entrypoint.sh seeds this via
+    // `claude mcp add-json --scope user`, but if a prior workbench build
+    // wrote a stale args path (e.g., /app/mcp-server.js before the C0
+    // src/ refactor moved the file to /app/src/mcp-server.js), Claude
+    // surfaces a "Conflicting scopes" warning because user and project
+    // scopes disagree on the workbench server's endpoint. Repair the same
+    // way settings.json above is repaired: read, detect stale args path,
+    // rewrite. Idempotent — no-op when already canonical.
+    const claudeJsonFile = join(CLAUDE_HOME, '.claude.json');
+    let claudeJsonCfg = null;
+    try {
+      claudeJsonCfg = JSON.parse(await fsp.readFile(claudeJsonFile, 'utf-8'));
+    } catch (err) {
+      if (err.code === 'ENOENT') {
+        return; // no .claude.json yet — entrypoint will seed it
+      }
+      if (err instanceof SyntaxError) {
+        logger.error(
+          '.claude.json is corrupt — skipping user-scope MCP repair',
+          { module: 'watchers', op: 'registerMcpServer' },
+        );
+        return;
+      }
+      logger.warn('Failed to read .claude.json for user-scope MCP repair', {
+        module: 'watchers',
+        op: 'registerMcpServer',
+        err: err.message,
+      });
+      return;
+    }
+
+    if (!claudeJsonCfg.mcpServers) claudeJsonCfg.mcpServers = {};
+    const userExisting = claudeJsonCfg.mcpServers.workbench;
+    const userIsStale = userExisting && (
+      !userExisting.command ||
+      (Array.isArray(userExisting.args) && userExisting.args[0] !== expectedArgs[0])
+    );
+    if (!userExisting || userIsStale) {
+      claudeJsonCfg.mcpServers.workbench = {
+        command: 'node',
+        args: expectedArgs,
+      };
+      try {
+        await fsp.writeFile(claudeJsonFile, JSON.stringify(claudeJsonCfg, null, 2));
+        if (userIsStale) {
+          logger.info('Repaired stale Workbench MCP server entry in user-scope .claude.json', {
+            module: 'watchers',
+            op: 'registerMcpServer',
+            previousArgs: userExisting.args,
+            expectedArgs,
+          });
+        } else {
+          logger.info('Seeded Workbench MCP server in user-scope .claude.json', {
+            module: 'watchers',
+            op: 'registerMcpServer',
+          });
+        }
+      } catch (err) {
+        logger.error('Could not write user-scope .claude.json MCP entry', {
+          module: 'watchers',
+          op: 'registerMcpServer',
+          err: err.message,
+        });
+      }
+    }
   }
 
   async function registerGeminiMcp() {
@@ -422,6 +489,8 @@ module.exports = function createWatchers({
   async function registerCodexMcp() {
     const HOME = safe.HOME;
     const codexConfigFile = join(HOME, '.codex', 'config.toml');
+    const expectedArgsPath = join(__dirname, 'mcp-server.js');
+    const expectedBlock = `\n[mcp_servers.workbench]\ncommand = "node"\nargs = ["${expectedArgsPath}"]\n`;
     try {
       let content = '';
       try {
@@ -430,11 +499,42 @@ module.exports = function createWatchers({
         if (err.code !== 'ENOENT') throw err;
       }
 
-      if (content.includes('[mcp_servers.workbench]')) return;
+      // #565: the prior existence-only check left stale args paths in place
+      // when an older workbench build had seeded e.g. `mcp-stdio-server.js`.
+      // Parse the existing block (if any) and rewrite when the args path
+      // doesn't match the current source layout. Mirrors the Claude /
+      // Gemini stale-detection at lines ~225 and ~265.
+      const blockHeader = '[mcp_servers.workbench]';
+      const headerIdx = content.indexOf(blockHeader);
+      if (headerIdx >= 0) {
+        // Block spans from the header to the next top-level `[...]` section
+        // or EOF, whichever comes first.
+        const after = content.slice(headerIdx + blockHeader.length);
+        const nextHeaderMatch = after.match(/\n\[[^\]]+\]/);
+        const blockEnd = nextHeaderMatch
+          ? headerIdx + blockHeader.length + nextHeaderMatch.index
+          : content.length;
+        const existingBlock = content.slice(headerIdx, blockEnd);
+        if (existingBlock.includes(expectedArgsPath)) return; // already correct
+        // Stale: strip the existing block + any leading blank line, then
+        // append the correct one. Preserve everything else in the TOML.
+        let prefix = content.slice(0, headerIdx);
+        if (prefix.endsWith('\n')) prefix = prefix.slice(0, -1);
+        const suffix = content.slice(blockEnd);
+        const repaired = prefix + suffix + expectedBlock;
+        await fsp.mkdir(join(HOME, '.codex'), { recursive: true });
+        await fsp.writeFile(codexConfigFile, repaired);
+        logger.info('Repaired stale Workbench MCP server entry for Codex', {
+          module: 'watchers',
+          op: 'registerCodexMcp',
+          expectedArgsPath,
+        });
+        return;
+      }
 
-      const mcpConfig = `\n[mcp_servers.workbench]\ncommand = "node"\nargs = ["${join(__dirname, 'mcp-server.js')}"]\n`;
+      // No existing block — append fresh.
       await fsp.mkdir(join(HOME, '.codex'), { recursive: true });
-      await fsp.appendFile(codexConfigFile, mcpConfig);
+      await fsp.appendFile(codexConfigFile, expectedBlock);
       logger.info('Registered Workbench MCP server for Codex', { module: 'watchers' });
     } catch (err) {
       logger.error('Could not write Codex MCP config', { module: 'watchers', err: err.message });

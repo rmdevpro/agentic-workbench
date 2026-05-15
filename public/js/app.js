@@ -581,12 +581,77 @@ async function openProjectConfig(projectName) {
           <button onclick="document.getElementById('${overlayId}').remove();openProjectPrompt('${escHtml(config.path || '')}','AGENTS.md')" style="padding:4px 12px;background:var(--bg-tertiary);color:var(--text-primary);border:1px solid var(--border);border-radius:4px;cursor:pointer;font-size:12px"><span style="color:#10a37f;font-weight:bold">X</span> Codex</button>
         </div>
       </div>
+      <div style="margin-bottom:16px">
+        <label style="font-size:12px;color:var(--text-muted);display:block;margin-bottom:4px">MCP Servers (enabled for this project)</label>
+        <div id="proj-cfg-mcp-list" style="border:1px solid var(--border);border-radius:4px;padding:6px;background:var(--bg-primary);min-height:32px;font-size:12px;color:var(--text-muted)">Loading…</div>
+      </div>
       <div style="display:flex;gap:8px">
         <button onclick="saveProjectConfig('${escHtml(projectName)}', '${overlayId}')" style="padding:6px 16px;background:var(--accent);color:#0d1117;border:none;border-radius:4px;cursor:pointer;font-size:13px;font-weight:600">Save</button>
       </div>
     </div>
   `;
   document.body.appendChild(overlay);
+  // #570: render the per-project MCP Servers checklist into the modal. Each
+  // entry has a checkbox bound to POST/DELETE /api/projects/:name/mcp; on
+  // toggle the server is enabled/disabled and the per-CLI config files are
+  // rewritten by the backend so live sessions see the change.
+  _renderProjectMcpList(projectName);
+}
+
+async function _renderProjectMcpList(projectName) {
+  const listEl = document.getElementById('proj-cfg-mcp-list');
+  if (!listEl) return;
+  let data;
+  try {
+    const res = await fetch(`/api/projects/${encodeURIComponent(projectName)}/mcp`);
+    data = await res.json();
+  } catch (err) {
+    listEl.textContent = `Error loading MCP servers: ${err.message}`;
+    return;
+  }
+  const available = data.available || [];
+  if (available.length === 0) {
+    listEl.textContent = 'No MCP servers registered globally. Register one in Settings → MCP Servers.';
+    return;
+  }
+  listEl.innerHTML = available.map(s => {
+    const enabledTitle = s.enabled
+      ? `Enabled for ${projectName}. Click ✕ to disable.`
+      : `Click + to enable for ${projectName}.`;
+    return `
+      <div data-mcp-name="${escHtml(s.name)}" style="display:flex;align-items:center;gap:8px;padding:4px 2px;border-bottom:1px solid var(--bg-tertiary)">
+        <button class="proj-mcp-toggle" data-mcp-name="${escHtml(s.name)}" data-enabled="${s.enabled ? 'true' : 'false'}" title="${enabledTitle}" style="padding:2px 8px;background:${s.enabled ? 'var(--accent)' : 'var(--bg-tertiary)'};color:${s.enabled ? '#0d1117' : 'var(--text-primary)'};border:1px solid var(--border);border-radius:3px;cursor:pointer;font-size:11px;min-width:24px">${s.enabled ? '✕' : '+'}</button>
+        <span style="flex:1;font-family:monospace;color:var(--text-primary)">${escHtml(s.name)}</span>
+        <span style="color:var(--text-muted);font-size:11px">${escHtml(s.transport || 'stdio')}</span>
+      </div>
+    `;
+  }).join('');
+  // Wire toggle clicks. The listEl is replaced on each render so re-binding
+  // every time is fine; no leaked listeners.
+  listEl.querySelectorAll('.proj-mcp-toggle').forEach(btn => {
+    btn.addEventListener('click', async (ev) => {
+      ev.preventDefault();
+      const mcpName = btn.dataset.mcpName;
+      const wasEnabled = btn.dataset.enabled === 'true';
+      btn.disabled = true;
+      try {
+        if (wasEnabled) {
+          await fetch(`/api/projects/${encodeURIComponent(projectName)}/mcp/${encodeURIComponent(mcpName)}`, { method: 'DELETE' });
+        } else {
+          await fetch(`/api/projects/${encodeURIComponent(projectName)}/mcp`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mcp_name: mcpName }),
+          });
+        }
+        // Re-render to reflect new state (also re-fetches in case other tabs
+        // changed the set concurrently).
+        await _renderProjectMcpList(projectName);
+      } catch (err) {
+        btn.disabled = false;
+        listEl.insertAdjacentHTML('beforeend', `<div style="color:var(--accent-error,#f55);font-size:11px;margin-top:4px">Toggle failed: ${escHtml(err.message)}</div>`);
+      }
+    });
+  });
 }
 
 async function openProjectPrompt(projectPath, filename) {
@@ -1664,12 +1729,28 @@ async function checkAuth() {
   try {
     const res = await fetch('/api/auth/status');
     const status = await res.json();
-    if (!status.valid) showAuthBanner(status.reason);
+    // #571: surface per-CLI auth-broken state (Claude / Gemini) so the banner
+    // can name the right CLI and the right slash command. The legacy `valid`
+    // field stays Claude-focused; `per_cli` is the richer signal.
+    const broken = [];
+    const perCli = status.per_cli || {};
+    if (perCli.claude?.broken) {
+      broken.push({ cli: 'Claude', cmd: perCli.claude.reauth_command || '/login' });
+    }
+    if (perCli.gemini?.broken) {
+      broken.push({ cli: 'Gemini', cmd: perCli.gemini.reauth_command || '/auth' });
+    }
+    // Fall back to legacy `valid` flag when per_cli isn't populated yet (older
+    // server build): treat as Claude broken to preserve prior behavior.
+    if (broken.length === 0 && !status.valid) {
+      broken.push({ cli: 'Claude', cmd: '/login' });
+    }
+    if (broken.length > 0) showAuthBanner(broken);
     else hideAuthBanner();
   } catch (err) { console.error('Auth check failed:', err); }
 }
 
-function showAuthBanner(reason) {
+function showAuthBanner(broken) {
   let banner = document.getElementById('auth-banner');
   if (!banner) {
     banner = document.createElement('div');
@@ -1682,10 +1763,13 @@ function showAuthBanner(reason) {
       else if (main) main.prepend(banner);
     })();
   }
-  banner.innerHTML = `
-    <span style="font-size:16px">&#9888;</span>
-    <span>Not authenticated — open any session and run <code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px;font-size:12px">/login</code> to authenticate all sessions</span>
-  `;
+  // #571: per-CLI message — names the affected CLI(s) explicitly and the
+  // correct slash command for each. Avoids the prior "run /login" guidance
+  // for Gemini sessions (Gemini uses /auth, not /login).
+  const lines = broken.map(b =>
+    `<span><b>${b.cli}</b> not authenticated — open any ${b.cli} session and run <code style="background:var(--bg-primary);padding:2px 6px;border-radius:3px;font-size:12px">${b.cmd}</code></span>`
+  ).join('<span style="opacity:0.4;margin:0 4px">·</span>');
+  banner.innerHTML = `<span style="font-size:16px">&#9888;</span>${lines}`;
 }
 
 function hideAuthBanner() {
@@ -1823,6 +1907,37 @@ window._pollTokenUsage = pollTokenUsage;
 
 // Expose renderSidebar reference for state.js setFilter
 window._renderSidebarRef = renderSidebar;
+
+// #574: re-fit every terminal tab on window resize. The xterm FitAddon doesn't
+// hook resize itself; without this the user's manual browser-window resize
+// leaves every tab at its previous column count (observed: cold-side-car
+// fresh-data deployments rendering at 1-column-wide until a Playwright
+// dispatchEvent('resize') triggered fit). Debounced to coalesce rapid resize
+// events; only fits visible / WS-connected tabs.
+let _resizeFitTimer = null;
+window.addEventListener('resize', () => {
+  clearTimeout(_resizeFitTimer);
+  _resizeFitTimer = setTimeout(() => {
+    for (const [, tab] of tabs) {
+      if (tab.type === 'file') continue;
+      if (!tab.fitAddon || !tab.paneEl) continue;
+      if (tab.paneEl.clientWidth <= 0 || tab.paneEl.clientHeight <= 0) continue;
+      try {
+        tab.fitAddon.fit();
+        const dims = tab.fitAddon.proposeDimensions();
+        if (
+          dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows)
+          && dims.cols > 0 && dims.rows > 0
+          && tab.ws?.readyState === WebSocket.OPEN
+        ) {
+          tab.ws.send(JSON.stringify({ type: 'resize', cols: dims.cols, rows: dims.rows }));
+        }
+      } catch {
+        /* ignore — fitAddon may not have dims yet for a pre-connect tab */
+      }
+    }
+  }, 100);
+});
 
 // ── Global window exports for HTML inline handlers ────────────────────────────
 window.openSettings = openSettings;

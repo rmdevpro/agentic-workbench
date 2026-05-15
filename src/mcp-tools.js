@@ -1231,4 +1231,9 @@ const { TOOLS, CATALOG_NAMES } = require('./mcp-catalog');
 module.exports = {
   registerMcpRoutes, handlers, dispatch, TOOL_NAMES, ToolError, _collectGhOutput,
   TOOLS, CATALOG_NAMES,
+  // #570: expose the per-project MCP config writer so the HTTP routes
+  // (routes/projects.js) can reuse it after enabling/disabling a server
+  // through the UI, matching the side-effects that the MCP-tool handlers
+  // produce (project_mcp_enable / project_mcp_disable).
+  _writeProjectMcpForAllCLIs,
 };

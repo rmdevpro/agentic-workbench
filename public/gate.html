@@ -228,7 +228,53 @@
       pc.querySelector('.login-form').style.display = 'block';
     }
 
+    // #569: rate-limit cooldown state — when the gate returns 429 with a
+    // Retry-After header, the Sign-In button is disabled for that many
+    // seconds and the banner counts down. Without this, the rate-limit
+    // feature is invisible to the user — they see the same "Invalid"
+    // banner regardless of whether they're being throttled.
+    let _retryAfterUntil = 0; // epoch ms; 0 = not throttled
+    let _retryTickTimer = null;
+    const _signInBtn = document.querySelector('.btn-primary[onclick="doLogin()"]');
+
+    function _setBannerThrottled(secsRemaining) {
+      const errorEl = document.getElementById('login-error');
+      errorEl.textContent = `Too many attempts. Try again in ${secsRemaining}s.`;
+      errorEl.style.display = 'block';
+    }
+
+    function _setSignInDisabled(disabled) {
+      if (!_signInBtn) return;
+      _signInBtn.disabled = disabled;
+      _signInBtn.style.opacity = disabled ? '0.5' : '';
+      _signInBtn.style.cursor = disabled ? 'not-allowed' : '';
+    }
+
+    function _startRetryCountdown(seconds) {
+      _retryAfterUntil = Date.now() + seconds * 1000;
+      _setSignInDisabled(true);
+      _setBannerThrottled(seconds);
+      if (_retryTickTimer) clearInterval(_retryTickTimer);
+      _retryTickTimer = setInterval(() => {
+        const remaining = Math.max(0, Math.ceil((_retryAfterUntil - Date.now()) / 1000));
+        if (remaining <= 0) {
+          clearInterval(_retryTickTimer);
+          _retryTickTimer = null;
+          _retryAfterUntil = 0;
+          _setSignInDisabled(false);
+          const errorEl = document.getElementById('login-error');
+          errorEl.style.display = 'none';
+        } else {
+          _setBannerThrottled(remaining);
+        }
+      }, 1000);
+    }
+
     async function doLogin() {
+      // #569: block submission during cooldown — the button is also visually
+      // disabled, but the keydown Enter handler bypasses click-disabled state.
+      if (_retryAfterUntil > Date.now()) return;
+
       const username = document.getElementById('username').value;
       const password = document.getElementById('password').value;
       const errorEl = document.getElementById('login-error');
@@ -242,15 +288,15 @@
         });
         if (res.ok) {
           window.location.reload();
+        } else if (res.status === 429) {
+          // #569: read Retry-After header to compute a precise cooldown
+          // duration. #568 set this header in seconds; fall back to 60s
+          // if the proxy stripped it.
+          const ra = res.headers.get('Retry-After');
+          const secs = ra && /^\d+$/.test(ra) ? parseInt(ra, 10) : 60;
+          _startRetryCountdown(secs);
         } else {
-          // #351 [D2]: differentiate rate-limit (429) from invalid-creds (401)
-          // so the user can tell when they're being throttled vs. typing the
-          // wrong password.
-          if (res.status === 429) {
-            errorEl.textContent = 'Too many attempts; please wait a moment and try again.';
-          } else {
-            errorEl.textContent = 'Invalid username or password';
-          }
+          errorEl.textContent = 'Invalid username or password';
           errorEl.style.display = 'block';
         }
       } catch {

@@ -17,7 +17,31 @@ function register(app, {
 
   app.get('/api/auth/status', async (req, res) => {
     try {
-      res.json(await _checkAuthStatus());
+      // Claude auth-validity (credential file readable + non-expired tokens).
+      const claudeStatus = await _checkAuthStatus();
+      // #571: per-CLI auth-broken signals surfaced by the keepalive module so
+      // the UI banner can render CLI-specific guidance. Claude: "run /login"
+      // (claude CLI). Gemini: "run /auth" (gemini CLI, different slash).
+      // Without this split the banner was Claude-Code-flavored even when the
+      // actual broken CLI was Gemini, leaving the operator stuck.
+      const kaAuth = typeof keepalive.getAuthBrokenStatus === 'function'
+        ? keepalive.getAuthBrokenStatus()
+        : { claude: { broken: false }, gemini: { broken: false } };
+      res.json({
+        ...claudeStatus,
+        per_cli: {
+          claude: {
+            broken: kaAuth.claude.broken || !claudeStatus.valid,
+            reason: kaAuth.claude.broken ? 'keepalive_auth_broken' : claudeStatus.reason,
+            reauth_command: '/login',
+          },
+          gemini: {
+            broken: kaAuth.gemini.broken,
+            reason: kaAuth.gemini.broken ? 'invalid_grant' : null,
+            reauth_command: '/auth',
+          },
+        },
+      });
     } catch (err) {
       res.json({ valid: false, reason: err.message });
     }

@@ -2008,9 +2008,33 @@ _wireDropZones();
 initTaskEventListeners();
 initIssuePickerListeners();
 
-loadState();
+// #587: self-rescheduling loadState loop. Pre-fix the baseline used a fixed
+// `setInterval(loadState, REFRESH_MS)` that fired regardless of whether a
+// WS push had ALREADY triggered a loadState in the last few seconds — the
+// baseline tick ~8s after a WS-driven loadState repeated work that just
+// happened. The new pattern reschedules from the END of each loadState
+// invocation, so the next baseline tick is always REFRESH_MS after the
+// most-recent loadState (whatever caused it). The WS handler in
+// terminal.js:95 calls `window._loadStateRef()` → `scheduleLoadState` →
+// resets the baseline timer naturally.
+let _loadStateTimer = null;
+async function scheduleLoadState() {
+  if (_loadStateTimer) { clearTimeout(_loadStateTimer); _loadStateTimer = null; }
+  try { await loadState(); }
+  finally {
+    _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+  }
+}
+
+// Wire WS-triggered loadState through the same rescheduling helper so a WS
+// push (terminal.js:111 token_update / line 122 settings_update) resets the
+// baseline timer for free. Pre-fix `_loadStateRef` was referenced but never
+// assigned, so WS pushes silently no-op'd and the baseline 10s tick ran
+// solo regardless. Now both paths share the same self-rescheduling entry.
+window._loadStateRef = scheduleLoadState;
+
+scheduleLoadState();
 loadFiles();
-setInterval(loadState, REFRESH_MS);
 setTimeout(checkAuth, 1000);
 setInterval(checkAuth, 60000);
 setTimeout(checkErrors, 2000);

@@ -2434,3 +2434,129 @@ Disposition: **out of scope for runbook execution.** The HF test space is a publ
 - **§12.11 axis-1 toggle both-states:** 5/6 toggles fully covered (Codex OAuth-detection toggle is N/A by feature absence — the toggle's effect on Codex cannot be observed in-session because Codex has no in-session OAuth trigger to gate; the toggle's persistence is still verified by 0.E.CODEX)
 - **§12.11 axis-2 peer parity:** OAuth-detector module reduced from 3 peers to 2 (Claude + Gemini); all other multi-CLI code paths unchanged
 - **§12.11 axis-3 explicit Setup:** 13/13 entries with explicit precondition Setup (unchanged)
+
+---
+
+## Section 16: Milestone 01-stabilization (stage 5 backfill)
+
+Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test) coverage for the 24 issues in milestone `01-stabilization` that reached 3-of-3 reviewer pass on stages 1/2/4 (or 2-of-2 per Codex-quota override on #323 / #389). Per the PM dispatch:
+
+- **Bug-fix entries (4 new):** 16.1 (#483), 16.2 (#522), 16.3 (#564), 16.4 (#198 + cascade #252 / #253 / #268 / #275).
+- **Baseline-smoke cascade (20 issues):** the remaining issues (#318, #319, #320, #321, #322, #323, #324, #325, #389, #395, #397, #398, #399, #400, #401, #409, #412, #413, #414) are doc / test / build / Q-series cleanup whose UI surface is the consumer panels exercised by Section 1 (SMOKE-* entries) and the cold-load file-tree / settings entries in Section 2 (SHELL-FILETREE-ID-01, FILES-NOJQUERY-01, SHELL-SETTINGS-OPEN-01) per PROC-003 §2 baseline. The per-issue grid row 5 cites the existing smoke entries that exercise its surface — no separate new entry per issue per the PM's "backend-only fixes already in the milestone … a baseline-smoke runbook entry exercising the consume path is sufficient" instruction.
+
+### 16.1: F-TERM-SCROLLBACK-WIDTH-01 — Terminal scrollback renders at the client's column width after WS reconnect
+
+**Cascade-from:** SMOKE-CHAT-01 (a chat session exists with rendered scrollback)
+**Closes gap for:** #483 (scrollback corruption — progressive indent + reshuffle on reconnect). Also covers #252 (`session_resume_post_compact` writes tail-to-file; the resume-after-disconnect path tail-renders into this same xterm scrollback surface).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, gate passed if applicable, sidebar visible. SMOKE-CHAT-01 already PASSED, so a `smoke-chat-claude` session tab exists with a multi-screen response rendered in its terminal pane.
+2. Click the `smoke-chat-claude` tab to make it active.
+3. Resize the browser window to a non-default width — drag the window's right edge so the terminal pane is rendered at approximately 100 cols (visible character columns in the pane; the agent affirms by counting the pane's visible monospace columns at a frame). Capture a baseline screenshot of the active pane showing a known anchor line (e.g. the prompt `what is 7 times 8`) and the response below it, fully visible without horizontal scrollbar.
+4. In the same pane, send a prompt that produces enough wrapped output to fill scrollback: type `list every two-letter combination from aa to zz, one per line`, press Enter, wait up to 60s for the response to complete (capture a frame showing the last line near `zz`).
+
+**Steps:**
+1. Force a WS disconnect: in Playwright, `context.setOffline(true)`. Hold for 2s.
+2. Re-enable: `context.setOffline(false)`. The terminal pane reconnects (status indicator moves from disconnected → connected within 5s).
+3. After reconnect, scroll the terminal pane up using the mouse wheel (or keyboard `Shift+PageUp`) until the original anchor line `what is 7 times 8` is visible at the top of the viewport.
+4. Capture a screenshot of the scrolled-up viewport.
+
+**Verify (numbered assertions):**
+
+1. Within 1s of `context.setOffline(true)`, the tab's connection indicator moves to a disconnected visual state (status dot turns red / disconnected glyph appears). *(Cascades from SMOKE-CHAT-01 — a tab exists and was connected.)* → `16.1/assertion-01-disconnect-indicator.png`
+2. Within 5s of `context.setOffline(false)`, the tab's connection indicator returns to the connected visual state (status dot turns green / connected glyph). → `16.1/assertion-02-reconnect-indicator.png`
+3. After scroll-up to the anchor line, the rendered anchor line is the original prompt `what is 7 times 8` followed by the original response containing `56`, with line breaks at the SAME column positions as the baseline screenshot in Setup step 3 — no progressive-indent drift, no reshuffle, no missing chunks. The agent reads both screenshots and affirms positional equality of the indentation pattern at the anchor + the line immediately following it. *(Static content read after reconnect bound is satisfied by assertion 2.)* → `16.1/assertion-03-scrollback-positional-equality.png`
+4. The scrollback contains no garbage characters at the right edge that aren't in the baseline (no `^[[` sequences leaking through, no doubled-up cursor-position residues). Static content read against the same screenshot as assertion 3. → `16.1/assertion-04-no-garbage-right-edge.png`
+
+**Teardown:** none — the tab and its scrollback are left as-is for subsequent entries.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 16.2: F-TAB-DRAG-REORDER-01 — Drag-reorder works identically for CLI session tabs and file (doc) tabs
+
+**Cascade-from:** SMOKE-CHAT-01 (CLI tabs exist) + SMOKE-FILES-01 (file browser usable)
+**Closes gap for:** #522 (doc-tab reorder reported not to work). Tests both CLI and file tabs explicitly per §12.11 axis-2 peer parity (same drop-handler code path; two surfaces).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, sidebar visible. The three `smoke-chat-{claude,gemini,codex}` tabs from SMOKE-CHAT-01 are open in the primary tab bar.
+2. Open the Files panel (per SMOKE-FILES-01); expand the workspace root to `/data/workspace/wb-seed`; click a small text file (e.g. `README.md` if present, or any `.md` in that project) to open it as a file tab. The file tab opens; per `openFileTab` it defaults to the side panel — drag it into the primary tab bar (drag the file tab from the side bar into the primary bar) so all four tabs are co-located. Open a second file tab the same way (any second `.md`) and drop it into the primary bar.
+3. Confirm the primary tab bar now shows 5 tabs in this initial order: `smoke-chat-claude`, `smoke-chat-gemini`, `smoke-chat-codex`, `<file-1>`, `<file-2>`. Capture a baseline screenshot.
+
+**Steps:**
+1. Drag the `<file-2>` tab onto the `smoke-chat-claude` tab — release with the drop indicator showing on the LEFT half of `smoke-chat-claude` (drop-before). Capture a screenshot immediately after release.
+2. Drag the `smoke-chat-codex` tab onto the `<file-1>` tab — release with the drop indicator on the RIGHT half (drop-after). Capture a screenshot immediately after release.
+3. Reload the page (browser refresh). Wait for the sidebar + tab bar to re-render.
+
+**Verify (numbered assertions):**
+
+1. Baseline tab order is `smoke-chat-claude`, `smoke-chat-gemini`, `smoke-chat-codex`, `<file-1>`, `<file-2>`. → `16.2/assertion-01-baseline-order.png`
+2. Within 1s of step 1's drop, the tab bar shows `<file-2>` immediately to the LEFT of `smoke-chat-claude` — i.e. the new order is `<file-2>, smoke-chat-claude, smoke-chat-gemini, smoke-chat-codex, <file-1>`. → `16.2/assertion-02-file-tab-reordered-before-cli.png`
+3. Within 1s of step 2's drop, the tab bar shows `smoke-chat-codex` immediately to the RIGHT of `<file-1>` — i.e. the new order is `<file-2>, smoke-chat-claude, smoke-chat-gemini, <file-1>, smoke-chat-codex`. This assertion confirms CLI session tabs also reorder cleanly (peer-parity with the file-tab case in assertion 2). → `16.2/assertion-03-cli-tab-reordered-after-file.png`
+4. Within 5s of page reload, the persisted order from assertion 3 is restored. → `16.2/assertion-04-order-persisted-after-reload.png`
+
+**Teardown:** close the two file tabs (`×` on each). The three CLI tabs remain.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 16.3: F-SIDEBAR-LOADSTATE-RETRY-01 — Sidebar hydrates after Add Project within 5s despite a transient `loadState` fetch failure
+
+**Cascade-from:** SMOKE-PROJ-01 (assertion-03 covers the 5s bound on the happy path; this entry adds the fetch-failure variant per §12.11 axis-1)
+**Closes gap for:** #564.
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, sidebar visible. SMOKE-PROJ-01 has PASSED on the happy path.
+2. Open Playwright DevTools (or use the page's `context.route(...)` API in the executor) to register a one-shot intercept that fails the FIRST request to `/api/state` after the next Add Project click — return a network failure (abort) so the client sees `TypeError: Failed to fetch`. Subsequent `/api/state` requests proceed normally. The intercept self-disarms after firing once.
+3. No project named `retry-proj-<timestamp>` exists.
+
+**Steps:**
+1. Click the `+ Project` affordance at the top of the sidebar.
+2. Project-create modal appears.
+3. Type `retry-proj-<timestamp>` into the name field and `/data/workspace/retry-proj-<timestamp>` into the path field.
+4. Click Save. The modal dismisses; under the hood `loadState()` fires; the one-shot intercept causes the first `/api/state` fetch to fail with `TypeError`; the new `fetchWithRetry` helper (#564) retries within 500-1000ms and the second attempt succeeds.
+5. Capture screenshots at 1s intervals for 6s total, starting from the Save click.
+
+**Verify (numbered assertions):**
+
+1. Within 1s of clicking `+ Project`, the project-create modal renders with a heading naming the create action. *(Cascades from SMOKE-PROJ-01 assertion-01.)* → `16.3/assertion-01-modal-visible.png`
+2. Within 2s of clicking Save, the project-create modal is no longer visible. *(Cascades from SMOKE-PROJ-01 assertion-02.)* → `16.3/assertion-02-modal-dismissed.png`
+3. Within 5s of clicking Save (the SMOKE-PROJ-01 assertion-03 bound — preserved across the transient fetch failure), a project entry labeled `retry-proj-<timestamp>` is visible in the sidebar. The screenshot poll captures a frame at every 1s tick; the first frame where the new project row is visible passes this verify line. → `16.3/assertion-03-project-in-sidebar-after-retry.png`
+4. The browser console contains exactly one `Failed to load state: TypeError: Failed to fetch` entry between the Save click and the project row appearing (corroborating the retry fired and the helper recovered — diagnostic-only per §12.7; the verify primary is assertion 3). Capture the DevTools console panel showing the single entry. → `16.3/assertion-04-single-typeerror-in-console.png`
+
+**Teardown:** delete the project via the sidebar's ✎ pencil → Remove (per existing PROJECT-CONFIG-STATE-VIA-PENCIL-01 pattern) to keep state clean for downstream entries.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 16.4: F-MCP-SESSION-CONFIG-METADATA-01 — `session_config` rename reflects in the sidebar within 2s; per-CLI parity
+
+**Cascade-from:** SMOKE-CHAT-01 (three CLI sessions exist) + SMOKE-MCP-01 (MCP-via-executor pattern)
+**Closes gap for:** #198 (session_config returns full metadata after write — the sidebar is the consumer surface). Per PM dispatch, also baseline-smoke-cascades for #252 (`session_resume_post_compact` tail-to-file: returns a prompt referencing a `/tmp` path; the consumer surface is the terminal pane that renders the returned prompt — exercised by the next-prompt step in SMOKE-CHAT-01 and 16.1), #253 (`session_send_text` `maxLength` + description: tool metadata visible via the executor's MCP discovery — no separate render surface, baseline smoke is the verification), #268 (`session_export` empty-transcript shape: returned via MCP; sidebar is not the consumer — the executor reads the returned shape directly; baseline-smoke equivalent), and #275 (codex role-seed bounded time: exercised by SMOKE-CHAT-01's codex branch which creates a codex session within bound).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, sidebar visible. The three `smoke-chat-{claude,gemini,codex}` tabs from SMOKE-CHAT-01 are open; their session rows are visible in the sidebar under `wb-seed`.
+2. For each `<cli>` in `[claude, gemini, codex]` in turn, perform Steps + Verify in sequence (three iterations of the same flow — explicit per-CLI peer parity per §12.11 axis-2).
+
+**Steps (per CLI iteration):**
+1. From the executor, invoke `mcp__workbench__session_config` with `{session_id: "<the cli's session id from the sidebar row>", name: "renamed-<cli>-<timestamp>", notes: "stage-5-test"}`.
+2. The MCP call returns; the result body contains the full session metadata (id, cli_type, name, state, notes per #198) — the executor records the result for diagnostic purposes only (the verify is on the sidebar's rendered view).
+3. Capture screenshots of the sidebar at 1s intervals for 3s total starting from the MCP call return.
+
+**Verify (numbered assertions, three per CLI = 9 total):**
+
+For each `<cli>`:
+
+- **N (per cli):** Within 2s of the MCP `session_config` call returning, the sidebar row under `wb-seed` that previously read `smoke-chat-<cli>` now reads `renamed-<cli>-<timestamp>`. Screenshot polling per §12.8. → `16.4/assertion-<N>-<cli>-sidebar-renamed.png`
+- **N+1 (per cli):** The renamed session row remains under the `wb-seed` project (not moved, not duplicated, not vanished) — only the displayed name changed. Static content read against the same frame as N. → `16.4/assertion-<N+1>-<cli>-row-stable.png`
+- **N+2 (per cli):** The MCP call's returned body (recorded in step 2 — diagnostic, not the primary verify, but pinned here so the executor confirms the read-after-write metadata shape from #198 actually came back) carries `result.name == "renamed-<cli>-<timestamp>"`, `result.cli_type == "<cli>"`, `result.id == "<the session id>"`, `result.notes == "stage-5-test"`, and `result.saved == true`. Affirmed by the agent reading the MCP-call response text in the executor pane (this assertion uses the executor's MCP response display — the rendered text in the executor terminal — not internal-JS reads). → `16.4/assertion-<N+2>-<cli>-mcp-response.png`
+
+**Teardown:** for each CLI, rename the session back to `smoke-chat-<cli>` via a second `session_config` call to leave state clean for downstream entries.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### Coverage after Section 16
+
+- **Entries added:** 4 (16.1–16.4)
+- **Issues covered with dedicated entries:** #198, #483, #522, #564
+- **Issues covered via §12.10 cascade declarations to existing baseline-smoke / cold-load entries:** #252, #253, #268, #275 (cascade from 16.4 / SMOKE-CHAT-01); #318, #319, #320, #321, #322, #323, #324, #325, #389, #395, #397, #398, #399, #400, #401, #409, #412, #413, #414 (cascade from Section 1 SMOKE-* + Section 2 SHELL-* per PROC-003 §2 baseline-smoke is sufficient for doc / test / build / Q-series cleanup with consumer surfaces already exercised by smoke)
+- **§12.11 axis-1 (toggle both-states):** 16.3 adds the negative-of-happy-path for `loadState` (success ↔ transient-fail-then-recover); the positive happy-path is the existing SMOKE-PROJ-01.
+- **§12.11 axis-2 (peer parity):** 16.2 explicitly tests CLI tabs + file tabs against the same reorder code path; 16.4 explicitly iterates claude / gemini / codex against the same `session_config` MCP path.
+- **§12.11 axis-3 (explicit Setup):** each new entry's Setup block names the precondition state without assuming defaults.

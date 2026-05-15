@@ -443,6 +443,55 @@ test('MCP session_summarize resolves project from session row when arg missing (
   }
 });
 
+// #198: session_config previously returned `{saved:true}` only. Callers that
+// needed post-write metadata (id, name, state, cli_type, model, …) had to
+// follow up with session_info — costly and racy under cache TTL. The fix
+// invalidates the session_info cache then read-after-writes via
+// getSessionInfo and returns the merged shape `{...info, saved:true}`.
+test('MCP session_config returns full session metadata after write (#198)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const { join } = require('path');
+  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_198_proj');
+  fs.mkdirSync(projPath, { recursive: true });
+  const proj = db.ensureProject('mock_198_proj', projPath);
+  try {
+    db.upsertSession('mock-198-session', proj.id, 'pre-rename', 'claude');
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, {
+        tool: 'session_config',
+        args: { session_id: 'mock-198-session', name: 'post-rename', notes: 'engineer-test' },
+      });
+      assert.equal(r.status, 200, `expected 200; got ${r.status}: ${JSON.stringify(r.body)}`);
+      const result = r.body.result;
+      // saved:true preserved for backward compat
+      assert.equal(result.saved, true, `saved:true must be preserved; got ${JSON.stringify(result)}`);
+      // Full metadata returned
+      assert.equal(result.id, 'mock-198-session', `id must echo session_id; got ${result.id}`);
+      assert.equal(result.cli_type, 'claude', `cli_type must be 'claude'; got ${result.cli_type}`);
+      // Read-after-write: the new name from this call must be reflected
+      assert.equal(result.name, 'post-rename', `name must reflect the rename; got ${result.name}`);
+      assert.equal(result.notes, 'engineer-test', `notes must reflect the write; got ${result.notes}`);
+      // Cache was invalidated, so a follow-up read sees the same fresh state
+      assert.ok(typeof result.state === 'string', `state must be present; got ${typeof result.state}`);
+    });
+  } finally {
+    try { db.deleteSession('mock-198-session'); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+  }
+});
+
+test('MCP session_config 404s on missing session (#198 / read-after-write contract)', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'session_config',
+      args: { session_id: 'definitely-not-a-real-198-session-id', name: 'noop' },
+    });
+    assert.equal(r.status, 404, `expected 404; got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.match(r.body.error || '', /session not found/i);
+  });
+});
+
 // #437: session_list previously walked <project>/.claude/sessions/*.jsonl which
 // is Claude-only — gemini and codex sessions (rows in the sessions DB table
 // with non-claude cli_type) were invisible to MCP clients. The fix queries

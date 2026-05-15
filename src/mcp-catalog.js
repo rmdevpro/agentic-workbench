@@ -78,7 +78,7 @@ const TOOLS = [
   T('session_list', 'List sessions in a project, sorted newest first.', {
     project: P.project,
   }, ['project']),
-  T('session_config', 'Update session metadata (name / state / notes).', {
+  T('session_config', 'Update session metadata (name / state / notes) and return the full post-write session metadata (id, name, state, cli_type, model, tokens, …) so callers see read-after-write state. #198.', {
     session_id: P.session_id,
     name: { type: 'string' },
     state: { type: 'string', enum: ['active', 'archived', 'hidden'] },

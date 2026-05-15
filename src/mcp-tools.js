@@ -342,7 +342,16 @@ handlers.session_config = async (args) => {
   if (args.name !== undefined) db.renameSession(args.session_id, args.name);
   if (args.state !== undefined) db.setSessionState(args.session_id, args.state);
   if (args.notes !== undefined) db.setSessionNotes(args.session_id, args.notes);
-  return { saved: true };
+  // #198: return read-after-write metadata, not just {saved:true}. Drop the
+  // session's cache entry so the post-write read reflects fresh DB values
+  // (rename / state / notes), then re-fetch via the same path session_info
+  // uses. Throws 404 if the session_id doesn't resolve, matching session_info
+  // semantics. `saved:true` is preserved alongside the metadata so callers
+  // keyed off the prior shape continue to work.
+  sessionUtils.invalidateSessionInfoCache(args.session_id);
+  const info = await sessionUtils.getSessionInfo(args.session_id);
+  if (!info) throw new ToolError('session not found', 404);
+  return { ...info, saved: true };
 };
 
 handlers.session_summarize = async (args) => {

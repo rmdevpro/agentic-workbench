@@ -81,3 +81,44 @@ test('MCP unknown tool returns 404', async () => {
   const r = await post('/api/mcp/call', { tool: 'nonexistent_tool', args: {} });
   assert.equal(r.status, 404);
 });
+
+// #198 / REG-META-04: session_config used to return `{saved:true}` only. The
+// fix makes it read-after-write via getSessionInfo (cache invalidated first)
+// and return the merged metadata. Three variants — one per cli_type — verify
+// per-CLI parity through the same MCP call path.
+async function _seedProjectAndSession(projName, sessId, sessName, cliType) {
+  await post('/api/projects', { path: `/data/workspace/${projName}`, name: projName });
+  await post('/api/sessions', { project: projName, name: sessName, prompt: sessName, cli_type: cliType });
+  // /api/sessions returns the actual session_id; resolve it by calling
+  // session_list for the project and picking the most-recent of the right
+  // cli_type. The mock-style "use a fixed sessId" doesn't apply on live
+  // since real CLIs assign their own IDs.
+  const r = await post('/api/mcp/call', { tool: 'session_list', args: { project: projName } });
+  const sessions = r.data?.result?.sessions || [];
+  const match = sessions.filter(s => s.cli_type === cliType).pop();
+  return match?.id || sessId;
+}
+
+for (const cliType of ['claude', 'gemini', 'codex']) {
+  test(`#198 REG-META-04 (${cliType}): session_config returns full metadata after rename, not just {saved:true}`, async () => {
+    await resetBaseline();
+    const projName = `issue198_${cliType}_proj`;
+    const id = await _seedProjectAndSession(projName, null, `198-${cliType}`, cliType);
+    assert.ok(id, `failed to seed/resolve ${cliType} session in ${projName}`);
+
+    // Rename via session_config and assert the returned shape carries the
+    // new name + cli_type + state (post-write, not stale cache).
+    const r = await post('/api/mcp/call', {
+      tool: 'session_config',
+      args: { session_id: id, name: `198-${cliType}-renamed`, notes: 'REG-META-04 live test' },
+    });
+    assert.equal(r.status, 200, `${cliType} session_config status: ${r.status}: ${JSON.stringify(r.data)}`);
+    const result = r.data.result;
+    assert.equal(result.saved, true, `${cliType}: saved:true must be preserved`);
+    assert.equal(result.id, id, `${cliType}: id must echo the session_id; got ${result.id}`);
+    assert.equal(result.cli_type, cliType, `${cliType}: cli_type mismatch; got ${result.cli_type}`);
+    assert.equal(result.name, `198-${cliType}-renamed`, `${cliType}: name must reflect the rename; got ${result.name}`);
+    assert.equal(result.notes, 'REG-META-04 live test', `${cliType}: notes must reflect the write; got ${result.notes}`);
+    assert.ok(typeof result.state === 'string', `${cliType}: state must be a string; got ${typeof result.state}`);
+  });
+}

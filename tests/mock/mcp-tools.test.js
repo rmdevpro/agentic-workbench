@@ -239,14 +239,11 @@ test('MCP task_add rejects without project_id or project_name (no folder_path fa
 test('MCP project_mcp_enable writes per-project config for claude+gemini+codex (#445)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_445_proj');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-445-'));
   const proj = db.ensureProject('mock_445_proj', projPath);
-  // Cleanup any prior state
-  try { fs.unlinkSync(join(projPath, '.mcp.json')); } catch { /* ignore */ }
-  try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
-  try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
 
   // Register a fixture MCP server (db.registerMcp internally JSON.stringifies the
   // config, so we pass an object to avoid the double-stringify edge case).
@@ -285,10 +282,8 @@ test('MCP project_mcp_enable writes per-project config for claude+gemini+codex (
     });
   } finally {
     try { db.unregisterMcp('mock-445-fixture'); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.mcp.json'), { force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -302,22 +297,21 @@ test('MCP project_mcp_enable writes per-project config for claude+gemini+codex (
 test('MCP project_mcp_disable strips inline-array Codex blocks cleanly (#445 follow-up)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_445_followup');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-445-fu-'));
   const proj = db.ensureProject('mock_445_followup', projPath);
-  // Cleanup any prior state
-  try { fs.unlinkSync(join(projPath, '.mcp.json')); } catch { /* ignore */ }
-  try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
-  try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
 
   // Pre-seed a non-mcp_servers section so we can verify it's preserved
   // through the strip (real codex configs commonly have model_provider /
-  // [projects."<path>"] / etc.).
+  // [projects."<path>"] / etc.). The [projects."<path>"] section embeds
+  // the test's dynamic project path so the strip exercises a realistic
+  // shape; the assertions below match the literal [projects." prefix only.
   fs.mkdirSync(join(projPath, '.codex'), { recursive: true });
   fs.writeFileSync(
     join(projPath, '.codex', 'config.toml'),
-    'model = "gpt-5"\n\n[projects."/data/workspace/mock_445_followup"]\ntrust_level = "trusted"\n',
+    `model = "gpt-5"\n\n[projects."${projPath}"]\ntrust_level = "trusted"\n`,
   );
 
   // Register an MCP whose config triggers the inline-array case.
@@ -348,10 +342,8 @@ test('MCP project_mcp_disable strips inline-array Codex blocks cleanly (#445 fol
     });
   } finally {
     try { db.unregisterMcp('mock-445-fu'); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.mcp.json'), { force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -363,9 +355,10 @@ test('MCP project_mcp_disable strips inline-array Codex blocks cleanly (#445 fol
 test('MCP session_prepare_pre_compact dispatches per cli_type (#446)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_446_prepare');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-446-'));
   const proj = db.ensureProject('mock_446_prepare', projPath);
   try {
     db.upsertSession('mock-446-claude-prep', proj.id, 'c', 'claude');
@@ -396,6 +389,7 @@ test('MCP session_prepare_pre_compact dispatches per cli_type (#446)', async () 
     try { db.deleteSession('mock-446-gemini-prep'); } catch { /* ignore */ }
     try { db.deleteSession('mock-446-codex-prep');  } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -425,12 +419,13 @@ test('MCP session_resume_post_compact writes tail to /tmp file and returns promp
   const db = require('../../src/db');
   const fs = require('fs');
   const fsp = require('fs/promises');
+  const os = require('os');
   const { join } = require('path');
   const safe = require('../../src/safe-exec.js');
   const sid = 'mock-252-claude-session';
   const projName = 'mock_252_proj';
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', projName);
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-252-'));
   const proj = db.ensureProject(projName, projPath);
   const sessDir = safe.findSessionsDir(projPath);
   fs.mkdirSync(sessDir, { recursive: true });
@@ -476,9 +471,9 @@ test('MCP session_resume_post_compact writes tail to /tmp file and returns promp
     });
   } finally {
     try { fs.unlinkSync(tmpResumeFile); } catch { /* ignore */ }
-    try { fs.unlinkSync(jsonlPath); } catch { /* ignore */ }
     try { db.deleteSession(sid); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -490,9 +485,10 @@ test('MCP session_resume_post_compact writes tail to /tmp file and returns promp
 test('MCP session_summarize resolves project from session row when arg missing (#450)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_450_proj');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-450-'));
   const proj = db.ensureProject('mock_450_proj', projPath);
   try {
     // Seed a codex session — Codex/Gemini branches don't need projectPath but
@@ -508,6 +504,7 @@ test('MCP session_summarize resolves project from session row when arg missing (
   } finally {
     try { db.deleteSession('mock-450-session'); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -520,9 +517,10 @@ test('MCP session_summarize resolves project from session row when arg missing (
 test('MCP session_export returns empty-transcript shape for fresh Claude session (#268)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_268_proj');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-268-'));
   const proj = db.ensureProject('mock_268_proj', projPath);
   try {
     // Seed a Claude session row but DO NOT create the JSONL transcript file.
@@ -544,6 +542,7 @@ test('MCP session_export returns empty-transcript shape for fresh Claude session
   } finally {
     try { db.deleteSession('mock-268-fresh-claude'); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -566,9 +565,10 @@ test('MCP session_export 404s on truly-invalid session_id (#268 Case B preserved
 test('MCP session_config returns full session metadata after write (#198)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_198_proj');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-198-'));
   const proj = db.ensureProject('mock_198_proj', projPath);
   try {
     db.upsertSession('mock-198-session', proj.id, 'pre-rename', 'claude');
@@ -593,6 +593,7 @@ test('MCP session_config returns full session metadata after write (#198)', asyn
   } finally {
     try { db.deleteSession('mock-198-session'); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -615,10 +616,10 @@ test('MCP session_config 404s on missing session (#198 / read-after-write contra
 test('MCP session_list returns rows for all 3 cli_types (#437)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  // Seed a temp project + 3 sessions with different cli_types.
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_437_proj');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-437-'));
   const proj = db.ensureProject('mock_437_proj', projPath);
   try {
     db.upsertSession('mock-437-claude-session', proj.id, 'claude-sess', 'claude');
@@ -639,5 +640,6 @@ test('MCP session_list returns rows for all 3 cli_types (#437)', async () => {
     try { db.deleteSession('mock-437-gemini-session'); } catch { /* ignore */ }
     try { db.deleteSession('mock-437-codex-session'); }  catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });

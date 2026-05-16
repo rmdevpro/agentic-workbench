@@ -252,14 +252,22 @@ function makeEnvWithDimsSpies(overrides = {}) {
   const tmuxExecCalls = [];
   const captureCalls = [];
   const spawnCalls = [];
+  // #483 stage-2 strengthening: shared call-order log so WS-13 can assert
+  // resize-window fires temporally BEFORE capture (not just that both fire).
+  const callOrder = [];
   const env = {
     safe: {
       sanitizeTmuxName: (v) => v.replace(/[^a-zA-Z0-9_-]/g, '_'),
       tmuxCaptureScrollback: (name, lines) => {
         captureCalls.push({ name, lines });
+        callOrder.push('capture');
         return 'CAPTURED-BYTES';
       },
-      tmuxExecAsync: async (args) => { tmuxExecCalls.push(args); return ''; },
+      tmuxExecAsync: async (args) => {
+        tmuxExecCalls.push(args);
+        if (Array.isArray(args) && args[0] === 'resize-window') callOrder.push('resize');
+        return '';
+      },
     },
     keepalive: { onBrowserConnect() {}, onBrowserDisconnect() {} },
     logger: { info() {}, warn() {}, error() {}, debug() {} },
@@ -278,12 +286,13 @@ function makeEnvWithDimsSpies(overrides = {}) {
     stopJsonlWatcher() {},
     spawnPty: (cmd, args, opts) => {
       spawnCalls.push({ cmd, args, opts });
+      callOrder.push('spawn');
       return new FakePty();
     },
     ...overrides,
   };
   env.terminal = createWsTerminal(env);
-  env.spies = { tmuxExecCalls, captureCalls, spawnCalls };
+  env.spies = { tmuxExecCalls, captureCalls, spawnCalls, callOrder };
   return env;
 }
 
@@ -319,6 +328,14 @@ test('WS-13: #483 — with initialDims, tmux resize-window fires BEFORE capture 
   const opts = env.spies.spawnCalls[0].opts;
   assert.equal(opts.cols, 200, `PTY cols should match initialDims; got ${opts.cols}`);
   assert.equal(opts.rows, 60, `PTY rows should match initialDims; got ${opts.rows}`);
+  // #483 stage-2 strengthening: pin temporal ordering, not just counts.
+  // The bug was capture-before-resize; assertion below would have caught it.
+  const resizeIdx = env.spies.callOrder.indexOf('resize');
+  const captureIdx = env.spies.callOrder.indexOf('capture');
+  assert.notEqual(resizeIdx, -1, 'resize must appear in call order');
+  assert.notEqual(captureIdx, -1, 'capture must appear in call order');
+  assert.ok(resizeIdx < captureIdx,
+    `resize-window must fire BEFORE capture; got order ${JSON.stringify(env.spies.callOrder)}`);
 });
 
 test('WS-14: #483 — resize-window failure is non-fatal (capture + PTY still proceed)', async () => {

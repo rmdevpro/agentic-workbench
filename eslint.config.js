@@ -106,7 +106,6 @@ module.exports = [
         switchSettingsTab: 'readonly',
         setTaskFilter: 'readonly',
         loadTaskTree: 'readonly',
-        expandedTaskFolders: 'readonly',
         openProjectConfig: 'readonly',
       },
     },

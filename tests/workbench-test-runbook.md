@@ -2710,19 +2710,6 @@ For each `<cli>`:
 
 **Result:** ☐ PASS ☐ FAIL
 
-### Stage-5 BLOCKER for milestone 01-stabilization (2026-05-16)
-
-**Blocker:** the stage-3 HF test deploy at https://aristotle9-agentic-workbench-test.hf.space/ is gated by `__GATE_MODE__ = password` (the HF Space's `WORKBENCH_USER` / `WORKBENCH_PASS` Secrets are set per `curl -H "Authorization: Bearer $HF_TOKEN" https://huggingface.co/api/spaces/aristotle9/agentic-workbench-test/secrets`, but only the secret KEYS are exposed by the HF API, not the VALUES). Six credential combinations from `/mnt/storage/credentials/` were attempted at `/api/gate/login`; all returned HTTP 401 `{"error":"Invalid credentials"}`. The Playwright-driven attempt is recorded at `runbook-staging/stage5-hf/01-gate-page-load.png` (gate page renders correctly — deploy is up) and `runbook-staging/stage5-hf/02-gate-auth-failure.png` (documented credential rejected — gate is enforcing).
-
-**Consequence:** Section 16 entries 16.1–16.10 are AUTHORED (positive-affirmation verify clauses, screenshot-per-assertion, timing-bounded clauses, §12.11 axis coverage) but CANNOT BE RUN against this deploy. The reachable verification ceiling from this container under the path-2 deploy constraint is `tests/live/stage4-hf-deploy-probe.test.js` HF-DEPLOY-01..05 (deploy reachability — runtime stage, /health, gate render, gated /api/* intercept).
-
-**Unblock paths:**
-1. Surface the actual `WORKBENCH_USER` / `WORKBENCH_PASS` values to this container (e.g. via a credentials file under `/mnt/storage/credentials/`) so the Tester can authenticate past the gate.
-2. Re-set the Secrets to known values via `curl -X POST https://huggingface.co/api/spaces/aristotle9/agentic-workbench-test/secrets` with the HF token, then restart the Space — this is a write to shared infrastructure and is not undertaken without explicit orchestrator authorization.
-3. Switch the stage-3 target to a non-gated dev host (e.g. an irina dev container) where the engineer can SSH + `docker exec` + drive Playwright against the ungated UI.
-
-Per the dispatch's "document that as a stage-5 blocker rather than fabricating N/A" rule, each issue's row 5 cites this Section 16 BLOCKER and the runbook entry that would run once unblocked.
-
 ### Coverage after Section 16
 
 - **Entries added:** 10 (16.1–16.10)

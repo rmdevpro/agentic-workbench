@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { get, post } = require('../helpers/http-client');
-const { resetBaseline } = require('../helpers/reset-state');
+const { resetBaseline, dockerExec } = require('../helpers/reset-state');
 const { queryCount } = require('../helpers/db-query');
 
 test('MCP-01: GET /api/mcp/tools lists the flat tool catalog', async () => {
@@ -135,19 +135,26 @@ test('#268: session_export 404s on truly-invalid session_id (Case B preserved)',
 // and return the merged metadata. Three variants — one per cli_type — verify
 // per-CLI parity through the same MCP call path.
 async function _seedProjectAndSession(projName, sessId, sessName, cliType) {
+  // POST /api/projects with a local path requires the directory to already
+  // exist on disk (src/routes/projects.js:193-198 — stat() fails with
+  // ENOENT → 404 "Path does not exist"). dockerExec runs inside the test
+  // container so this creates the dir at /data/workspace/<projName> on the
+  // sandbox's isolated /data volume. Same pattern as the #268 + #275 tests.
+  dockerExec(`mkdir -p /data/workspace/${projName}`);
   await post('/api/projects', { path: `/data/workspace/${projName}`, name: projName });
+  // POST /api/sessions inserts the DB row synchronously before launching
+  // the CLI via tmuxCreateCLIAsync, so session_list returns the row even
+  // when the CLI later dies (e.g., real gemini with no DNS in the sandbox).
+  // We rely on that — neither real CLI auth nor a JSONL appearing is
+  // required for session_config to operate on the row.
   await post('/api/sessions', { project: projName, name: sessName, prompt: sessName, cli_type: cliType });
-  // /api/sessions returns the actual session_id; resolve it by calling
-  // session_list for the project and picking the most-recent of the right
-  // cli_type. The mock-style "use a fixed sessId" doesn't apply on live
-  // since real CLIs assign their own IDs.
+  // Resolve the actual session_id from session_list (live CLIs assign their
+  // own IDs; the mock-style "use a fixed sessId" doesn't apply).
   const r = await post('/api/mcp/call', { tool: 'session_list', args: { project: projName } });
   const sessions = r.data?.result?.sessions || [];
   const match = sessions.filter(s => s.cli_type === cliType).pop();
   // session_list returns each row keyed `session_id` (src/mcp-tools.js:319),
-  // not `id`. The pre-#639 helper read `match?.id` which is always undefined
-  // and fell through to the `sessId` fallback (passed in as null), failing
-  // the seed-check at line 155 even when a row existed in the DB.
+  // not `id` — alignment locked in commit a5fb405.
   return match?.session_id || sessId;
 }
 

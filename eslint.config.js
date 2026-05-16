@@ -81,6 +81,11 @@ module.exports = [
         CustomEvent: 'readonly',
         KeyboardEvent: 'readonly',
         MouseEvent: 'readonly',
+        // Drag-and-drop constructors used inside page.evaluate() blocks
+        // (Playwright browser context — valid runtime globals there). See
+        // tests/browser/a2-task-drag.spec.js. #630.
+        DataTransfer: 'readonly',
+        DragEvent: 'readonly',
         // App-specific browser globals (defined in public/index.html, referenced in page.evaluate())
         ptyOutputBuffer: 'readonly',
         showAuthModal: 'readonly',

@@ -144,7 +144,11 @@ async function _seedProjectAndSession(projName, sessId, sessName, cliType) {
   const r = await post('/api/mcp/call', { tool: 'session_list', args: { project: projName } });
   const sessions = r.data?.result?.sessions || [];
   const match = sessions.filter(s => s.cli_type === cliType).pop();
-  return match?.id || sessId;
+  // session_list returns each row keyed `session_id` (src/mcp-tools.js:319),
+  // not `id`. The pre-#639 helper read `match?.id` which is always undefined
+  // and fell through to the `sessId` fallback (passed in as null), failing
+  // the seed-check at line 155 even when a row existed in the DB.
+  return match?.session_id || sessId;
 }
 
 for (const cliType of ['claude', 'gemini', 'codex']) {

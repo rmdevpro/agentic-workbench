@@ -18,6 +18,11 @@ services:
     volumes:
       - workbench-test_data:/data
       - ./tests/fixtures/stub-claude.sh:/usr/local/bin/claude:ro
+      # #640 — sandbox has `dns: 127.0.0.1` so the real codex binary hangs
+      # reaching the OpenAI API. Stub mimics `codex exec` (writes rollout
+      # JSONL + exits 0) so _seedRole's Phase 1 codex call completes within
+      # the test's 60s AbortController bound and exercises the #275 fix.
+      - ./tests/fixtures/stub-codex.sh:/usr/local/bin/codex:ro
     environment:
       - PORT=3000
       - HOME=/data

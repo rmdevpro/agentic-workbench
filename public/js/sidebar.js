@@ -84,6 +84,390 @@ export async function _hydrateVisibleSessionInfo() {
   renderSidebar();
 }
 
+// #585: keyed reconciler — reuses existing children whose `data-rk` matches a
+// desired key, calling updateNode in-place; creates only new keys; removes only
+// disappeared keys; reorders only when the existing order doesn't match the
+// desired order. Replaces the previous renderSidebar full-innerHTML rebuild
+// path so unchanged session/project/program nodes survive across state diffs
+// and the main thread stays responsive (root cause of #484 typing stalls).
+function _reconcileKeyed(parent, items, getKey, createNode, updateNode) {
+  const existing = new Map();
+  for (const child of Array.from(parent.children)) {
+    const k = child.dataset.rk;
+    if (k != null) existing.set(k, child);
+  }
+  const seen = new Set();
+  const result = [];
+  for (const item of items) {
+    const key = String(getKey(item));
+    seen.add(key);
+    let node = existing.get(key);
+    if (!node) {
+      node = createNode(item);
+      node.dataset.rk = key;
+    }
+    updateNode(node, item);
+    result.push(node);
+  }
+  for (const [k, n] of existing) if (!seen.has(k)) n.remove();
+  let needsReorder = parent.children.length !== result.length;
+  if (!needsReorder) {
+    for (let i = 0; i < result.length; i++) {
+      if (parent.children[i] !== result[i]) { needsReorder = true; break; }
+    }
+  }
+  if (needsReorder) for (const n of result) parent.appendChild(n);
+  return result;
+}
+
+// Build a session-item once; subsequent renders mutate it via _updateSessionItem.
+// Event handlers attach once and read current state via item._project / item._session.
+function _createSessionItem() {
+  const item = document.createElement('div');
+  item.className = 'session-item';
+  item.innerHTML = `
+    <div class="session-top-row">
+      <span class="session-name"></span>
+      <span class="session-actions">
+        <button class="session-action-btn summary" title="Summarize">&#9432;</button>
+        <button class="session-action-btn restart" title="Restart tmux">&#8635;</button>
+        <button class="session-action-btn rename" title="Config">&#9998;</button>
+        <button class="session-action-btn archive" title="Archive">&#9744;</button>
+        <button class="session-action-btn unarchive" title="Unarchive">&#8634;</button>
+      </span>
+    </div>
+    <div class="session-meta">
+      <span class="cli-icon"></span>
+      <span class="time-ago"></span>
+      <span class="msg-count"></span>
+      <span class="model-label" style="font-size:9px;color:var(--text-muted);margin-left:2px"></span>
+    </div>
+  `;
+  item.addEventListener('click', (e) => {
+    if (e.target.closest('.session-action-btn')) return;
+    const project = item._project, session = item._session;
+    if (!project || !session) return;
+    if (session.project_missing) {
+      _showErrorModal({ title: 'Project missing', message: 'Project directory not found — it may have been moved or deleted.' });
+      return;
+    }
+    setLastClickedProjectPath(project.path);
+    _openSession(session, project.name);
+  });
+  item.querySelector('.rename').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const s = item._session;
+    if (s) _renameSession(s.id, s.name);
+  });
+  item.querySelector('.restart').addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const s = item._session;
+    if (!s) return;
+    const cliLabel = { claude: 'Claude', gemini: 'Gemini', codex: 'Codex' }[s.cli_type] || 'CLI';
+    const ok = await _showConfirmModal({
+      title: 'Restart Session', confirmLabel: 'Restart',
+      message: `Restart the tmux session? The ${cliLabel} session will be preserved.`,
+    });
+    if (!ok) return;
+    try {
+      await fetch(`/api/sessions/${s.id}/restart`, { method: 'POST' });
+      _loadState();
+    } catch (err) { _showErrorModal({ title: 'Restart failed', message: err.message }); }
+  });
+  item.querySelector('.archive').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const s = item._session;
+    if (s) _archiveSession(s.id, true);
+  });
+  item.querySelector('.unarchive').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const s = item._session;
+    if (s) _archiveSession(s.id, false);
+  });
+  item.querySelector('.summary').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const p = item._project, s = item._session;
+    if (p && s) _summarizeSession(s.id, p.name, s.name);
+  });
+  return item;
+}
+
+function _updateSessionItem(item, { project, session }) {
+  item._project = project;
+  item._session = session;
+
+  const cls = item.classList;
+  cls.toggle('archived', !!session.archived);
+  cls.toggle('hidden', session.state === 'hidden');
+  cls.toggle('missing', !!session.project_missing);
+  cls.toggle('open', tabs.has(session.id));
+  cls.toggle('active', activeTabId === session.id);
+
+  const nameEl = item.querySelector('.session-name');
+  if (nameEl.textContent !== (session.name || '')) nameEl.textContent = session.name || '';
+
+  for (const sel of ['.summary', '.restart', '.rename', '.archive', '.unarchive']) {
+    const b = item.querySelector(sel);
+    if (b && b.dataset.id !== session.id) b.dataset.id = session.id;
+  }
+  const summaryBtn = item.querySelector('.summary');
+  if (summaryBtn.dataset.project !== project.name) summaryBtn.dataset.project = project.name;
+  item.querySelector('.archive').style.display = session.archived ? 'none' : '';
+  item.querySelector('.unarchive').style.display = session.archived ? '' : 'none';
+
+  const cli = session.cli_type || 'claude';
+  const color = session.active
+    ? ({ claude: '#e8a55d', gemini: '#4285f4', codex: '#10a37f' }[cli] || '#8b949e')
+    : '#484f58';
+  const cliEl = item.querySelector('.cli-icon');
+  // Compose a signature for the icon so we only touch innerHTML when it
+  // actually changes (cli/color flips matter; everything else is stable).
+  const cliSig = `${cli}|${color}`;
+  if (cliEl._sig !== cliSig) {
+    cliEl._sig = cliSig;
+    if (cli === 'codex') {
+      cliEl.innerHTML = `<svg width="10" height="10" viewBox="0 0 10 10" title="codex" style="vertical-align:middle"><rect x="0" y="0" width="10" height="10" rx="2.5" fill="${color}"/><circle cx="5" cy="5" r="2.5" fill="var(--bg-primary)"/></svg>`;
+    } else {
+      const icons = { claude: '✳', gemini: '◆' };
+      cliEl.innerHTML = `<span style="font-size:13px;color:${color};line-height:1" title="${cli}">${icons[cli] || '?'}</span>`;
+    }
+  }
+  const timeText = session.active ? 'just now' : timeAgo(session.timestamp);
+  const timeEl = item.querySelector('.time-ago');
+  if (timeEl.textContent !== timeText) timeEl.textContent = timeText;
+  const mc = session.messageCount != null ? String(session.messageCount) : '';
+  const mcEl = item.querySelector('.msg-count');
+  if (mcEl.textContent !== mc) mcEl.textContent = mc;
+  const mdl = session.model || '';
+  const mdlEl = item.querySelector('.model-label');
+  if (mdlEl.textContent !== mdl) mdlEl.textContent = mdl;
+}
+
+function _renderNewSessionMenu(menu) {
+  const gemiOK = window._cliCreds?.gemini !== false;
+  const codexOK = window._cliCreds?.openai !== false;
+  // Cheap signature so we don't rewrite the dropdown HTML when creds are stable.
+  const sig = `${gemiOK ? 1 : 0}|${codexOK ? 1 : 0}`;
+  if (menu._sig === sig) return;
+  menu._sig = sig;
+  menu.innerHTML = `
+    <div class="context-menu-item" data-cli="claude" style="padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text-primary)"><span style="color:#e8a55d;font-weight:bold">C</span> Claude</div>
+    <div class="context-menu-item" data-cli="gemini" style="padding:4px 12px;font-size:12px;cursor:pointer;color:${gemiOK ? 'var(--text-primary)' : 'var(--text-muted)'}">${gemiOK ? '<span style="color:#4285f4;font-weight:bold">G</span> Gemini' : '<span style="color:var(--text-muted)">G</span> Gemini (no API key)'}</div>
+    <div class="context-menu-item" data-cli="codex" style="padding:4px 12px;font-size:12px;cursor:pointer;color:${codexOK ? 'var(--text-primary)' : 'var(--text-muted)'}">${codexOK ? '<span style="color:#10a37f;font-weight:bold">X</span> Codex' : '<span style="color:var(--text-muted)">X</span> Codex (no API key)'}</div>
+    <div class="context-menu-divider" style="border-top:1px solid var(--border);margin:4px 0"></div>
+    <div class="context-menu-item" data-cli="terminal" style="padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text-primary)">&#9002; Terminal</div>
+  `;
+}
+
+function _createProjectGroup() {
+  const group = document.createElement('div');
+  group.className = 'project-group';
+
+  const header = document.createElement('div');
+  header.className = 'project-header';
+  header.innerHTML = `
+    <span class="arrow">&#9660;</span>
+    <span class="proj-name"></span>
+    <span class="count"></span>
+    <button class="term-btn proj-config-btn" title="Project config" style="font-size:12px">&#9998;</button>
+    <span class="new-session-wrap" style="position:relative">
+      <button class="term-btn new-btn" title="New session">+</button>
+      <div class="new-session-menu" style="display:none;position:absolute;top:100%;right:0;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:4px 0;z-index:100;min-width:120px;box-shadow:0 4px 12px rgba(0,0,0,0.3)"></div>
+    </span>
+  `;
+  header.draggable = true;
+
+  const sessionList = document.createElement('div');
+  sessionList.className = 'session-list';
+
+  group.appendChild(header);
+  group.appendChild(sessionList);
+  group._header = header;
+  group._sessionList = sessionList;
+
+  header.querySelector('.proj-config-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const p = group._project;
+    if (p) _openProjectConfig(p.name);
+  });
+  const newBtn = header.querySelector('.new-btn');
+  const newMenu = header.querySelector('.new-session-menu');
+  newBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    _renderNewSessionMenu(newMenu);
+    const isVisible = newMenu.style.display !== 'none';
+    document.querySelectorAll('.new-session-menu').forEach(m => m.style.display = 'none');
+    newMenu.style.display = isVisible ? 'none' : 'block';
+  });
+  newMenu.addEventListener('click', (e) => {
+    const target = e.target.closest('.context-menu-item');
+    if (!target) return;
+    e.stopPropagation();
+    newMenu.style.display = 'none';
+    const cli = target.dataset.cli;
+    const p = group._project;
+    if (!p) return;
+    if (cli === 'gemini' && !window._cliCreds?.gemini) {
+      _showErrorModal({ title: 'Credential missing', message: 'Gemini API key not configured. Go to Settings to add it.' });
+      return;
+    }
+    if (cli === 'codex' && !window._cliCreds?.openai) {
+      _showErrorModal({ title: 'Credential missing', message: 'OpenAI API key not configured. Go to Settings to add it.' });
+      return;
+    }
+    if (cli === 'terminal') _openTerminal(p.name);
+    else _createSession(p.name, cli);
+  });
+  newMenu.addEventListener('mouseover', (e) => {
+    const t = e.target.closest('.context-menu-item');
+    if (t) t.style.background = 'var(--bg-hover)';
+  });
+  newMenu.addEventListener('mouseout', (e) => {
+    const t = e.target.closest('.context-menu-item');
+    if (t) t.style.background = '';
+  });
+  header.addEventListener('click', () => {
+    const p = group._project;
+    if (!p) return;
+    if (expandedProjects.has(p.name)) expandedProjects.delete(p.name);
+    else expandedProjects.add(p.name);
+    localStorage.setItem('expandedProjects', JSON.stringify([...expandedProjects]));
+    const exp = expandedProjects.has(p.name);
+    header.classList.toggle('collapsed', !exp);
+    sessionList.classList.toggle('collapsed', !exp);
+    setLastClickedProjectPath(p.path);
+  });
+  header.addEventListener('dragstart', (e) => {
+    const p = group._project;
+    if (!p) return;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/x-project-name', p.name);
+  });
+
+  return group;
+}
+
+function _updateProjectGroup(group, project) {
+  group._project = project;
+  const header = group._header;
+  const sessionList = group._sessionList;
+  const isExpanded = expandedProjects.has(project.name);
+
+  header.classList.toggle('missing', !!project.missing);
+  header.classList.toggle('collapsed', !isExpanded);
+  sessionList.classList.toggle('collapsed', !isExpanded);
+
+  const nameEl = header.querySelector('.proj-name');
+  if (nameEl.textContent !== project.name) nameEl.textContent = project.name;
+
+  const filtered = project.sessions.filter((s) => {
+    const state = s.state || (s.archived ? 'archived' : 'active');
+    if (sessionFilter === 'active') return state === 'active';
+    if (sessionFilter === 'archived') return state === 'archived';
+    if (sessionFilter === 'all') return state !== 'hidden';
+    if (sessionFilter === 'hidden') return state === 'hidden';
+    return true;
+  });
+
+  const countEl = header.querySelector('.count');
+  const countText = String(filtered.length);
+  if (countEl.textContent !== countText) countEl.textContent = countText;
+
+  if (sessionSortBy === 'name') filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  else if (sessionSortBy === 'messages') filtered.sort((a, b) => b.messageCount - a.messageCount);
+
+  _reconcileKeyed(
+    sessionList,
+    filtered.map((session) => ({ project, session })),
+    (it) => it.session.id,
+    () => _createSessionItem(),
+    _updateSessionItem,
+  );
+}
+
+function _createProgramSection() {
+  const wrap = document.createElement('div');
+  wrap.className = 'program-group';
+  const header = document.createElement('div');
+  header.className = 'program-header';
+  header.innerHTML = `
+    <span class="arrow">&#9660;</span>
+    <span class="program-name"></span>
+    <button class="term-btn prog-config-btn" title="Program config" style="font-size:12px;display:none">&#9998;</button>
+    <button class="term-btn add-project-btn" title="Add project to this program" style="font-size:13px;display:none">+</button>
+  `;
+  const children = document.createElement('div');
+  children.className = 'program-children';
+  wrap.appendChild(header);
+  wrap.appendChild(children);
+  wrap._header = header;
+  wrap._children = children;
+
+  header.addEventListener('click', (e) => {
+    if (e.target.closest('.term-btn')) return;
+    const program = wrap._program;
+    if (!program) return;
+    const programKey = program.virtual ? '__unassigned__' : String(program.id);
+    if (expandedPrograms.has(programKey)) expandedPrograms.delete(programKey);
+    else expandedPrograms.add(programKey);
+    localStorage.setItem('expandedPrograms', JSON.stringify([...expandedPrograms]));
+    header.classList.toggle('collapsed', !expandedPrograms.has(programKey));
+  });
+  header.querySelector('.prog-config-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const program = wrap._program;
+    if (program && !program.virtual) _openProgramConfig(program.id);
+  });
+  header.querySelector('.add-project-btn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    const program = wrap._program;
+    if (program && !program.virtual) _addProject(program.id);
+  });
+  header.addEventListener('dragover', (e) => {
+    const projName = e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('application/x-project-name');
+    if (projName) { e.preventDefault(); header.classList.add('drag-over'); }
+  });
+  header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
+  header.addEventListener('drop', (e) => {
+    e.preventDefault();
+    header.classList.remove('drag-over');
+    const program = wrap._program;
+    if (!program) return;
+    const projName = e.dataTransfer.getData('application/x-project-name');
+    if (!projName) return;
+    _assignProjectToProgram(projName, program.virtual ? null : program.id);
+  });
+
+  return wrap;
+}
+
+function _updateProgramSection(wrap, { program, projects }) {
+  wrap._program = program;
+  const isVirtual = program.virtual === true;
+  const programKey = isVirtual ? '__unassigned__' : String(program.id);
+  const isExpanded = expandedPrograms.has(programKey);
+  const header = wrap._header;
+
+  header.classList.toggle('virtual', isVirtual);
+  header.classList.toggle('archived', program.status === 'archived');
+  header.classList.toggle('collapsed', !isExpanded);
+  const dsProg = isVirtual ? '' : String(program.id);
+  if (header.dataset.programId !== dsProg) header.dataset.programId = dsProg;
+
+  const nameEl = header.querySelector('.program-name');
+  if (nameEl.textContent !== program.name) nameEl.textContent = program.name;
+  header.querySelector('.prog-config-btn').style.display = isVirtual ? 'none' : '';
+  header.querySelector('.add-project-btn').style.display = isVirtual ? 'none' : '';
+
+  _reconcileKeyed(
+    wrap._children,
+    projects,
+    (p) => `proj-${p.name}`,
+    () => _createProjectGroup(),
+    _updateProjectGroup,
+  );
+}
+
 export function renderSidebar() {
   if (window._searchActive) return;
   const stateHash = JSON.stringify(projectState.map(p => ({
@@ -92,291 +476,44 @@ export function renderSidebar() {
   }))) + JSON.stringify(programState.map(p => ({ id: p.id, n: p.name, st: p.status }))) + sessionFilter + sessionSortBy + activeTabId + [...tabs.keys()].join(',') + [...expandedPrograms].join(',');
   const container = document.getElementById('project-list');
   if (stateHash === renderSidebar._lastHash && container.childElementCount > 0) return;
-  container.innerHTML = '';
 
   const projectsByProgram = { __unassigned__: [] };
   for (const p of projectState) {
+    const projState = p.state || 'active';
+    if (sessionFilter === 'active' && projState !== 'active') continue;
+    if (sessionFilter === 'archived' && projState !== 'archived') {
+      const hasArchivedSessions = p.sessions.some((s) => (s.state || (s.archived ? 'archived' : 'active')) === 'archived');
+      if (!hasArchivedSessions) continue;
+    }
+    if (sessionFilter === 'all' && projState === 'hidden') continue;
+    if (sessionFilter === 'hidden' && projState !== 'hidden') {
+      const hasHiddenSessions = p.sessions.some((s) => (s.state || 'active') === 'hidden');
+      if (!hasHiddenSessions) continue;
+    }
     const key = p.program_id == null ? '__unassigned__' : String(p.program_id);
     (projectsByProgram[key] = projectsByProgram[key] || []).push(p);
   }
 
-  const renderOneProjectGroup = (project, parent) => {
-    const projState = project.state || 'active';
-    if (sessionFilter === 'active' && projState !== 'active') return;
-    if (sessionFilter === 'archived' && projState !== 'archived') {
-      const hasArchivedSessions = project.sessions.some(s => (s.state || (s.archived ? 'archived' : 'active')) === 'archived');
-      if (!hasArchivedSessions) return;
-    }
-    if (sessionFilter === 'all' && projState === 'hidden') return;
-    if (sessionFilter === 'hidden' && projState !== 'hidden') {
-      const hasHiddenSessions = project.sessions.some(s => (s.state || 'active') === 'hidden');
-      if (!hasHiddenSessions) return;
-    }
-
-    const group = document.createElement('div');
-    group.className = 'project-group';
-
-    const header = document.createElement('div');
-    const isExpanded = expandedProjects.has(project.name);
-    header.className = 'project-header' + (project.missing ? ' missing' : '') + (isExpanded ? '' : ' collapsed');
-    const filteredCount = project.sessions.filter(s => {
-      const state = s.state || (s.archived ? 'archived' : 'active');
-      if (sessionFilter === 'active') return state === 'active';
-      if (sessionFilter === 'archived') return state === 'archived';
-      if (sessionFilter === 'all') return state !== 'hidden';
-      if (sessionFilter === 'hidden') return state === 'hidden';
-      return true;
-    }).length;
-    header.innerHTML = `
-      <span class="arrow">&#9660;</span>
-      <span>${escHtml(project.name)}</span>
-      <span class="count">${filteredCount}</span>
-      <button class="term-btn proj-config-btn" title="Project config" style="font-size:12px">&#9998;</button>
-      <span class="new-session-wrap" style="position:relative">
-        <button class="term-btn new-btn" title="New session">+</button>
-        <div class="new-session-menu" style="display:none;position:absolute;top:100%;right:0;background:var(--bg-secondary);border:1px solid var(--border);border-radius:6px;padding:4px 0;z-index:100;min-width:120px;box-shadow:0 4px 12px rgba(0,0,0,0.3)">
-          <div class="context-menu-item" data-cli="claude" style="padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text-primary)"><span style="color:#e8a55d;font-weight:bold">C</span> Claude</div>
-          <div class="context-menu-item" data-cli="gemini" style="padding:4px 12px;font-size:12px;cursor:pointer;color:${window._cliCreds?.gemini === false ? 'var(--text-muted)' : 'var(--text-primary)'}">${window._cliCreds?.gemini === false ? '<span style="color:var(--text-muted)">G</span> Gemini (no API key)' : '<span style="color:#4285f4;font-weight:bold">G</span> Gemini'}</div>
-          <div class="context-menu-item" data-cli="codex" style="padding:4px 12px;font-size:12px;cursor:pointer;color:${window._cliCreds?.openai === false ? 'var(--text-muted)' : 'var(--text-primary)'}">${window._cliCreds?.openai === false ? '<span style="color:var(--text-muted)">X</span> Codex (no API key)' : '<span style="color:#10a37f;font-weight:bold">X</span> Codex'}</div>
-          <div class="context-menu-divider" style="border-top:1px solid var(--border);margin:4px 0"></div>
-          <div class="context-menu-item" data-cli="terminal" style="padding:4px 12px;font-size:12px;cursor:pointer;color:var(--text-primary)">&#9002; Terminal</div>
-        </div>
-      </span>
-    `;
-    header.querySelector('.proj-config-btn').addEventListener('click', (e) => {
-      e.stopPropagation();
-      _openProjectConfig(project.name);
-    });
-    const newBtn = header.querySelector('.new-btn');
-    const newMenu = header.querySelector('.new-session-menu');
-    newBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      const isVisible = newMenu.style.display !== 'none';
-      document.querySelectorAll('.new-session-menu').forEach(m => m.style.display = 'none');
-      newMenu.style.display = isVisible ? 'none' : 'block';
-    });
-    newMenu.querySelectorAll('.context-menu-item').forEach(item => {
-      item.addEventListener('click', (e) => {
-        e.stopPropagation();
-        newMenu.style.display = 'none';
-        const cli = item.dataset.cli;
-        if (cli === 'gemini' && !window._cliCreds?.gemini) {
-          _showErrorModal({ title: 'Credential missing', message: 'Gemini API key not configured. Go to Settings to add it.' });
-          return;
-        }
-        if (cli === 'codex' && !window._cliCreds?.openai) {
-          _showErrorModal({ title: 'Credential missing', message: 'OpenAI API key not configured. Go to Settings to add it.' });
-          return;
-        }
-        if (cli === 'terminal') {
-          _openTerminal(project.name);
-        } else {
-          _createSession(project.name, cli);
-        }
-      });
-      item.addEventListener('mouseenter', () => item.style.background = 'var(--bg-hover)');
-      item.addEventListener('mouseleave', () => item.style.background = '');
-    });
-    header.addEventListener('click', () => {
-      if (expandedProjects.has(project.name)) {
-        expandedProjects.delete(project.name);
-      } else {
-        expandedProjects.add(project.name);
-      }
-      localStorage.setItem('expandedProjects', JSON.stringify([...expandedProjects]));
-      header.classList.toggle('collapsed');
-      sessionList.classList.toggle('collapsed');
-      setLastClickedProjectPath(project.path);
-    });
-    header.draggable = true;
-    header.addEventListener('dragstart', (e) => {
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('application/x-project-name', project.name);
-    });
-    group.appendChild(header);
-
-    const sessionList = document.createElement('div');
-    sessionList.className = 'session-list' + (isExpanded ? '' : ' collapsed');
-
-    const filtered = project.sessions.filter(s => {
-      const state = s.state || (s.archived ? 'archived' : 'active');
-      if (sessionFilter === 'active') return state === 'active';
-      if (sessionFilter === 'archived') return state === 'archived';
-      if (sessionFilter === 'all') return state !== 'hidden';
-      if (sessionFilter === 'hidden') return state === 'hidden';
-      return true;
-    });
-
-    if (sessionSortBy === 'name') filtered.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-    else if (sessionSortBy === 'messages') filtered.sort((a, b) => b.messageCount - a.messageCount);
-
-    for (const session of filtered) {
-      const item = document.createElement('div');
-      item.className = 'session-item';
-      if (session.archived) item.classList.add('archived');
-      if (session.state === 'hidden') item.classList.add('hidden');
-      if (session.project_missing) item.classList.add('missing');
-      const tabId = session.id;
-      if (tabs.has(tabId)) item.classList.add('open');
-      if (activeTabId === tabId) item.classList.add('active');
-
-      const archiveBtn = session.archived
-        ? `<button class="session-action-btn unarchive" title="Unarchive" data-id="${escHtml(session.id)}">&#8634;</button>`
-        : `<button class="session-action-btn archive" title="Archive" data-id="${escHtml(session.id)}">&#9744;</button>`;
-      const summaryBtn = `<button class="session-action-btn summary" title="Summarize" data-id="${escHtml(session.id)}" data-project="${escHtml(project.name)}">&#9432;</button>`;
-
-      item.innerHTML = `
-        <div class="session-top-row">
-          <span class="session-name">${escHtml(session.name)}</span>
-          <span class="session-actions">
-            ${summaryBtn}
-            <button class="session-action-btn restart" title="Restart tmux" data-id="${escHtml(session.id)}">&#8635;</button>
-            <button class="session-action-btn rename" title="Config" data-id="${escHtml(session.id)}">&#9998;</button>
-            ${archiveBtn}
-          </span>
-        </div>
-        <div class="session-meta">
-          ${(() => {
-            const cli = session.cli_type || 'claude';
-            const color = session.active ? ({ claude: '#e8a55d', gemini: '#4285f4', codex: '#10a37f' }[cli] || '#8b949e') : '#484f58';
-            const icons = { claude: '✳', gemini: '◆' };
-            if (cli === 'codex') {
-              return `<svg width="10" height="10" viewBox="0 0 10 10" title="codex" style="vertical-align:middle"><rect x="0" y="0" width="10" height="10" rx="2.5" fill="${color}"/><circle cx="5" cy="5" r="2.5" fill="var(--bg-primary)"/></svg>`;
-            }
-            return `<span style="font-size:13px;color:${color};line-height:1" title="${cli}">${icons[cli] || '?'}</span>`;
-          })()}
-          <span>${session.active ? 'just now' : timeAgo(session.timestamp)}</span>
-          <span class="msg-count">${session.messageCount != null ? session.messageCount : ''}</span>
-          <span style="font-size:9px;color:var(--text-muted);margin-left:2px">${escHtml(session.model || '')}</span>
-        </div>
-      `;
-      item.addEventListener('click', (e) => {
-        if (e.target.closest('.session-action-btn')) return;
-        if (session.project_missing) {
-          _showErrorModal({ title: 'Project missing', message: 'Project directory not found — it may have been moved or deleted.' });
-          return;
-        }
-        setLastClickedProjectPath(project.path);
-        _openSession(session, project.name);
-      });
-      item.querySelector('.rename').addEventListener('click', (e) => {
-        e.stopPropagation();
-        _renameSession(session.id, session.name);
-      });
-      item.querySelector('.restart').addEventListener('click', async (e) => {
-        e.stopPropagation();
-        const cliLabel = { claude: 'Claude', gemini: 'Gemini', codex: 'Codex' }[session.cli_type] || 'CLI';
-        const ok = await _showConfirmModal({
-          title: 'Restart Session', confirmLabel: 'Restart',
-          message: `Restart the tmux session? The ${cliLabel} session will be preserved.`,
-        });
-        if (!ok) return;
-        try {
-          await fetch(`/api/sessions/${session.id}/restart`, { method: 'POST' });
-          _loadState();
-        } catch (err) { _showErrorModal({ title: 'Restart failed', message: err.message }); }
-      });
-      const archEl = item.querySelector('.archive, .unarchive');
-      if (archEl) {
-        archEl.addEventListener('click', (e) => {
-          e.stopPropagation();
-          _archiveSession(session.id, !session.archived);
-        });
-      }
-      item.querySelector('.summary').addEventListener('click', (e) => {
-        e.stopPropagation();
-        _summarizeSession(session.id, project.name, session.name);
-      });
-      sessionList.appendChild(item);
-    }
-
-    group.appendChild(sessionList);
-    parent.appendChild(group);
-  };
-
-  const renderProgramSection = (program, projects, parent) => {
-    const isVirtual = program.virtual === true;
-    const programKey = isVirtual ? '__unassigned__' : String(program.id);
-    const isExpanded = expandedPrograms.has(programKey);
-    const wrap = document.createElement('div');
-    wrap.className = 'program-group';
-    const header = document.createElement('div');
-    header.className = 'program-header'
-      + (isVirtual ? ' virtual' : '')
-      + (program.status === 'archived' ? ' archived' : '')
-      + (isExpanded ? '' : ' collapsed');
-    header.dataset.programId = isVirtual ? '' : String(program.id);
-    const editBtn = isVirtual ? '' : `<button class="term-btn prog-config-btn" title="Program config" style="font-size:12px">&#9998;</button>`;
-    const plusBtn = isVirtual ? '' : `<button class="term-btn add-project-btn" title="Add project to this program" style="font-size:13px">+</button>`;
-    header.innerHTML = `
-      <span class="arrow">&#9660;</span>
-      <span class="program-name">${escHtml(program.name)}</span>
-      ${editBtn}
-      ${plusBtn}
-    `;
-    const children = document.createElement('div');
-    children.className = 'program-children';
-
-    header.addEventListener('click', (e) => {
-      if (e.target.closest('.term-btn')) return;
-      if (expandedPrograms.has(programKey)) expandedPrograms.delete(programKey);
-      else expandedPrograms.add(programKey);
-      localStorage.setItem('expandedPrograms', JSON.stringify([...expandedPrograms]));
-      header.classList.toggle('collapsed');
-    });
-
-    if (!isVirtual) {
-      const cfgBtn = header.querySelector('.prog-config-btn');
-      if (cfgBtn) cfgBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _openProgramConfig(program.id);
-      });
-      const addBtn = header.querySelector('.add-project-btn');
-      if (addBtn) addBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        _addProject(program.id);
-      });
-      header.addEventListener('dragover', (e) => {
-        const projName = e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('application/x-project-name');
-        if (projName) { e.preventDefault(); header.classList.add('drag-over'); }
-      });
-      header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
-      header.addEventListener('drop', (e) => {
-        e.preventDefault();
-        header.classList.remove('drag-over');
-        const projName = e.dataTransfer.getData('application/x-project-name');
-        if (!projName) return;
-        _assignProjectToProgram(projName, program.id);
-      });
-    } else {
-      header.addEventListener('dragover', (e) => {
-        const projName = e.dataTransfer && e.dataTransfer.types && e.dataTransfer.types.includes('application/x-project-name');
-        if (projName) { e.preventDefault(); header.classList.add('drag-over'); }
-      });
-      header.addEventListener('dragleave', () => header.classList.remove('drag-over'));
-      header.addEventListener('drop', (e) => {
-        e.preventDefault();
-        header.classList.remove('drag-over');
-        const projName = e.dataTransfer.getData('application/x-project-name');
-        if (!projName) return;
-        _assignProjectToProgram(projName, null);
-      });
-    }
-
-    wrap.appendChild(header);
-    wrap.appendChild(children);
-    parent.appendChild(wrap);
-
-    for (const p of projects) renderOneProjectGroup(p, children);
-  };
-
+  const desired = [];
   for (const program of programState) {
     const projects = projectsByProgram[String(program.id)] || [];
-    renderProgramSection(program, projects, container);
+    desired.push({ key: `prog-${program.id}`, program, projects });
   }
   if (projectsByProgram.__unassigned__.length > 0) {
-    renderProgramSection({ id: null, name: 'Unassigned', virtual: true }, projectsByProgram.__unassigned__, container);
+    desired.push({
+      key: 'prog-__unassigned__',
+      program: { id: null, name: 'Unassigned', virtual: true },
+      projects: projectsByProgram.__unassigned__,
+    });
   }
+
+  _reconcileKeyed(
+    container,
+    desired,
+    (d) => d.key,
+    () => _createProgramSection(),
+    _updateProgramSection,
+  );
 
   renderSidebar._lastHash = stateHash;
 }

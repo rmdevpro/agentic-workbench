@@ -2,7 +2,7 @@
 
 const fsp = require('fs/promises');
 const fs = require('fs');
-const { join, basename } = require('path');
+const { join, basename, dirname } = require('path');
 const { CODEX_ROLLOUT_UUID_RE } = require('./constants');
 
 module.exports = function createWatchers({
@@ -15,9 +15,63 @@ module.exports = function createWatchers({
   tmuxExists,
   CLAUDE_HOME,
   logger,
+  // #586: injectable chokidar lib so tests can mock the FS-event source
+  // without touching the global require cache. Production callers pass
+  // nothing and we lazy-load the real chokidar.
+  _chokidar = null,
 }) {
-  const jsonlWatchPaths = new Map();
+  // #586: lazy-load chokidar so tests that never touch JSONL watchers don't
+  // pay the import cost (and so the injected mock takes precedence).
+  let _chokidarLib = _chokidar;
+  function _getChokidar() {
+    if (!_chokidarLib) _chokidarLib = require('chokidar');
+    return _chokidarLib;
+  }
+
+  const jsonlWatchPaths = new Map(); // tmuxSession → { jsonlPath, sessionId, projectPath, projectName }
   const jsonlDebounceTimers = new Map();
+  // #586: one chokidar watcher per parent directory replaces N per-session
+  // fs.watchFile polls (which paid N×stat()/2s = N×1800/hour with most ticks
+  // no-ops). When sessions in the same Claude project share `findSessionsDir`,
+  // they share a single inotify watcher. Refcounted: the watcher closes when
+  // its last session unsubscribes.
+  const _dirWatchers = new Map(); // dirPath → { watcher, sessions: Set<tmuxSession> }
+  const _pathToTmux = new Map(); // absoluteFilePath → tmuxSession (routing layer)
+
+  function _runJsonlHandler(tmuxSession) {
+    const entry = jsonlWatchPaths.get(tmuxSession);
+    if (!entry) return;
+    if (jsonlDebounceTimers.has(tmuxSession)) clearTimeout(jsonlDebounceTimers.get(tmuxSession));
+    jsonlDebounceTimers.set(
+      tmuxSession,
+      setTimeout(async () => {
+        jsonlDebounceTimers.delete(tmuxSession);
+        try {
+          const usage = await sessionUtils.getTokenUsage(entry.sessionId, entry.projectPath);
+          const ws = sessionWsClients.get(tmuxSession);
+          if (ws && ws.readyState === 1 /* WebSocket.OPEN */) {
+            ws.send(JSON.stringify({ type: 'token_update', data: usage }));
+          }
+          // Simple 75% nudge — replaces smart compaction
+          const pct = usage.max_tokens > 0 ? (usage.input_tokens / usage.max_tokens) * 100 : 0;
+          checkContextUsage(entry.sessionId, pct);
+        } catch (err) {
+          if (err.code === 'ENOENT') {
+            logger.debug('JSONL file removed during watcher callback', {
+              module: 'watchers',
+              sessionId: entry.sessionId.substring(0, 8),
+            });
+            return;
+          }
+          logger.error('JSONL watcher callback error', {
+            module: 'watchers',
+            op: 'startJsonlWatcher',
+            err: err.message,
+          });
+        }
+      }, 500),
+    );
+  }
 
   // #143: shared file-attach helper. Used for Claude (file path is deterministic
   // from session id) and Gemini/Codex (file path is resolved via discover-*
@@ -29,42 +83,36 @@ module.exports = function createWatchers({
       projectPath: project.path,
       projectName: project.name,
     });
+    _pathToTmux.set(filePath, tmuxSession);
 
-    fs.watchFile(filePath, { persistent: false, interval: 2000 }, () => {
-      const entry = jsonlWatchPaths.get(tmuxSession);
-      if (!entry) return;
-
-      if (jsonlDebounceTimers.has(tmuxSession)) clearTimeout(jsonlDebounceTimers.get(tmuxSession));
-      jsonlDebounceTimers.set(
-        tmuxSession,
-        setTimeout(async () => {
-          jsonlDebounceTimers.delete(tmuxSession);
-          try {
-            const usage = await sessionUtils.getTokenUsage(entry.sessionId, entry.projectPath);
-            const ws = sessionWsClients.get(tmuxSession);
-            if (ws && ws.readyState === 1 /* WebSocket.OPEN */) {
-              ws.send(JSON.stringify({ type: 'token_update', data: usage }));
-            }
-            // Simple 75% nudge — replaces smart compaction
-            const pct = usage.max_tokens > 0 ? (usage.input_tokens / usage.max_tokens) * 100 : 0;
-            checkContextUsage(entry.sessionId, pct);
-          } catch (err) {
-            if (err.code === 'ENOENT') {
-              logger.debug('JSONL file removed during watcher callback', {
-                module: 'watchers',
-                sessionId: entry.sessionId.substring(0, 8),
-              });
-              return;
-            }
-            logger.error('JSONL watcher callback error', {
-              module: 'watchers',
-              op: 'startJsonlWatcher',
-              err: err.message,
-            });
-          }
-        }, 500),
-      );
-    });
+    // #586: create-or-reuse the directory-level chokidar watcher. All
+    // Claude session JSONLs for a project share the same parent dir, so
+    // every additional session for that project costs zero extra watchers.
+    const dirPath = dirname(filePath);
+    let dirEntry = _dirWatchers.get(dirPath);
+    if (!dirEntry) {
+      const chokidar = _getChokidar();
+      const watcher = chokidar.watch(dirPath, {
+        ignoreInitial: true,
+        persistent: false,
+        depth: 0,
+        // Per-session debounce below already coalesces flush bursts;
+        // chokidar's awaitWriteFinish would add 100-500ms of latency on
+        // top with no upside.
+      });
+      const handler = (changedPath) => {
+        const tmux = _pathToTmux.get(changedPath);
+        if (tmux) _runJsonlHandler(tmux);
+      };
+      watcher.on('add', handler);
+      watcher.on('change', handler);
+      watcher.on('error', (err) => logger.warn('JSONL chokidar watcher error', {
+        module: 'watchers', op: '_attachJsonlWatcher', dirPath, err: err.message,
+      }));
+      dirEntry = { watcher, sessions: new Set() };
+      _dirWatchers.set(dirPath, dirEntry);
+    }
+    dirEntry.sessions.add(tmuxSession);
   }
 
   // #143: Gemini/Codex don't write a JSONL with a deterministic name — their
@@ -136,7 +184,19 @@ module.exports = function createWatchers({
   function stopJsonlWatcher(tmuxSession) {
     const entry = jsonlWatchPaths.get(tmuxSession);
     if (entry) {
-      fs.unwatchFile(entry.jsonlPath);
+      _pathToTmux.delete(entry.jsonlPath);
+      const dirPath = dirname(entry.jsonlPath);
+      const dirEntry = _dirWatchers.get(dirPath);
+      if (dirEntry) {
+        dirEntry.sessions.delete(tmuxSession);
+        if (dirEntry.sessions.size === 0) {
+          // #586: refcounted close — fire-and-forget the chokidar close;
+          // it's async but stopJsonlWatcher is sync (called from PTY-exit /
+          // session-kill paths that don't await).
+          try { dirEntry.watcher.close(); } catch { /* best-effort cleanup */ }
+          _dirWatchers.delete(dirPath);
+        }
+      }
       jsonlWatchPaths.delete(tmuxSession);
     }
     if (jsonlDebounceTimers.has(tmuxSession)) {

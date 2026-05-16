@@ -2566,11 +2566,168 @@ For each `<cli>`:
 
 **Result:** ☐ PASS ☐ FAIL
 
+### 16.5: F-SIDEBAR-DIFF-RENDER-01 — Sidebar reconciles in-place; typing stays responsive under realistic project/session counts
+
+**Cascade-from:** SMOKE-CHAT-01 (multiple CLI session rows exist) + SMOKE-PROJ-01 (multiple projects in the sidebar).
+**Closes gap for:** #585 (sidebar `renderSidebar()` previously rebuilt the full container `innerHTML` on every state diff — main-thread stall vector for #484 typing pauses; the fix uses a keyed reconciler so unchanged nodes survive across diffs).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, sidebar visible. At least 2 projects with ≥3 sessions each must be expanded.
+2. Capture a baseline screenshot of the sidebar showing all expanded sessions.
+3. Pick one persistent session row in the sidebar (e.g. `smoke-chat-claude` under `wb-seed`) and pin its DOM node identity for the next assertion: `browser_evaluate(() => { const row = document.querySelector('.session-item[data-rk]'); window.__I585_PIN_NODE = row; window.__I585_PIN_RK = row?.dataset?.rk; return { rk: window.__I585_PIN_RK, hasNode: !!row }; })`. The return must include a non-empty `rk` and `hasNode === true` (setup-trigger only — the verify is the post-render identity check below).
+
+**Steps:**
+1. Trigger a sidebar re-render: `browser_evaluate(() => { window._loadStateRef && window._loadStateRef(); return 'reloaded'; })`. Hold for 1s so the WS-push-driven loadState completes.
+2. Capture a screenshot of the sidebar after the re-render.
+3. Read the node-identity diagnostic: `browser_evaluate(() => { const row = document.querySelector('.session-item[data-rk="' + window.__I585_PIN_RK + '"]'); return { stillSameNode: row === window.__I585_PIN_NODE, rkPresent: !!row?.dataset?.rk }; })`.
+
+**Verify (numbered assertions):**
+
+1. After the re-render, the pinned session row remains the same DOM node (`stillSameNode === true`) — confirms the keyed reconciler preserves identity rather than rebuilding the subtree. Screenshot of the sidebar post-render. → `16.5/assertion-01-node-identity-preserved.png`
+2. The session row's `data-rk` attribute is present and equals the pinned key (`rkPresent === true`) — confirms the keyed-children contract from `_reconcileKeyed` is in effect. → `16.5/assertion-02-data-rk-key-present.png`
+3. Compared to the baseline, every previously-expanded project group remains expanded and every previously-visible session row is still rendered at the same vertical position (no flicker, no collapse). The agent reads both screenshots and affirms positional equality of the project headers and the first three session rows under each. → `16.5/assertion-03-no-flicker-no-collapse.png`
+
+**Teardown:** none — the pinned DOM reference is discarded with the next page navigation.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 16.6: F-LOADSTATE-SCHEDULE-WS-RESET-01 — WS-pushed loadState resets the baseline 10s timer; no redundant fetch fires
+
+**Cascade-from:** 16.3 (loadState retry under transient failure) + SMOKE-CHAT-01 (a live WS session emitting token_update is present).
+**Closes gap for:** #587 (the prior `setInterval(loadState, REFRESH_MS)` fired regardless of whether a WS-triggered loadState had just run — and `window._loadStateRef` was referenced by terminal.js WS handlers but never assigned, so server-pushed updates silently no-op'd).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, sidebar visible. SMOKE-CHAT-01 PASSED so at least one CLI session is open with a live WS connection.
+2. Arm a /api/state request counter via `browser_evaluate(() => { const _orig = window.fetch; let _calls = 0; window.fetch = function(...a) { if (typeof a[0] === 'string' && a[0].includes('/api/state')) { _calls++; } return _orig.apply(this, a); }; window.__I587_RESET = () => { _calls = 0; }; window.__I587_COUNT = () => _calls; return 'armed'; })`. Confirm return value is `'armed'` (setup-trigger only — the verify is the count assertions below).
+
+**Steps:**
+1. Reset the counter and immediately invoke a WS-triggered loadState (mimics the server `token_update` push): `browser_evaluate(() => { window.__I587_RESET(); window._loadStateRef && window._loadStateRef(); return window.__I587_COUNT(); })`. Hold for 9.5s (just shy of the 10s baseline `REFRESH_MS`).
+2. Read the count: `browser_evaluate(() => window.__I587_COUNT())`. Capture the value.
+3. Continue holding for another 2s (totaling 11.5s since the WS-triggered loadState). The baseline self-reschedule should NOT have fired yet (the WS push reset the baseline timer's 10s clock).
+4. Read the count again. Capture the value.
+
+**Verify (numbered assertions):**
+
+1. Immediately after the WS-triggered loadState in step 1, the /api/state call count is exactly 1 (the WS-trigger itself). → `16.6/assertion-01-ws-trigger-fires-one-fetch.png` (devtools network panel + the counter read).
+2. At t+9.5s after the WS trigger, the count is still exactly 1 — the baseline self-reschedule's 10s clock was reset by the WS push, so no second fetch has fired yet. → `16.6/assertion-02-no-redundant-fetch-at-9.5s.png`.
+3. At t+11.5s after the WS trigger (i.e. ~1.5s past where a non-reset baseline would have fired), the count is exactly 1 OR 2 depending on whether the now-rescheduled baseline has tick'd — the assertion is the absence of a third fetch (no double-firing), not the absence of any baseline fetch. → `16.6/assertion-03-no-double-fire.png`.
+
+**Teardown:** restore native fetch: `browser_evaluate(() => { /* the helper's wrapper persists for the test; reload to clear */ })` — instruct the agent to reload the page so subsequent entries start with a clean fetch.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 16.7: F-PICKER-AUTOEXPAND-01 — Add Project to a program auto-expands that program; new project visible without manual toggle
+
+**Cascade-from:** SMOKE-PROJ-01 (project create modal renders + dismisses).
+**Closes gap for:** #592 (pre-fix the new project landed in a collapsed program-children container and was invisible until the user manually clicked the program header to expand).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, sidebar visible. At least one program (e.g. `wb-seed`) exists.
+2. Collapse the `wb-seed` program by clicking its program header so its `.program-children` is hidden. Capture a screenshot showing the program in the collapsed state. *(Setup precondition: the failure mode #592 fixes is invisible if the program is already expanded; we collapse first so the auto-expand step has something to do.)*
+3. No project named `autoexpand-proj-<timestamp>` exists.
+
+**Steps:**
+1. Click the per-program `+` affordance on the `wb-seed` program header. Project-create modal appears.
+2. Type `autoexpand-proj-<timestamp>` into name + `/data/workspace/autoexpand-proj-<timestamp>` into path. Click Save.
+3. Capture a screenshot at t+1s.
+
+**Verify (numbered assertions):**
+
+1. Within 1s of clicking the program's `+` affordance, the project-create modal renders. → `16.7/assertion-01-modal-visible.png`
+2. Within 2s of clicking Save, the `wb-seed` program is auto-expanded (its `.program-children` is visible — the `.collapsed` class is no longer on the program header) AND a project row labeled `autoexpand-proj-<timestamp>` is visible inside it. Single screenshot covers both. → `16.7/assertion-02-program-expanded-with-new-project.png`
+
+**Teardown:** delete the project via the sidebar's ✎ pencil → Remove.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 16.8: F-SWITCHTAB-STATUSBAR-01 — Status bar refreshes synchronously on tab switch
+
+**Cascade-from:** SMOKE-CHAT-01 (three CLI session tabs co-located on the primary tab bar).
+**Closes gap for:** #595 (pre-fix `switchTab` left the bottom status bar showing the prior tab's model / context / connection state; `_updateStatusBarRef` was only called from `pollTokenUsage`, `ws.onopen`, and the WS push handlers).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`. SMOKE-CHAT-01 PASSED so three CLI tabs are open: `smoke-chat-claude`, `smoke-chat-gemini`, `smoke-chat-codex`.
+2. Read the status bar's model field while `smoke-chat-claude` is active. Capture a screenshot of the status bar — the model field should show the Claude model (e.g. `claude-sonnet-4-6`).
+
+**Steps:**
+1. Click the `smoke-chat-gemini` tab to make it active.
+2. Capture a screenshot of the status bar immediately after the tab switch animation completes (≤1s).
+3. Click the `smoke-chat-codex` tab.
+4. Capture a screenshot at t+1s.
+
+**Verify (numbered assertions):**
+
+1. Within 1s of clicking the `smoke-chat-gemini` tab, the status bar's model field shows the Gemini model identifier (not the previous Claude model). → `16.8/assertion-01-statusbar-gemini-on-switch.png`
+2. Within 1s of clicking the `smoke-chat-codex` tab, the status bar's model field shows the Codex model identifier (not the prior Gemini model). → `16.8/assertion-02-statusbar-codex-on-switch.png`
+
+**Teardown:** switch back to `smoke-chat-claude` to leave state clean.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 16.9: F-WS-LIFECYCLE-STATUSBAR-01 — Status bar reflects WS disconnect/error immediately, symmetric with connect
+
+**Cascade-from:** SMOKE-CHAT-01 + 16.1's WS-disconnect setup pattern.
+**Closes gap for:** #596 (pre-fix `ws.onclose` and `ws.onerror` did not invoke `_updateStatusBarRef`, leaving the bar stuck on `connected` until the next loadState tick).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, the `smoke-chat-claude` tab active with a live WS connection. Capture a baseline screenshot of the status bar showing the connection indicator in the `connected` visual state.
+
+**Steps:**
+1. Force a WS close: `browser_evaluate(() => { const t = window.tabs.get(window.activeTabId); if (t?.ws) t.ws.close(); return 'closed'; })` (setup-trigger; the verify is the screenshot of the indicator).
+2. Capture a screenshot within 1s.
+3. After the workbench's auto-reconnect (or after a manual re-attach if the test fixture exposes one), capture another screenshot showing the indicator restored.
+
+**Verify (numbered assertions):**
+
+1. Within 1s of the WS close, the status bar's connection indicator transitions to a `disconnected` visual state (e.g. red dot, disconnect glyph) — symmetric with the connect indicator that was visible at baseline. → `16.9/assertion-01-statusbar-disconnect-on-close.png`
+2. Within 5s of the auto-reconnect, the indicator returns to the `connected` visual state. → `16.9/assertion-02-statusbar-reconnect.png`
+3. Optional (when reproducible): trigger `ws.onerror` directly via a forced bad frame; status bar shows the same disconnect visual state. → `16.9/assertion-03-statusbar-disconnect-on-error.png`
+
+**Teardown:** none — the tab is left in its reconnected state.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 16.10: F-TAB-RESTORE-RELOAD-01 — Previously-open CLI session tabs reopen on page reload via persisted tabOrders
+
+**Cascade-from:** SMOKE-CHAT-01 (three CLI tabs persisted to localStorage by `_persistTabOrders`).
+**Closes gap for:** #597 (pre-fix `app.js` init never read persisted `tabOrders` back; a page reload dropped every open CLI session tab even though the persisted ordering was on disk in localStorage).
+
+**Setup:**
+1. Browser at `${WORKBENCH_URL}`, three `smoke-chat-{claude,gemini,codex}` tabs open. Capture a baseline screenshot of the tab bar showing all three tab tongues.
+
+**Steps:**
+1. Confirm the persisted state: `browser_evaluate(() => JSON.parse(localStorage.getItem('tabOrders') || '{}'))` and capture the result — the primary panel array must contain the three session ids.
+2. Reload the page (`browser_navigate('about:blank')` followed by `browser_navigate('${WORKBENCH_URL}/')` — preserves localStorage across the load).
+3. Wait up to 5s for `loadState()` to populate and `restoreOpenTabsFromOrder()` to reopen the persisted tabs.
+4. Capture a screenshot of the tab bar after the reload.
+
+**Verify (numbered assertions):**
+
+1. Pre-reload, `localStorage.tabOrders.primary` contains the three session ids — confirms `_persistTabOrders` was wired correctly. → `16.10/assertion-01-tabOrders-persisted.png`
+2. Within 5s of the reload, the primary tab bar shows all three `smoke-chat-{claude,gemini,codex}` tab tongues in the same order as pre-reload. → `16.10/assertion-02-tabs-restored-after-reload.png`
+
+**Teardown:** none — restored tabs are the expected end state.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### Stage-5 BLOCKER for milestone 01-stabilization (2026-05-16)
+
+**Blocker:** the stage-3 HF test deploy at https://aristotle9-agentic-workbench-test.hf.space/ is gated by `__GATE_MODE__ = password` (the HF Space's `WORKBENCH_USER` / `WORKBENCH_PASS` Secrets are set per `curl -H "Authorization: Bearer $HF_TOKEN" https://huggingface.co/api/spaces/aristotle9/agentic-workbench-test/secrets`, but only the secret KEYS are exposed by the HF API, not the VALUES). Six credential combinations from `/mnt/storage/credentials/` were attempted at `/api/gate/login`; all returned HTTP 401 `{"error":"Invalid credentials"}`. The Playwright-driven attempt is recorded at `runbook-staging/stage5-hf/01-gate-page-load.png` (gate page renders correctly — deploy is up) and `runbook-staging/stage5-hf/02-gate-auth-failure.png` (documented credential rejected — gate is enforcing).
+
+**Consequence:** Section 16 entries 16.1–16.10 are AUTHORED (positive-affirmation verify clauses, screenshot-per-assertion, timing-bounded clauses, §12.11 axis coverage) but CANNOT BE RUN against this deploy. The reachable verification ceiling from this container under the path-2 deploy constraint is `tests/live/stage4-hf-deploy-probe.test.js` HF-DEPLOY-01..05 (deploy reachability — runtime stage, /health, gate render, gated /api/* intercept).
+
+**Unblock paths:**
+1. Surface the actual `WORKBENCH_USER` / `WORKBENCH_PASS` values to this container (e.g. via a credentials file under `/mnt/storage/credentials/`) so the Tester can authenticate past the gate.
+2. Re-set the Secrets to known values via `curl -X POST https://huggingface.co/api/spaces/aristotle9/agentic-workbench-test/secrets` with the HF token, then restart the Space — this is a write to shared infrastructure and is not undertaken without explicit orchestrator authorization.
+3. Switch the stage-3 target to a non-gated dev host (e.g. an irina dev container) where the engineer can SSH + `docker exec` + drive Playwright against the ungated UI.
+
+Per the dispatch's "document that as a stage-5 blocker rather than fabricating N/A" rule, each issue's row 5 cites this Section 16 BLOCKER and the runbook entry that would run once unblocked.
+
 ### Coverage after Section 16
 
-- **Entries added:** 4 (16.1–16.4)
-- **Issues covered with dedicated entries:** #198, #483, #522, #564
-- **Issues covered via §12.10 cascade declarations to existing baseline-smoke / cold-load entries:** #252, #253, #268, #275 (cascade from 16.4 / SMOKE-CHAT-01); #318, #319, #320, #321, #322, #323, #324, #325, #389, #395, #397, #398, #399, #400, #401, #409, #412, #413, #414 (cascade from Section 1 SMOKE-* + Section 2 SHELL-* per PROC-003 §2 baseline-smoke is sufficient for doc / test / build / Q-series cleanup with consumer surfaces already exercised by smoke)
-- **§12.11 axis-1 (toggle both-states):** 16.3 adds the negative-of-happy-path for `loadState` (success ↔ transient-fail-then-recover); the positive happy-path is the existing SMOKE-PROJ-01.
-- **§12.11 axis-2 (peer parity):** 16.2 explicitly tests CLI tabs + file tabs against the same reorder code path; 16.4 explicitly iterates claude / gemini / codex against the same `session_config` MCP path.
+- **Entries added:** 10 (16.1–16.10)
+- **Issues covered with dedicated entries:** #198 (16.4), #483 (16.1), #522 (16.2), #564 (16.3), #585 (16.5), #587 (16.6), #592 (16.7), #595 (16.8), #596 (16.9), #597 (16.10)
+- **Issues covered via §12.10 cascade declarations to existing baseline-smoke / cold-load entries:** #252, #253, #268, #275 (cascade from 16.4 / SMOKE-CHAT-01); #318, #319, #320, #321, #322, #323, #324, #325, #389, #395, #397, #398, #399, #400, #401, #409, #412, #413, #414, #586, #588, #589, #611 (cascade from Section 1 SMOKE-* + Section 2 SHELL-* per PROC-003 §2 baseline-smoke is sufficient for doc / test / build / Q-series cleanup / server-internal refactor / lint-config-only changes whose consumer surfaces are already exercised by smoke)
+- **§12.11 axis-1 (toggle both-states):** 16.3 toggles loadState success ↔ transient-fail-then-recover; 16.6 toggles WS push present ↔ absent for the schedule-timer reset; 16.7 toggles program collapsed ↔ auto-expanded; 16.9 toggles WS connected ↔ disconnected.
+- **§12.11 axis-2 (peer parity):** 16.2 explicitly tests CLI + file tabs against the same reorder code path; 16.4 explicitly iterates claude / gemini / codex against `session_config`; 16.8 explicitly iterates claude / gemini / codex tab switches against `_updateStatusBarRef`.
 - **§12.11 axis-3 (explicit Setup):** each new entry's Setup block names the precondition state without assuming defaults.

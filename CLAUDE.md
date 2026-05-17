@@ -7,6 +7,21 @@ This repository is the source code for the Agentic Workbench application — the
 * **Project:** r1
 * **Milestone:** `01-stabilization`
 
+# Canonical Team Sessions
+
+The roles for this project are bound to the following workbench sessions. Dispatch only to these IDs. Do not spawn new sessions for these roles.
+
+| Role | Session ID |
+|---|---|
+| Project Manager | `85d37034-f149-4770-8e5f-a0092ce05bf8` |
+| Engineer | `baa4c5da-9389-4f7a-9a5f-512407345f58` |
+| Tester | `d876819c-56db-4ac7-9699-b3e89400b2dc` |
+| Designer | `0cda55ab-9d82-4ab6-aec8-02bdaaff034e` |
+| Tech Writer | `4ea1ced0-5127-47df-89e7-b77f1f929b65` |
+| Reviewer-Claude | `f97d3af7-a5b8-4ca1-bb52-29be0624855a` |
+| Reviewer-Codex | `8d21b99e-6407-46fb-bcf7-7f42376c61d0` |
+| Reviewer-Gemini | `94dbc1f0-02c8-4c7b-9804-c35d0fe6535d` |
+
 # Anchor Documents
 
 These are the project-specific files. **`README.md` must be read on every session.** The runbooks and test plans must be read fully when relevant to your current task. Do not grep or search within documents — content cannot be understood out of context.

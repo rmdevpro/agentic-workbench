@@ -66,6 +66,9 @@ These documents define the standards and context this project must be reviewed a
 - `/data/workspace/repos/Admin/docs/standards/STD-004-code-standard.md` — defines what a code deliverable must look like as an artifact. Read before writing or reviewing application code.
 - `/data/workspace/repos/Admin/docs/standards/STD-005-test-code-standard.md` — defines what test code must look like. Read before writing or reviewing test code.
 - `/data/workspace/repos/Admin/docs/standards/STD-007-readme-standard.md` — defines what the README must contain and how it must be maintained. Read before updating `README.md`.
+- `/data/workspace/repos/Admin/docs/standards/STD-008-process-document-standard.md` — defines the shape of SDLC-N and PROC-N docs (closed vocabularies, inline antipatterns, signal+path hand-offs, no back-references). Read before authoring or reviewing any process doc.
+- `/data/workspace/repos/Admin/docs/standards/STD-009-role-file-standard.md` — defines the shape of `Admin/roles/*.md` (required sections, Prime Directives canonical wording, optional sections by role type). Read before authoring or reviewing any role file.
+- `/data/workspace/repos/Admin/docs/standards/STD-010-project-system-prompt-standard.md` — defines the shape of `CLAUDE.md` / `GEMINI.md` / `AGENTS.md` (required sections, CLI parity, anchor-doc list format). Read before authoring or reviewing this file or its siblings.
 
 ## Process
 
@@ -78,4 +81,5 @@ These documents define the standards and context this project must be reviewed a
 - `/data/workspace/repos/Admin/docs/process/PROC-003-test-scope-matrix.md` — global test scope matrix (consumed during SDLC-2 to produce the release-specific matrix).
 - `/data/workspace/repos/Admin/docs/process/PROC-004-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Used by SDLC-3 (UI test stage) and SDLC-4 (release-close UI run).
 - `/data/workspace/repos/Admin/docs/process/PROC-005-review.md` — unified review procedure (code and docs) via 3-CLI quorum. Reviewer verdict is a stage-pass label flip on each in-scope issue (backed by cited evidence in the issue's seven-row workflow grid) plus optional supplementary notes. Stage 7 (close) variant uses GitHub PR reviews instead of labels.
+- `/data/workspace/repos/Admin/docs/process/PROC-006-memory-hygiene.md` — per-project agent-memory audit procedure (D/N/B/K/Obsolete triage; tracked as a closed audit issue per cycle). Read before running a memory hygiene audit.
 - `/data/workspace/repos/Admin/docs/runbooks/RUN-001-deployment.md` — step-by-step deploy procedure (build → push → pull → up). Read before any deploy.

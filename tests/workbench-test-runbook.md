@@ -2,15 +2,13 @@
 
 ## Status
 
-Canonical Workbench UI Test Runbook, produced by milestone #7 (UI runbook refactor) under the redesigned SDLC. Supersedes the prior runbook (archived at `/mnt/storage/archive/workbench-test-runbook-2026-05-14.md`).
-
-Section 0 (Environment Setup — fresh container + OAuth bootstrap), Section 1 (Baseline UI Smoke), and Phase A–G feature-group sections are the milestone #7 deliverable. Further entries land as features ship in subsequent r1 milestones.
+Canonical Workbench UI Test Runbook. Authoritative catalog of UI test scenarios per STD-003 §12.4.
 
 ## Target binding
 
 The runbook is environment-agnostic. The orchestrator binds these placeholders at run time:
 
-- `${WORKBENCH_URL}` — base URL of the workbench under test (e.g. `https://aristotle9-agentic-workbench-test.hf.space`)
+- `${WORKBENCH_URL}` — base URL of the workbench under test
 - `${WORKBENCH_CONTAINER}` — Docker container name on the host running the deployment under test
 - `${WORKBENCH_HOST}` — `user@host` reachable via SSH for setup actions (container restart, fresh-`/data` reset)
 - `${GATE_USER}` / `${GATE_PASS}` — gate credentials if the deployment is HF-gated; empty otherwise
@@ -107,7 +105,7 @@ The chat content assertion therefore uses agent judgment from the screenshot: th
 
 ### Where to run
 
-Tests run against a deployed container or HF Space — never against a host-machine clone of the repo. The host that holds this repo may be a prod or dev workbench host (M5, irina); its database, webhook config, qdrant, and tmux state belong to the running workbench, not to a test harness. Running `npm test`, `npm run test:coverage`, or any ad-hoc `node -e` that imports a project module from the host shell will collide with the live deployment.
+Tests run against a deployed container or HF Space — never against a host-machine clone of the repo. The host that holds this repo may itself be running a workbench deployment; its database, webhook config, qdrant, and tmux state belong to that running workbench, not to a test harness. Running `npm test`, `npm run test:coverage`, or any ad-hoc `node -e` that imports a project module from the host shell will collide with the live deployment.
 
 **Allowed:**
 - `ssh ${WORKBENCH_HOST} 'docker exec -i ${WORKBENCH_CONTAINER} sh -c "cd /app && npm test"'` — suite runs inside the deployed container's own filesystem and DB.
@@ -162,9 +160,7 @@ The runbook is organized into sections by surface area. Section 0 is the environ
 
 0. **Environment Setup** — fresh container + OAuth bootstrap. Runs on a fresh `/data` volume, an auth-touched change, or an explicit auth regression. **Section 0 is the only section that uses Hymie** (for the OAuth flow). Every other section runs headless.
 1. **Baseline UI Smoke** — 8 SMOKE-* entries. Mandatory floor for every code-change Gate C run.
-2. *(future feature-group sections — authored as features land per the milestone plan.)*
-
-Numbering and section boundaries finalize as each section lands. Sections 0 and 1 are stable from this commit forward.
+2+. **Feature-group sections** — section per UI surface area, per the per-section preamble.
 
 ---
 
@@ -410,15 +406,15 @@ Ask the orchestrator which option to use. If neither is available, fix the auth 
 
 **Result:** ☐ PASS ☐ FAIL
 
-### 0.F: OAUTH-MODAL-CODEX-01 — DELETED in Phase D (Codex has no in-session OAuth slash command)
+### 0.F: OAUTH-MODAL-CODEX-01 — DELETED — Codex has no in-session OAuth slash command
 
-This entry has been removed. Codex CLI v0.130.0 has no `/login` or `/auth` in-session slash command; Codex authentication is process-spawn-time only. The premise of testing the workbench's oauth-detector against a Codex in-session OAuth trigger is structurally invalid — the feature does not exist on Codex. Documented in the Phase D triage section at the bottom of this runbook.
+This entry has been removed. The Codex CLI has no `/login` or `/auth` in-session slash command; Codex authentication is process-spawn-time only. The premise of testing the workbench's oauth-detector against a Codex in-session OAuth trigger is structurally invalid — the feature does not exist on Codex.
 
 The §12.11 axis-2 peer-parity claim for the OAuth-detector module reduces accordingly: 0.C (Claude) + 0.D (Gemini) cover the two CLIs that DO expose an in-session OAuth slash. Codex's process-spawn-time auth flow is exercised at container-bring-up by 0.A / 0.B-equivalent setup, not by a Section-2+ entry.
 
-### 0.F.NEG: OAUTH-DETECT-CODEX-OFF-01 — DELETED in Phase D (paired with 0.F; same reason)
+### 0.F.NEG: OAUTH-DETECT-CODEX-OFF-01 — DELETED — paired with 0.F; same reason
 
-This entry has been removed. Codex has no in-session OAuth slash to suppress; the toggle's effect on Codex cannot be verified in-session because the feature itself does not exist in-session. Documented in the Phase D triage section.
+This entry has been removed. Codex has no in-session OAuth slash to suppress; the toggle's effect on Codex cannot be verified in-session because the feature itself does not exist in-session.
 
 The §12.11 axis-1 negative-state coverage for Codex OAuth-detection toggle is N/A by feature absence — the toggle is a workbench-side setting that gates the workbench's terminal-pane URL detector; with no Codex in-session URL emission to detect, ON and OFF are indistinguishable on Codex sessions. The Codex OAuth-detection checkbox in Settings remains under test by 0.E.CODEX (which verifies the checkbox's persistence + click handler — those work regardless of whether the detector ever fires for Codex).
 
@@ -463,7 +459,7 @@ The Tier-1 CLI assumption stated in the preamble applies throughout Section 1. F
 3. The session-create overlay appears. Type session name `smoke-chat-<cli>` into the name field.
 4. Click Start (or press Enter). The overlay closes; a new tab opens labeled with the session name.
 5. Wait for the per-CLI ready observable to appear in the terminal pane. Capture screenshots at 2s intervals up to a 60s bound. The ready observable is concrete per CLI:
-   - **claude:** a Claude input area is rendered in the terminal pane (an editable region distinct from any response output area; type a single test character `x` via `browser_type` on `#pane-<tabId> .xterm-helper-textarea` — per the Canonical input selectors section — within the 60s window and confirm the glyph renders inline in the input area on screenshot). The input area's screen position (top, bottom, or inline) is intentionally NOT asserted — Claude Code's input-area placement has changed across versions (`v2.1.123` on irina renders the input inline-at-top of the pane, earlier versions rendered a boxed area at the bottom). The version-stable observable is "typed character appears in the rendered view".
+   - **claude:** a Claude input area is rendered in the terminal pane (an editable region distinct from any response output area; type a single test character `x` via `browser_type` on `#pane-<tabId> .xterm-helper-textarea` — per the Canonical input selectors section — within the 60s window and confirm the glyph renders inline in the input area on screenshot). The input area's screen position (top, bottom, or inline) is intentionally NOT asserted. The version-stable observable is "typed character appears in the rendered view".
    - **gemini:** the Gemini `>` prompt is visible at the start of a new line at the bottom of the pane, with the cursor positioned after it.
    - **codex:** the Codex input field is visible at the bottom of the pane (rectangular input box with cursor positioned inside it).
    Identify the first frame where the corresponding ready observable is rendered. Delete the test character via `browser_press_key {key:"Backspace"}` on the same `.xterm-helper-textarea` before proceeding.
@@ -794,7 +790,7 @@ Verify the sidebar handles (a) optimistic-mutation in-flight without flicker (#3
 
 **Setup:**
 1. SMOKE-CHAT-01 complete (smoke-chat-claude / smoke-chat-gemini / smoke-chat-codex sessions exist as sidebar rows under `wb-seed`).
-2. **Baseline-glyph affirmation (§12.11 explicit Setup):** screenshot-affirm the `smoke-chat-claude` row's Archive affordance is in the unchecked (☐) state at start. If a prior run left it in the checked (☑) state, click it once to restore baseline before proceeding — otherwise assertion-01's "transitions to ☑" silently passes on a no-op.
+2. **Baseline-glyph affirmation (§12.11 explicit Setup):** screenshot-affirm the `smoke-chat-claude` row's Archive affordance is in the unchecked (☐) state at start. If it is checked (☑), click once to restore the unchecked baseline before proceeding — otherwise assertion-01's "transitions to ☑" silently passes on a no-op.
 3. Orchestrator configures Playwright to hold `PUT /api/sessions/*/archive` responses for 4 seconds: `await page.route('**/api/sessions/*/archive', async (route) => { await new Promise(r => setTimeout(r, 4000)); return route.continue(); });`. This is a network-layer throttle at the test harness, not in-page state manipulation.
 
 **Steps:**
@@ -1332,9 +1328,7 @@ Verify CRUD + cascade behavior for projects and programs at the sidebar level: r
 ### 5.2.PENCIL: PROJECT-CONFIG-STATE-VIA-PENCIL-01 — ✎ pencil opens Project Config and changes project state
 
 **Cascade-from:** SMOKE-CHAT-01
-**Closes gap for:** §12.11 axis-2 — ✎ pencil affordance as a distinct entry point to project-level configuration (the pencil opens Project Config / State dropdown, NOT a Remove flow — Remove parity is filed as a product gap; see Phase D triage in the runbook trailer)
-
-**Note on reframe (Phase D):** The original 5.2.PENCIL entry was authored on the assumption that the ✎ pencil affordance exposes a Remove action symmetric with the right-click context menu. Phase D execution surfaced that the ✎ pencil instead opens a Project Config modal containing a State dropdown (active / archived / hidden) and a Save button — NO Remove button. The §12.11 axis-2 intent (peer affordances for project-level state changes) is satisfied by reframing this entry to test the State-change flow the pencil DOES enable. Remove-via-pencil parity has been filed as a separate product gap.
+**Closes gap for:** §12.11 axis-2 — ✎ pencil affordance as a distinct entry point to project-level configuration. The pencil opens a Project Config modal containing a State dropdown (active / archived / hidden) and a Save button; this entry verifies the State-change flow the pencil enables.
 
 **Setup:**
 1. SMOKE-CHAT-01 complete.
@@ -1807,7 +1801,7 @@ Verify the MCP tool catalog matches the registry (#361), project-MCP enable prop
 **Setup:**
 1. SMOKE-PROJ-01 complete (`smoke-proj-<timestamp>` exists as project P).
 2. Click `smoke-proj-<timestamp>` in the sidebar. Open its Project Settings (right-click → Settings, or the per-project ✎ pencil affordance).
-3. **Clean-baseline affirmation (§12.11 explicit Setup):** locate the per-project MCP-servers section. Screenshot-affirm `test-mcp` is NOT already in the list (the list is empty, or contains only entries with different names). If `test-mcp` is present from a prior run, remove it first so the Step 1 "add test-mcp" is a true addition, not a no-op.
+3. **Clean-baseline affirmation (§12.11 explicit Setup):** locate the per-project MCP-servers section. Screenshot-affirm `test-mcp` is NOT already in the list (the list is empty, or contains only entries with different names). If `test-mcp` is present, remove it first so Step 1's "add test-mcp" is a true addition, not a no-op.
 4. Click `+ Add MCP Server`. Set Name: `test-mcp` and Command: `echo test-mcp-running` (a no-op MCP that any registered CLI can see). Click Save.
 5. Start two new sessions in P: a Gemini session named `parity-gemini` and a Codex session named `parity-codex` via the standard `+` → CLI dropdown flow.
 6. Wait for both terminals to render their ready observables.
@@ -2046,7 +2040,7 @@ Verify the workbench modal pattern replaces every native browser dialog (#340) a
 
 **Setup:**
 1. 4.2 complete (session-create flow exercised).
-2. **No-prior-payload affirmation (§12.11 explicit Setup):** screenshot-affirm the sidebar under `wb-seed` does NOT already contain a row whose display text matches the malicious payload `<bad>&"'name`. If such a row exists from a prior run (left by a Teardown miss), remove it first (right-click → Remove session). Otherwise the "new row appears" assertion may silently pass on the pre-existing row.
+2. **No-prior-payload affirmation (§12.11 explicit Setup):** screenshot-affirm the sidebar under `wb-seed` does NOT already contain a row whose display text matches the malicious payload `<bad>&"'name`. If such a row exists, remove it first (right-click → Remove session) so the "new row appears" assertion is a true addition.
 3. Orchestrator may optionally instrument an `alert()` tripwire on the page as a hard-failure diagnostic during the run — Setup-only, not a verify mechanism. The verify is the screenshot: a browser-native `alert` dialog carries OS chrome (title bar, OK button widget) that is visually distinct from any in-page rendering and is screenshot-affirmable.
 
 **Steps:**
@@ -2213,7 +2207,7 @@ Verify CLI-parity slash commands auto-install on fresh container (#451) and that
 **Cascade-from:** cold
 **Closes gap for:** §12.11 axis-2 — Claude peer of 15.1 (Gemini+Codex peers covered there)
 
-**Note on per-CLI slash form:** Claude Code v2.1.x exposes the session-management skill as a single `/session` slash with subcommand arguments (`transition`, `resume`), NOT as separate `/session:transition` / `/session:resume` entries like Gemini and Codex. Per-CLI autocomplete renderings differ: this entry asserts the Claude form (one dropdown row for `/session` with subcommand args reachable on Tab / arrow keys). The 15.1 (Gemini+Codex) entry asserts the colon-namespaced form on those CLIs.
+**Note on per-CLI slash form:** Claude Code exposes the session-management skill as a single `/session` slash with subcommand arguments (`transition`, `resume`), NOT as separate `/session:transition` / `/session:resume` entries like Gemini and Codex. Per-CLI autocomplete renderings differ: this entry asserts the Claude form (one dropdown row for `/session` with subcommand args reachable on Tab / arrow keys). The 15.1 (Gemini+Codex) entry asserts the colon-namespaced form on those CLIs.
 
 **Setup:**
 1. Orchestrator spins a fresh container from the current image with NO manual slash-command placement: `docker run -d --name workbench-parity-claude -v <ephemeral>:/data -p <port>:7860 <image>`. Confirm the Claude skill files do NOT exist at the canonical install path (e.g., `/data/.claude/skills/session/SKILL.md`) before workbench starts — proves auto-install is the only source.
@@ -2242,14 +2236,14 @@ Verify CLI-parity slash commands auto-install on fresh container (#451) and that
 **Cascade-from:** 15.1.CLAUDE
 **Closes gap for:** §12.11 axis-2 — Claude peer of 15.2 (anchors the positive value that 15.2's negative assertions for Gemini/Codex reference: Gemini "does not contain `/compact`" is meaningful only if `/compact` IS the Claude value)
 
-**Note on per-CLI invocation form:** Per 15.1.CLAUDE's note, Claude invokes the session-transition skill as `/session` + `transition` arg, not as `/session:transition`. The actual keystroke sequence is `/session<space>transition<Enter>` (or whatever the deployed Claude Code v2.1.137 input form for skill+arg is — Tab-select arg, type arg, or arg-as-positional — verify against the v2.1.137 autocomplete behavior captured in run-20260514T182149Z/15.1.CLAUDE/ for the actual deployed pattern). The PROMPT CONTENT that lands in the pane is the same regardless of the invocation form; this entry verifies prompt content, not invocation syntax.
+**Note on per-CLI invocation form:** Per 15.1.CLAUDE's note, Claude invokes the session-transition skill as `/session` + `transition` arg, not as `/session:transition`. The PROMPT CONTENT that lands in the pane is the same regardless of the invocation form; this entry verifies prompt content, not invocation syntax.
 
 **Setup:**
 1. 15.1.CLAUDE complete (`workbench-parity-claude` running; `parity-slash-claude` session exists with auto-installed `/session` skill).
 
 **Steps:**
 1. Click `parity-slash-claude` tab.
-2. Invoke the Claude session-transition skill using the deployed v2.1.x invocation form: type `/session` then space, then `transition`, then Enter (or follow the Claude Code v2.1.137 prompt for arg entry — Tab to accept arg, type the arg value, then Enter). If the autocomplete from 15.1.CLAUDE step 4 surfaced a direct-invoke affordance for the `transition` arg, use that; otherwise type the arg explicitly.
+2. Invoke the Claude session-transition skill: type `/session` then space, then `transition`, then Enter. If the autocomplete from 15.1.CLAUDE step 4 surfaced a direct-invoke affordance for the `transition` arg, use that; otherwise type the arg explicitly.
 3. Wait for the prompt to render in the Claude pane.
 
 **Verify:**
@@ -2263,201 +2257,9 @@ Verify CLI-parity slash commands auto-install on fresh container (#451) and that
 
 ---
 
-**Authored:** step 3a.1 of milestone #7 (UI runbook refactor), 2026-05-14.
-**Source proposal:** `/mnt/storage/dev_artifacts/workbench/r1/plan/baseline-ui-smoke-proposal.md`.
-**Round-1 findings folded:** #495–#514 against review-request #498. Specific defects addressed in this rewrite: `term.buffer.active` removed (§12.7); "Tester recognizes" wording replaced with concrete per-CLI ready observables (#504); chat content assertion strengthened to require coherent reply containing "56" per agent screenshot judgment (#501); numbered assertions cite-able by cell-6 grids; timing bounds applied per §12.8–§12.9; per-run subdir path aligned with PROC-004 `runbook-runs/` convention (#500).
+## Section 16: Bug-fix feature entries (`F-*`)
 
-**Sections 0.C–E + 2–15 authored:** step 4 of milestone #7 (UI runbook refactor), 2026-05-14. 38 entries built from the 3-CLI-approved outline at `/mnt/storage/dev_artifacts/workbench/r1/runbook-build/outline.md`.
-
----
-
-## Round 1 fix dispositions (step 4b)
-
-Three reviewers audited Sections 0.C–E + 2–15. Codex's strictest §12.7 reading (browser_console_messages and detector instrumentation count as host-side telemetry rather than monitor observables) is treated as authoritative on severity per the severity-max rule. The dispositions below address every finding from all three reviewers.
-
-| ID | Sev | Where | Disposition | Justification |
-|---|---|---|---|---|
-| Codex F1 | **blocker** | 11.4 both verify clauses are console-only | **fix** | Steps 2–5 rewritten to type a single character into each password input and observe the masked-glyph render — this is the user-observable, screen-affirmable proof that the field IS a password input and the surrounding form-wrapping did not break its type. New assertions 01–02 are the primary screen affirmations; the original console-warning checks remain as supplementary diagnostics (assertions 03–04). |
-| Codex F2 | major | 0.E / 2.1 / 2.2 / 2.4 / 8.1 / 13.1 / 13.2 / 14.1 mix console & detector instrumentation | **fix** | Each entry's primary verify clause now affirms a visible UI outcome; the console/detector lines are demoted to supplementary diagnostics flagged inline as such. Specifics: 0.E assertion order swapped (checkbox-visual + persistence are primary; console is supplementary); 2.1 console flagged supplementary (sidebar/tab-bar/right-panel paints are primary); 2.2 PNG-404 flagged supplementary (logo + gate-bg visibly rendered is primary); 2.4 console flagged supplementary (modal-opened + General-tab-active are primary); 8.1 picker-rendered promoted to primary (jQuery removal would have broken it), console demoted; 13.1 JS interceptor replaced with OS-chrome screenshot affirmation (see Claude F1 below); 13.2 xssAlertFired binding replaced with OS-chrome alert-dialog screenshot affirmation; 14.1 sidebar-render-intact at 60s + 120s promoted to primary (a polling NotFoundError would have prevented re-render), console demoted to supplementary. |
-| Codex F3 | major | 3.1 / 4.5 / 6.1 / 13.1 / 14.1 use During/Across wording | **fix** | All five rewritten to strict `≤Ns after step <K>:` form. 3.1 "During the 4s window" → `≤4s after step 2 (frames sampled every 500ms)`; 4.5 "During step 4 (each hover frame)" → `≤200ms after each of the three hovers in step 4`; 6.1 "Across the 10 captured frames" → `≤500ms after each of the 10 clicks`; 13.1 "During the same 500ms window" + "Across the screenshots" → `≤500ms after each click in steps 1-6`; 14.1 "Across the 2-minute observation window" → `≤120s after step 1`. |
-| Claude F1 | minor | 13.1 assertion-07 + 13.2 assertion-03 use JS interceptor | **fix** (overlaps with Codex F2) | 13.1 assertion-07 rewritten as composite OS-chrome screenshot check — a browser-native `confirm`/`alert`/`prompt` carries OS chrome (title bar, OS-specific button widget, dialog positioned outside the page viewport) visually distinct from the in-page workbench modal pattern. 13.2 assertion-03 rewritten to drop the `xssAlertFired` binding clause and keep only the OS-chrome screenshot affirmation. JS interceptors retained in Setup as optional orchestration tripwires, not as verify mechanisms. |
-| Claude F2 | minor | 14.1 missing step anchor on Across-window phrasing | **fix** (overlaps with Codex F3) | 14.1 rewritten as four assertions with explicit `≤Ns after step K:` anchors — sidebar intact at 60s (assertion 01), sidebar intact at 120s (assertion 02), shell responsive at click (assertion 03), supplementary console snapshot at 120s (assertion 04). |
-| Claude F3 | moderate | 6.1 ≤50ms bound below screenshot polling's noise floor | **fix** | Split the original single assertion into (a) sub-second duration measurement via `performance.now()` bracketing per §12.8 — observable IS duration, not rendered content — verifying click-to-paint ≤50ms per click (assertion 01); plus (b) content affirmation at ≤500ms via screenshot polling for the prompt-glyph swap (assertion 02); plus (c) layout-shift check at ≤500ms via pixel-diff against the Setup anchor (assertion 03 — also tightened from the previous Across-frames phrasing). The original conflated assertion is now three deterministic ones. |
-| Claude F4 | minor | 5.2 cascade-from documentation clarity | **fix** (option b — keep SMOKE-CHAT-01 cascade-from + add precondition check) | Setup step 1 now reads: "SMOKE-CHAT-01 complete. Precondition check (not under test in this entry): confirm the three smoke-chat-* rows are visible in the sidebar under wb-seed — this entry inherits SMOKE-CHAT-01's 'three-CLI session-create primitive works' guarantee, then exercises that primitive on a sacrificial sister project (the smoke-chat-* state itself is NOT mutated; the cascade-from is documenting the upstream primitive, not the upstream rows)." This makes the §12.10 inheritance reasoning explicit at execution time. |
-| Claude F5 | minor | 13.1 Steps 1, 4, 6 ambiguity | **fix** | Step 1 (Save As) now names a specific file (`/data/workspace/wb-seed/README.md`) and a specific Save-As affordance in the editor toolbar. Step 4 (Save settings) replaces "may appear (per product)" with definite expectation language and a unified pass condition that covers either save-feedback rendering OR silent persistence (both consistent with "no native dialog"). Step 6 (Rename) explicitly names both possible workbench patterns (modal OR inline-edit) as acceptable, both screenshot-distinct from native dialogs. Setup steps 3–4 added to create the sacrificial program / session / task / file required by the new Step wording so the entry is self-contained. |
-| Gemini | — | (no findings, APPROVE 0/0/0/0) | n/a | Gemini's audit independently confirmed §12.7/§12.8/§12.10 PASS with no findings. No action required. |
-
-### Net effect
-
-- **Blocker resolved:** 1 (11.4 — primary verify is now the masked-glyph render of password inputs after typed input).
-- **§12.7 compliance hardened:** 8 entries (0.E / 2.1 / 2.2 / 2.4 / 8.1 / 13.1 / 13.2 / 14.1) reworked so every primary verify clause is a screen-affirmable observable; console / interceptor mechanisms either moved to Setup as tripwires or demoted to supplementary verify lines explicitly flagged as such.
-- **§12.8 form compliance:** 5 entries (3.1 / 4.5 / 6.1 / 13.1 / 14.1) rewritten to use only the strict `≤Ns after step <K>:` form; zero remaining `During...` / `Across...` phrasings.
-- **§12.8 instrument-fit:** 6.1's ≤50ms bound now uses `performance.now()` per §12.8's sub-second-duration exception; content affirmation moved to ≤500ms screenshot polling.
-- **§12.10 inheritance clarity:** 5.2 cascade-from inheritance from SMOKE-CHAT-01 now documented as a precondition check in Setup.
-- **Quality:** 13.1 Steps now name specific affordances and unambiguous expected modal patterns per site.
-
-Coverage after fixes: 40/40 UI-gap issues, 38 entries (3 Section 0 + 35 Sections 2–15). No entries added or removed.
-
----
-
-## Phase A corrections (post-step-5 tester run)
-
-Tester run `run-20260514T081936Z` (irina dev, Claude Code v2.1.123) surfaced runbook drift in SMOKE-CHAT-01's Claude ready-observable spec: the runbook described "boxed input area at pane bottom" but Claude Code v2.1.x renders the input area inline-at-top. Two other dispositions from the same run are tracked outside the runbook (a GitHub issue for the SMOKE-PROJ-01 product bug + a comment on issue #404 for a `#jqft-tree` side-finding).
-
-### Runbook entries touched in Phase A
-
-| Entry | Change |
-|---|---|
-| SMOKE-CHAT-01 step 5 (claude bullet) | Replaced "boxed input area at the bottom of the pane with cursor blinking, prompt-line glyph" with a version-stable observable: "an editable region distinct from any response output area; typing a single test `x` character into the focused pane renders the glyph inline." Position (top/bottom/inline) is intentionally NOT asserted — Claude Code's input-area placement has changed across versions. Gemini and Codex ready-observable bullets unchanged (their renderings were not flagged stale). |
-| SMOKE-CHAT-01 step 9 | Per-CLI ready-reappearance check split: claude affirms "input area accepts a typed character inline" (no position); gemini/codex retain "reappears at the bottom of the pane". |
-| SMOKE-CHAT-01 assertion 02 | Replaced "boxed input box at pane bottom" with the version-stable form. |
-| SMOKE-CHAT-01 assertion 04 | Same — "reappears at the pane bottom" replaced with the version-stable form. |
-| 0.C OAUTH-MODAL-CLAUDE-01 Setup step 6 | "Claude input box to render at the bottom" → "Claude input area to render in the terminal pane" with the same version-stable observable + cross-reference to SMOKE-CHAT-01 step 5. |
-| 4.1 SESS-PATH-ENCODING-01 assertion 02 + 04 | Same Claude-input-area rewording. |
-| 4.2 SESS-RAPID-CREATE-01 assertion 02 | Same rewording for the "five sessions ready" check. |
-| 4.5 SESS-TMUX-ASYNC-01 assertion 03 | Same rewording for the new-session ready check. |
-
-### Not touched in Phase A (explicit decisions)
-
-- **2.4 Git tab + 11.4 Git Accounts modal:** PM verified `public/index.html:104` registers `<button data-settings-tab="git">Git</button>` and `routes.js:10` registers the `git-accounts` route; the Git tab IS a current feature. Irina was running a stale build at run time. Phase B fresh-deploy re-run will pick this up. No runbook change needed.
-- **All other Sections 0+1 entries and Sections 2–15 entries:** untouched — every other FAIL in the run was an environment limitation (no MCP into target, fresh-container unavailable, ungated deployment, cascade-precondition unmet, context-budget skipped), not runbook drift.
-
-### External follow-ups (filed outside the runbook)
-
-1. **GitHub issue filed** — sidebar auto-refresh does not recover from `loadState` `Failed to fetch` after Add Project: manual `↻` works, but the bounded ≤5s auto-refresh that SMOKE-PROJ-01 assertion-03 verifies is currently silently broken. Evidence: `SMOKE-PROJ-01/assertion-01..04*.png` in the run-20260514T081936Z subdir.
-2. **Comment on issue #404** — `#jqft-tree` element id is still emitted by the dir-picker despite #404's closure title naming the rename. Tester noted this as a side-finding during entry 2.3 (which PASSed on visible rendering but emits the legacy id). Decision recorded in the issue thread.
-
----
-
-## §12.11 chain-of-events backfill (post-3-CLI-audit)
-
-STD-003 §12.11 was added after Phase A; the 3-CLI audit synthesis (`/mnt/storage/dev_artifacts/workbench/r1/runbook-build/12-11-backfill-plan.md`) identified 29 unique new entries needed (Axis 1: 9 negatives / both-state pairs; Axis 2: 20 peer-parity siblings) plus 13 existing entries needing explicit-precondition Setup steps and 2 in-place verify extensions (SMOKE-SETTINGS-01 picks up Git + System Prompts tab assertions; 3.2 picks up a Claude timestamp assertion).
-
-### New entries appended (29 total)
-
-| Section | New entries |
-|---|---|
-| 0 (OAuth) | 0.C.NEG, 0.D.NEG, 0.E.GEMINI, 0.E.CODEX, 0.F, 0.F.NEG |
-| 3 (Sidebar) | SIDEBAR-UNARCHIVE-01, SIDEBAR-SHOWARCHIVED-OFF-01, SIDEBAR-SHOWARCHIVED-ON-01, SIDEBAR-SORT-NAME-01 |
-| 4 (Sessions) | 4.1.GEMINI, 4.1.CODEX, 4.2.GEMINI, 4.2.CODEX, 4.3.CODEX, 4.6.CLAUDE, 4.6.GEMINI |
-| 5 (Projects) | 5.2.PENCIL |
-| 11 (Gate) | 11.2.FOLLOWON |
-| 12 (MCP) | 12.1.GEMINI, 12.1.CODEX, 12.2.CLAUDE, 12.2.NEG, 12.3.GEMINI, 12.3.CODEX |
-| 13 (Modals) | 13.2.GEMINI, 13.2.CODEX |
-| 15 (CLI parity) | 15.1.CLAUDE, 15.2.CLAUDE |
-
-### Existing entries with explicit-precondition Setup added (13 entries)
-
-0.C (Claude OAuth toggle ON), 0.D (Gemini OAuth toggle ON), 0.E (baseline checked state), 3.1 (Archive glyph ☐ baseline), 3.2 (timestamp baseline + sort dropdown affirmation), 4.3 (Gemini timestamp baseline), 4.6 (Codex tab present), 9.1 (`ghe-test` project selected), 11.2 (gate-page-current affirmation), 11.4 (cleared-buffer affirmation), 12.2 (test-mcp absent at baseline), 13.2 (no prior payload row), 14.1 (cleared-buffer affirmation).
-
-### Existing entries with in-place verify extensions (§12.11 axis-2 light touch)
-
-- **SMOKE-SETTINGS-01:** added assertions 05 (Git tab content) and 06 (System Prompts tab content), completing the 4-tab parity sweep; Steps extended to 9 (added clicks for Git and System Prompts).
-- **3.2 SIDEBAR-NONCLAUDE-TIMESTAMPS-01:** added assertion 04 (Claude timestamp advancement) — Claude peer of the existing Gemini+Codex assertions.
-
-### Coverage axes closed
-
-- **Axis 1 (toggle / setting / mode — both states):** 6/6 toggles covered with both ON and OFF cases — OAuth Claude / Gemini / Codex (now 6 entries each side covered), Archive toggle (3.1 ON + SIDEBAR-UNARCHIVE-01 OFF), Show-archived filter (OFF + ON pair), Sort dropdown (Recent activity used in 3.2/4.3 + Name in SIDEBAR-SORT-NAME-01), MCP project enable/disable (12.2 + 12.2.NEG).
-- **Axis 2 (peer / CLI parity):** 13/13 multi-CLI code paths now have an entry per peer — OAuth-detector module × 3 CLIs; OAuth-detection checkbox persistence × 3; `/session:transition` autocomplete × 3; `/session:transition` prompt content × 3; MCP `tools/list` × 3; MCP `session_list` as caller × 3; MCP `session_summarize` as target × 3; rapid-create × 3; path-encoding-restart × 3; JSONL parser × 3; session-name-XSS × 3; settings-tabs × 4; project-remove affordance × 2 (right-click + pencil); gate-followon-3CLI single entry covering all three.
-- **Axis 3 (explicit Setup):** 13/13 entries with previously-implicit preconditions now have explicit Setup steps that screenshot-affirm the precondition state.
-
-### Deferred (out of scope for this backfill round)
-
-- Settings → font-size both-state coverage (Claude flagged as low-priority exclusion per §14.1 — not a known regression surface).
-- Project-level KB sync toggle both-state coverage (Gemini-only finding; the codebase exposes KB settings as global, not per-project — feature does not exist as described).
-- Full compaction execution (Claude `/compact`, Gemini `/compress`, Codex equivalent — §12a Context Stress concern, not §12.11).
-- CRUD modal entry-point parity for keyboard shortcuts (Gemini noted as "if implemented"; source check shows no documented keyboard shortcuts for CRUD).
-- Mid-chain state-change entries (OAuth toggle flipped while session active; MCP enabled while session active — plausible per §12.11 but Gemini-only and not a known regression class; can be added in a future backfill round if real-world bugs surface).
-- 12.1/12.3 "add `/clear` to Teardown to avoid context pollution" (Gemini quality nit; existing entries' "N/A — smoke-chat-* preserved" Teardown is intentional and the pollution from one tool-call response is negligible).
-- Per-entry Claude-auth-observable Setup affirmation across all auth-dependent entries (Claude + Gemini flagged broadly; would bloat ~15-20 entries with minimal added signal; 0.B already verifies `auth:healthy` and the cascade-from value is the contract).
-
-Coverage after §12.11 backfill: 77 entries total (Section 0 = 2 prereqs (0.A, 0.B) + 3 originals (0.C, 0.D, 0.E) + 6 §12.11 additions = 11; Section 1 = 8 SMOKE; Section 2 = 4; Section 3 = 2 originals + 4 §12.11 = 6; Section 4 = 6 originals + 7 §12.11 = 13; Section 5 = 2 originals + 1 §12.11 = 3; Section 6 = 2; Section 7 = 2; Section 8 = 1; Section 9 = 2; Section 10 = 2; Section 11 = 4 originals + 1 §12.11 = 5; Section 12 = 3 originals + 6 §12.11 = 9; Section 13 = 2 originals + 2 §12.11 = 4; Section 14 = 1; Section 15 = 2 originals + 2 §12.11 = 4). 40 of these still close the original UI-gap issues 1:1; the 29 §12.11 additions close §12.11 axis gaps rather than gap-assessment issue numbers.
-
----
-
-## §12.11 backfill round 1 fix dispositions
-
-Three reviewers audited the §12.11 backfill. Gemini APPROVE (0/0/0/0, all sweeps PASS). Claude APPROVE (0/0/0/1, §12.7/§12.8/§12.10/§12.11 PASS, one minor §12.8 finding). Codex REJECT_MAJOR (0/1/0/0, §12.8 FAIL on 6 verify lines in new entries). Severity-max applies; the union of Codex F1 + Claude F1 is addressed below.
-
-| ID | Sev | Where | Disposition | Justification |
-|---|---|---|---|---|
-| Codex F1 (a) | major | 0.E.GEMINI assertion-01 ≤500ms | **fix** | Sub-second screenshot polling for content affirmation is at the instrument's noise floor per §12.8; bumped to ≤1s to give screenshot polling room above its capture latency. The checkbox flip is observably immediate and ≤1s still catches the "toggle didn't fire" failure class. |
-| Codex F1 (b) | major | 0.E.CODEX assertion-01 ≤500ms | **fix** | Same fix as (a), same justification — ≤500ms → ≤1s for the Codex checkbox flip. |
-| Codex F1 (c) | major | SIDEBAR-UNARCHIVE-01 assertion-01 ≤500ms | **fix** | Same fix — ≤500ms → ≤1s for the Archive glyph optimistic-update transition. The optimistic update is observably immediate; the bound is the screenshot-polling instrument fit, not a behavior change. |
-| Codex F1 (d) | major | 4.2.CODEX assertion-01 "after step 1's batch" | **fix** | Replaced "after step 1's batch" with "after step 1" — the canonical `after step <K>:` form. Step 1 IS the batch (5 session creations within 1 wall-clock second); the trigger is Step 1's completion. Same canonicalization as 4.2 (Claude) Step 5 / 4.2.GEMINI Step 3. |
-| Codex F1 (e) | major | 4.2.CODEX assertion-02 "after step 1's batch" | **fix** | Same fix as (d) for the second assertion. |
-| Codex F1 (f) | major | 11.2.FOLLOWON "after each step-5 prompt landing" | **fix** | Step 5 split into three explicit steps (Steps 5, 6, 7 — one per CLI prompt). Original composite assertion split into three step-anchored verify lines: assertion-04 ≤30s after step 5 (Claude ack), assertion-05 ≤30s after step 6 (Gemini ack), assertion-06 ≤30s after step 7 (Codex ack). Each prompt is now a discrete trigger. |
-| Claude F1 | minor | 3.2 assertion-04 OR-construct + embedded Step 6 | **fix** | Promoted the embedded "exercise it explicitly" guidance to a numbered Step 6 in the Steps block (click smoke-chat-claude tab, type prompt, Enter, wait for ack). Assertion-04 reworded to strict `≤5s after step 6:` form, removing the OR-construct that could have silently passed on stale SMOKE-CHAT-01 timestamps. |
-| Gemini | — | (no findings, APPROVE 0/0/0/0) | n/a | Gemini's independent sweep confirmed §12.7/§12.8/§12.10/§12.11 PASS with no findings. No action required. |
-
-### Net effect
-
-- **Major resolved:** 1 Codex F1 spanning 6 specific verify lines in new entries (3 ≤500ms → ≤1s; 2 "after step 1's batch" → "after step 1"; 1 composite step-5 anchor split into 3 explicit step-anchored lines).
-- **Minor resolved:** 1 Claude F1 — 3.2 assertion-04 promoted to canonical `≤Ns after step <K>:` form with a new numbered Step 6 to anchor it.
-- **§12.8 form compliance in §12.11 new entries:** all flagged lines now use strict `≤Ns after step <K>:` form. Sub-second screenshot-polled content affirmations replaced with second-bounded form per Codex's reading; the ≤500ms patterns retained in prior-approved entries (0.E assertion-01, 2.4 assertions 01/02/03, 3.1 assertion-01, 6.1 assertions 02/03, 13.1 assertions 01-07) were not in Codex's review scope and are not regressing.
-- **Steps integrity:** 11.2.FOLLOWON Steps grew from 5 to 7; 3.2 Steps grew from 5 to 6. Both Step blocks now have a 1:1 mapping between trigger steps and step-anchored verify lines.
-
-Coverage after fixes: still 77 entries total; no entries added or removed in round 1.
-
----
-
-## Phase D triage (post-step-5 follow-up tester run)
-
-Tester follow-up run `run-20260514T182149Z` surfaced three runbook spec errors (entries written against assumed CLI behavior that did not match the deployed CLI behavior) and three real product issues. Phase D applies the runbook fixes and files the product issues; cold-target auth-seeding and HF-target auth-seeding are documented as orchestrator actions outside this engineer's container.
-
-### Runbook spec corrections applied
-
-| Entry | Phase D disposition |
-|---|---|
-| **0.F + 0.F.NEG** (Codex in-session OAuth modal) | **DELETED.** Codex CLI v0.130.0 has no `/login` or `/auth` in-session slash command; Codex authentication is process-spawn-time only. The premise of testing the workbench's in-session terminal-pane URL detector against a Codex `/login` trigger is structurally invalid — the trigger does not exist. The reframe option (test workbench's detector against Codex's spawn-time auth URL emission) was rejected because Codex's spawn-time flow is a precondition, not a runtime trigger; it doesn't produce a clean §12.11 axis-1/axis-2 entry. Both entries are replaced with deletion-stub blocks naming the reason. The §12.11 axis-2 peer-parity claim for the OAuth detector module reduces accordingly: 0.C (Claude) + 0.D (Gemini) cover the two CLIs that DO expose an in-session OAuth trigger. |
-| **15.1.CLAUDE** (Claude `/session:transition` autocomplete) | **REFRAMED.** Claude Code v2.1.x exposes the session-management skill as a single `/session` slash with subcommand arguments (`transition`, `resume`), NOT as separate `/session:transition` / `/session:resume` autocomplete entries the way Gemini and Codex do. Steps + Verify rewritten to assert the Claude form: `/sessio` autocompletes to one `/session` row; navigating the autocomplete surfaces the subcommand args (`transition`, `resume`) as discoverable arg values. Assertion count grew from 1 to 2 to cover both the `/session`-visible and args-discoverable halves. |
-| **15.2.CLAUDE** (Claude `/session:transition` prompt content) | **REFRAMED.** Invocation form changed from `/session:transition` + Enter to the actual Claude v2.1.137 form: `/session` + space + `transition` + Enter (or per the autocomplete arg-entry affordance captured in 15.1.CLAUDE step 4). Verify content unchanged — the prompt content the skill renders is the same regardless of invocation syntax. Note added that the test verifies prompt content, not invocation syntax. |
-| **5.2.PENCIL** (Project remove via ✎ pencil affordance) | **REFRAMED.** The ✎ pencil affordance opens a Project Config modal with a State dropdown (active / archived / hidden) and Save button — NO Remove button. The original entry's premise (Remove-via-pencil parity with right-click Remove) was structurally wrong. The reframe tests what the pencil DOES enable: changing project state via the State dropdown. ID stays `5.2.PENCIL`; full name changed to `PROJECT-CONFIG-STATE-VIA-PENCIL-01`. Remove-parity is filed as a separate product gap (see Issues filed below). The §12.11 axis-2 intent — multiple affordances for project-level configuration — is satisfied by the reframed test of the State-change affordance. |
-
-Net runbook impact: 2 entries deleted (0.F, 0.F.NEG), 3 entries reframed (15.1.CLAUDE, 15.2.CLAUDE, 5.2.PENCIL). Coverage: 75 entries total (was 77; minus 2 deleted). The §12.11 axis tally adjusts: axis-1 Codex-OAuth toggle both-states now documented as N/A by feature absence; axis-2 OAuth-detector peer parity reduces from 3 CLIs to 2 (Claude + Gemini, since Codex's in-session detector code path does not exist as a runtime trigger).
-
-### Issues filed (Phase D)
-
-1. **#565** — Workbench injects wrong MCP server path for Codex sessions (\`/app/src/mcp-stdio-server.js\` does not exist; actual file is \`mcp-server.js\`). Major. All Codex sessions on irina commit \`f5bc87b\` fail MCP startup. Evidence in `run-20260514T182149Z/12.1.CODEX/`.
-2. **#566** — Project ✎ pencil affordance lacks Remove parity with right-click context menu. Minor / quality. Workaround exists. Tracks the product gap that motivated 5.2.PENCIL's reframe.
-3. **#567** — Workbench should refresh Gemini OAuth tokens (keepalive parity with Claude). Major. \`src/keepalive.js\` only refreshes Claude tokens; Gemini's expired tokens stall sessions in a re-auth flow that doesn't recover. Closes the §12.1.GEMINI / §12.3.GEMINI FAIL class.
-
-### Gemini-12.x cached-OAuth investigation (Part C disposition)
-
-The 12.1.GEMINI / 12.3.GEMINI FAIL class was investigated as a candidate workbench bug. Finding: BOTH a product gap AND a runtime workaround are appropriate.
-
-- **Product gap (filed):** `src/keepalive.js` refreshes Claude credentials only. Zero Gemini-side refresh path exists in the workbench. `grep -nE 'gemini|Gemini|oauth_creds|GOOGLE_OAUTH' src/keepalive.js` returns zero hits. The workbench-side fix is to extend keepalive (or factor out the refresh primitive) to handle Gemini's `oauth_creds.json`. Filed as issue #567.
-- **Environment limit (documented):** Until #567 lands, Gemini sessions that show a stall on first prompt have expired tokens. Workaround: open a fresh Gemini session, type `/auth`, complete OAuth re-flow. Cached tokens persist for the WORKBENCH_DATA volume lifetime.
-
-The 12.1.GEMINI / 12.3.GEMINI entries' Setup blocks should be amended in a future round to add a "Gemini auth health check" precondition step (try a trivial Gemini prompt; if it stalls, do a `/auth` re-flow before proceeding with the entry's Steps). Not folded into this Phase D round to keep the scope tight.
-
-### Cold-target auth-seeding (Part D disposition)
-
-Cold container `wb-cold-1778763392` on `irina:7861` has no Gemini or Codex auth seeded. Action required: orchestrator with SSH access to irina copies `/srv/workbench/.gemini/oauth_creds.json` and `/srv/workbench/.codex/auth.json` from the main irina workbench into `/tmp/wb-cold-1778763392/data/.gemini/` and `/tmp/wb-cold-1778763392/data/.codex/`, then `docker restart wb-cold-1778763392`.
-
-This engineer's container does NOT have SSH access to irina (`ssh -o BatchMode=yes workbench@irina` returns `Permission denied (publickey,password)` — separation-of-concerns between this prod-mode workbench and the irina dev target). Cold-seed is an orchestrator action outside this Phase D pass.
-
-### HF-target auth-seeding (Part D disposition)
-
-HF test space `aristotle9-agentic-workbench-test.hf.space` has no CLI credentials. Per `workbench-deployment.md` line 148, the space uses Space Secrets (`WORKBENCH_USER`, `WORKBENCH_PASS`) for gate auth only — there is no Space-Secrets mechanism for CLI OAuth tokens. CLI tokens live in `~/.gemini/oauth_creds.json` / `~/.codex/auth.json` inside the container; on an HF Space those would need to be baked into the image OR persisted via Persistent Storage (which is a Space-settings choice).
-
-Disposition: **out of scope for runbook execution.** The HF test space is a public smoke target without persistent CLI auth; runbook entries that require Gemini/Codex CLI sessions (most of Section 4 + Section 12 + Section 15) cannot run against this target unless the orchestrator first seeds the credentials via the HF Persistent Storage path. Documented in the deployment guide.
-
-### Coverage after Phase D
-
-- **Entries:** 75 (was 77; 0.F + 0.F.NEG deleted)
-- **§12.11 axis-1 toggle both-states:** 5/6 toggles fully covered (Codex OAuth-detection toggle is N/A by feature absence — the toggle's effect on Codex cannot be observed in-session because Codex has no in-session OAuth trigger to gate; the toggle's persistence is still verified by 0.E.CODEX)
-- **§12.11 axis-2 peer parity:** OAuth-detector module reduced from 3 peers to 2 (Claude + Gemini); all other multi-CLI code paths unchanged
-- **§12.11 axis-3 explicit Setup:** 13/13 entries with explicit precondition Setup (unchanged)
-
----
-
-## Section 16: Milestone 01-stabilization (stage 5 backfill)
-
-Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test) coverage for the 24 issues in milestone `01-stabilization` that reached 3-of-3 reviewer pass on stages 1/2/4 (or 2-of-2 per Codex-quota override on #323 / #389). Per the PM dispatch:
-
-- **Bug-fix entries (4 new):** 16.1 (#483), 16.2 (#522), 16.3 (#564), 16.4 (#198 + cascade #252 / #253 / #268 / #275).
-- **Baseline-smoke cascade (20 issues):** the remaining issues (#318, #319, #320, #321, #322, #323, #324, #325, #389, #395, #397, #398, #399, #400, #401, #409, #412, #413, #414) are doc / test / build / Q-series cleanup whose UI surface is the consumer panels exercised by Section 1 (SMOKE-* entries) and the cold-load file-tree / settings entries in Section 2 (SHELL-FILETREE-ID-01, FILES-NOJQUERY-01, SHELL-SETTINGS-OPEN-01) per PROC-003 §2 baseline. The per-issue grid row 5 cites the existing smoke entries that exercise its surface — no separate new entry per issue per the PM's "backend-only fixes already in the milestone … a baseline-smoke runbook entry exercising the consume path is sufficient" instruction.
+Feature-specific bug-fix entries. Each closes a gap for a specific code bug that has a distinguishable UI surface beyond what the Section 1 baseline-smoke entries exercise. Issues whose code change is backend-only or docs/config-only do not have a dedicated entry here; their UI coverage is the Section 1 + Section 2 baseline that the per-issue grid row 5 cites.
 
 ### 16.1: F-TERM-SCROLLBACK-WIDTH-01 — Terminal scrollback renders at the client's column width after WS reconnect
 
@@ -2507,7 +2309,7 @@ Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test)
 1. Baseline tab order is `smoke-chat-claude`, `smoke-chat-gemini`, `smoke-chat-codex`, `<file-1>`, `<file-2>`. → `16.2/assertion-01-baseline-order.png`
 2. Within 1s of step 1's drop, the tab bar shows `<file-2>` immediately to the LEFT of `smoke-chat-claude` — i.e. the new order is `<file-2>, smoke-chat-claude, smoke-chat-gemini, smoke-chat-codex, <file-1>`. → `16.2/assertion-02-file-tab-reordered-before-cli.png`
 3. Within 1s of step 2's drop, the tab bar shows `smoke-chat-codex` immediately to the RIGHT of `<file-1>` — i.e. the new order is `<file-2>, smoke-chat-claude, smoke-chat-gemini, <file-1>, smoke-chat-codex`. This assertion confirms CLI session tabs also reorder cleanly (peer-parity with the file-tab case in assertion 2). → `16.2/assertion-03-cli-tab-reordered-after-file.png`
-4. Within 5s of page reload, the persisted order from assertion 3 is restored. → `16.2/assertion-04-order-persisted-after-reload.png`. *(Note: reload-persistence FAILed in stage 5 run `20260515T170716Z` with no tabs restored at all — surfaced as issue #597, a separate product bug from #522's drop-handler fix. If #597 remains open at the next stage-5 run, this assertion FAILs by-design until #597 lands; the rest of 16.2 still verifies the #522 mechanic.)*
+4. Within 5s of page reload, the persisted order from assertion 3 is restored. → `16.2/assertion-04-order-persisted-after-reload.png`
 
 **Teardown:** close the two file tabs (`×` on each). The three CLI tabs remain.
 
@@ -2544,10 +2346,10 @@ Four feature-specific entries authored 2026-05-15 to back-fill stage 5 (UI test)
 ### 16.4: F-MCP-SESSION-CONFIG-METADATA-01 — `session_config` rename reflects in the sidebar within 2s; per-CLI parity
 
 **Cascade-from:** SMOKE-CHAT-01 (three CLI sessions exist) + SMOKE-MCP-01 (MCP-via-executor pattern)
-**Closes gap for:** #198 (session_config returns full metadata after write — the sidebar is the consumer surface). Per PM dispatch, also baseline-smoke-cascades for #252 (`session_resume_post_compact` tail-to-file: returns a prompt referencing a `/tmp` path; the consumer surface is the terminal pane that renders the returned prompt — exercised by the next-prompt step in SMOKE-CHAT-01 and 16.1), #253 (`session_send_text` `maxLength` + description: tool metadata visible via the executor's MCP discovery — no separate render surface, baseline smoke is the verification), #268 (`session_export` empty-transcript shape: returned via MCP; sidebar is not the consumer — the executor reads the returned shape directly; baseline-smoke equivalent), and #275 (codex role-seed bounded time: exercised by SMOKE-CHAT-01's codex branch which creates a codex session within bound).
+**Closes gap for:** #198 (session_config returns full metadata after write — the sidebar is the consumer surface).
 
 **Setup:**
-1. Browser at `${WORKBENCH_URL}`, sidebar visible. The three `smoke-chat-{claude,gemini,codex}` tabs from SMOKE-CHAT-01 are open; their session rows are visible in the sidebar under `wb-seed`. (If codex is unavailable due to provider quota — see #594 — the codex iteration is recorded FAIL per env-class rules, the claude + gemini iterations still run.)
+1. Browser at `${WORKBENCH_URL}`, sidebar visible. The three `smoke-chat-{claude,gemini,codex}` tabs from SMOKE-CHAT-01 are open; their session rows are visible in the sidebar under `wb-seed`.
 2. For each `<cli>` in `[claude, gemini, codex]` in turn, perform Steps + Verify in sequence (three iterations of the same flow — explicit per-CLI peer parity per §12.11 axis-2).
 
 **Steps (per CLI iteration):**
@@ -2573,21 +2375,21 @@ For each `<cli>`:
 
 **Setup:**
 1. Browser at `${WORKBENCH_URL}`, sidebar visible. At least 2 projects with ≥3 sessions each must be expanded.
-2. Capture a baseline screenshot of the sidebar showing all expanded sessions.
-3. Pick one persistent session row in the sidebar (e.g. `smoke-chat-claude` under `wb-seed`) and pin its DOM node identity for the next assertion: `browser_evaluate(() => { const row = document.querySelector('.session-item[data-rk]'); window.__I585_PIN_NODE = row; window.__I585_PIN_RK = row?.dataset?.rk; return { rk: window.__I585_PIN_RK, hasNode: !!row }; })`. The return must include a non-empty `rk` and `hasNode === true` (setup-trigger only — the verify is the post-render identity check below).
+2. Capture a baseline screenshot of the sidebar showing all expanded sessions. Note the visible session-row labels under each expanded project header.
+3. Click into one of the visible session rows' name text (or any other focusable input in the sidebar — the project search box if available) so the row's name area is focused. The focus state is the responsiveness probe for assertion 3.
 
 **Steps:**
-1. Trigger a sidebar re-render: `browser_evaluate(() => { window._loadStateRef && window._loadStateRef(); return 'reloaded'; })`. Hold for 1s so the WS-push-driven loadState completes.
-2. Capture a screenshot of the sidebar after the re-render.
-3. Read the node-identity diagnostic: `browser_evaluate(() => { const row = document.querySelector('.session-item[data-rk="' + window.__I585_PIN_RK + '"]'); return { stillSameNode: row === window.__I585_PIN_NODE, rkPresent: !!row?.dataset?.rk }; })`.
+1. Trigger a sidebar re-render: `browser_evaluate(() => { window._loadStateRef && window._loadStateRef(); return 'reloaded'; })` (setup-trigger only — fires the WS-push-driven loadState path). Begin screenshot polling on the sidebar at 100ms intervals starting at the trigger.
+2. Continue polling through t+1500ms; capture every frame for the no-blank-frame assertion.
+3. After polling completes, capture a final screenshot of the sidebar at t+1500ms.
 
 **Verify (numbered assertions):**
 
-1. After the re-render, the pinned session row remains the same DOM node (`stillSameNode === true`) — confirms the keyed reconciler preserves identity rather than rebuilding the subtree. Screenshot of the sidebar post-render. → `16.5/assertion-01-node-identity-preserved.png`
-2. The session row's `data-rk` attribute is present and equals the pinned key (`rkPresent === true`) — confirms the keyed-children contract from `_reconcileKeyed` is in effect. → `16.5/assertion-02-data-rk-key-present.png`
-3. Compared to the baseline, every previously-expanded project group remains expanded and every previously-visible session row is still rendered at the same vertical position (no flicker, no collapse). The agent reads both screenshots and affirms positional equality of the project headers and the first three session rows under each. → `16.5/assertion-03-no-flicker-no-collapse.png`
+1. Every frame in the 100ms-interval poll between t+0 and t+1500ms shows the sidebar continuously populated — every project header in the baseline is visible in every frame, and every session row in the baseline is visible in every frame. No frame shows a blank/skeleton/placeholder state, no frame shows fewer rows than the baseline. → `16.5/assertion-01-no-blank-frame-during-rerender.png` (composite of poll frames)
+2. The post-render screenshot at t+1500ms shows: every previously-expanded project group still expanded; every previously-visible session row rendered at the same vertical position as the baseline (the agent reads both screenshots and affirms positional equality of the project headers and the first three session rows under each). → `16.5/assertion-02-positional-equality-post-render.png`
+3. Within 100ms of the re-render trigger, a keystroke typed into the focused sidebar input (a single test character via `browser_press_key`) renders inline as a glyph in the focused field on the next frame — the main thread did not block the keystroke from being painted (responsiveness affirmation; the focus state established in Setup step 3 is what makes the keystroke routable). → `16.5/assertion-03-keystroke-rendered-during-rerender.png`
 
-**Teardown:** none — the pinned DOM reference is discarded with the next page navigation.
+**Teardown:** clear focus from the sidebar input (click elsewhere). No persistent state changes.
 
 **Result:** ☐ PASS ☐ FAIL
 
@@ -2693,28 +2495,20 @@ For each `<cli>`:
 **Closes gap for:** #597 (pre-fix `app.js` init never read persisted `tabOrders` back; a page reload dropped every open CLI session tab even though the persisted ordering was on disk in localStorage).
 
 **Setup:**
-1. Browser at `${WORKBENCH_URL}`, three `smoke-chat-{claude,gemini,codex}` tabs open. Capture a baseline screenshot of the tab bar showing all three tab tongues.
+1. Browser at `${WORKBENCH_URL}`, three `smoke-chat-{claude,gemini,codex}` tabs open. Capture a baseline screenshot of the tab bar showing all three tab tongues in their current order. Note the tab labels and their left-to-right order from the screenshot.
+2. Setup-only diagnostic (not a verify mechanism): `browser_evaluate(() => JSON.parse(localStorage.getItem('tabOrders') || '{}'))` — confirms `_persistTabOrders` has written the persisted state. The verify itself is the rendered tab bar after the reload.
 
 **Steps:**
-1. Confirm the persisted state: `browser_evaluate(() => JSON.parse(localStorage.getItem('tabOrders') || '{}'))` and capture the result — the primary panel array must contain the three session ids.
-2. Reload the page (`browser_navigate('about:blank')` followed by `browser_navigate('${WORKBENCH_URL}/')` — preserves localStorage across the load).
-3. Wait up to 5s for `loadState()` to populate and `restoreOpenTabsFromOrder()` to reopen the persisted tabs.
-4. Capture a screenshot of the tab bar after the reload.
+1. Reload the page: `browser_navigate('about:blank')` followed by `browser_navigate('${WORKBENCH_URL}/')` (preserves localStorage across the navigation; setup-trigger only).
+2. Wait up to 5s for `loadState()` to populate and `restoreOpenTabsFromOrder()` to reopen the persisted tabs.
+3. Capture a screenshot of the tab bar after the reload.
+4. Click each restored tab in turn (left to right). For each click, capture a screenshot ≤1s later showing the active-tab indicator on the clicked tab and the corresponding terminal pane attached below.
 
 **Verify (numbered assertions):**
 
-1. Pre-reload, `localStorage.tabOrders.primary` contains the three session ids — confirms `_persistTabOrders` was wired correctly. → `16.10/assertion-01-tabOrders-persisted.png`
-2. Within 5s of the reload, the primary tab bar shows all three `smoke-chat-{claude,gemini,codex}` tab tongues in the same order as pre-reload. → `16.10/assertion-02-tabs-restored-after-reload.png`
+1. Within 5s of the reload completing (step 1), the primary tab bar shows all three `smoke-chat-{claude,gemini,codex}` tab tongues in the same left-to-right order as the baseline screenshot from Setup step 1 — every label from the baseline is present in the post-reload screenshot at the same position. → `16.10/assertion-01-tabs-restored-after-reload.png`
+2. Within 1s of clicking each restored tab in step 4, the clicked tab carries the active-tab visual state (highlight / border / per-product active styling) and its terminal pane is rendered below — confirming each persisted entry restored a working session, not an empty placeholder. → `16.10/assertion-02-restored-tab-clickable-and-attached.png` (one composite frame covering all three clicks)
 
 **Teardown:** none — restored tabs are the expected end state.
 
 **Result:** ☐ PASS ☐ FAIL
-
-### Coverage after Section 16
-
-- **Entries added:** 10 (16.1–16.10)
-- **Issues covered with dedicated entries:** #198 (16.4), #483 (16.1), #522 (16.2), #564 (16.3), #585 (16.5), #587 (16.6), #592 (16.7), #595 (16.8), #596 (16.9), #597 (16.10)
-- **Issues covered via §12.10 cascade declarations to existing baseline-smoke / cold-load entries:** #252, #253, #268, #275 (cascade from 16.4 / SMOKE-CHAT-01); #318, #319, #320, #321, #322, #323, #324, #325, #389, #395, #397, #398, #399, #400, #401, #409, #412, #413, #414, #586, #588, #589, #611 (cascade from Section 1 SMOKE-* + Section 2 SHELL-* per PROC-003 §2 baseline-smoke is sufficient for doc / test / build / Q-series cleanup / server-internal refactor / lint-config-only changes whose consumer surfaces are already exercised by smoke)
-- **§12.11 axis-1 (toggle both-states):** 16.3 toggles loadState success ↔ transient-fail-then-recover; 16.6 toggles WS push present ↔ absent for the schedule-timer reset; 16.7 toggles program collapsed ↔ auto-expanded; 16.9 toggles WS connected ↔ disconnected.
-- **§12.11 axis-2 (peer parity):** 16.2 explicitly tests CLI + file tabs against the same reorder code path; 16.4 explicitly iterates claude / gemini / codex against `session_config`; 16.8 explicitly iterates claude / gemini / codex tab switches against `_updateStatusBarRef`.
-- **§12.11 axis-3 (explicit Setup):** each new entry's Setup block names the precondition state without assuming defaults.

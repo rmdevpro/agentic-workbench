@@ -60,6 +60,39 @@
   - #468-LIVE-01 — Gemini session disambiguation via per-request claimed Set
   - #453-LIVE-01, #454-LIVE-01 — reviewer fix behavioral confirmation
   - A8-LIVE-01/02 — `/api/auth/login` no-CLI-fork fast path (code inspection now reads `src/routes/auth.js` after G0)
+
+### Milestone 01-stabilization additions (2026-05-17, ship with #651 + #657)
+
+Two design issues fold into ms-01: **#651** (refresh/sync stack — State Engine + WS state subscription + central status-bar dispatcher) and **#657** (Codex auth subsystem — checkbox-driven API-key vs OAuth, atomic toggle, OAuth keepalive). See those issues' "Engineer Implementation Plan — Final" sections for full design + per-commit work order. Round-2 reviewer consensus produced 34 dispositions (R1–R34); test classes below trace to those.
+
+**New server modules:**
+
+- `src/state-engine.js` — in-memory model, immutable-snapshot diff publisher (R6), subscriber registry, bounded memory cap (R34), cold-start warm-in-background (R28). Mock tests: **SE-MK-01..14** — subscriber lifecycle (sub/unsub/dead-socket per R30), snapshot correctness, mutation-source call signatures (R5 §6.1.1 table coverage), immutable-snapshot consistency under concurrent readers, cold-start `warming:true` transition, memory bound fail-fast, ordering contract (R33) state-WS authoritative for indicator transitions.
+- `src/routes/state.js` — `GET /api/state` from State Engine, in-flight coalescing (R6), `503 {warming:true}` during cold-start (R28), `507` on memory overflow (R34), `legacy_polling_enabled` flag fallback (R1). Mock tests: **SR-MK-01..08** — coalescing under N concurrent callers, 503 during warming, 507 on overflow, fallback-flag wire-up.
+- `src/routes/ws-state.js` — `/ws/state` per-tab subscription endpoint (R29 separate path from PTY), subscription protocol (R2: version + monotonic seq + idempotent diff apply), heartbeat-driven dead-subscriber eviction at 90s (R30), bounded server-side push queue with drop-oldest under backpressure. Mock tests: **WS-MK-01..10** — subscribe-snapshot flow, diff push, seq replay idempotency, dead-subscriber eviction, drop-oldest under push backpressure.
+- `src/session-utils/{claude-jsonl,gemini,codex}.js` — `last_byte_offset` cursor (R7 primary) + tail-parse on size growth + truncate/rotate detection → full-parse fallback. `last_line_count` is optional metadata. Mock tests: **TP-MK-01..09** — tail-parse against interleaved writes, partial-trailing-lines, truncate (size shrank), rotate (mtime out-of-order), per-CLI parser parity.
+- `src/spawn-env.js` (#657 R11) — single authoritative spawn-env builder reading (DB settings + checkbox state + `auth.json` mode) and returning env for `child_process.spawn`. Mock tests: **SP-MK-01..06** — every (key present/absent × checkbox checked/unchecked × auth.json oauth/apikey/none) combination → expected env output.
+- `src/auth/codex-config.js` (#657 R12 atomic toggle) — per-session mutex, `auth.json.bak` on disk + atomic restore (tmp+fsync+rename). Mock tests: **CC-MK-01..12** — toggle CHECK→UNCHECK, UNCHECK→CHECK, invalid state (key empty + checkbox checked), each step's rollback path with fault injection, concurrent-save mutex behavior, `.bak` atomic restore correctness.
+- `src/keepalive/codex-oauth.js` (#657 R13 OAuth refresh) — OpenAI OAuth refresh loop, atomic `auth.json` rewrite, `invalid_grant` banner emit via State Engine. Mock tests: **CO-MK-01..08** — refresh happy path, 5xx backoff with banner suppression until 3 consecutive failures, `invalid_grant` banner + scheduling-stop, fresh-`/login`-detection (auth.json mtime change) resume.
+
+**Modified server modules:**
+
+- `src/qdrant-sync.js` — `syncFileToCollection` mtime shortcut (R7 / mirror `syncSessionFile`). Mock tests: **QS-MK-01..03** — mtime hit → 0 hash+embed, mtime miss → one cycle, truncate/rotate detection.
+- `src/sessions.js` + `src/routes/projects.js` + `src/routes/sessions.js` + `src/watchers.js` + `src/keepalive.js` + `src/mcp-tools.js` — every mutation source per the §6.1.1 table (R5) calls `stateEngine.updateSession(id, partialFields)`. Mock test: **ME-MK-01..09** — one assertion per mutation-source row covering the §6.1.1 enumeration.
+- `src/routes/settings.js` — Codex section invokes `auth/codex-config.js` toggle on key/checkbox change; returns inline error on failure; migration-marker logic per R20 (DB key `codex_auth_migration_v1_seen`). Mock tests: **CS-MK-01..06** — happy save, save with toggle fault, migration-marker first-save behavior.
+
+**Live tests (Layer 2, deployed infrastructure):**
+
+20 scenarios (10 #651 per design §9 + 10 #657 per design §13) parameterized × {claude, gemini, codex} except scenario 7 (qdrant mtime, CLI-agnostic). Files:
+
+- `tests/live/state-engine-live.test.js` — **STATE-LIVE-01..10** — M5 cold-load smoke (p95 ≤ 30s / p50 ≤ 10s at 283 sessions per R4), status-bar tab-switch + WS-close + Gemini/Codex model-name, reconnect storm under N concurrent tabs, sidebar timestamp freshness, qdrant `syncFileToCollection` mtime gate, reconnect hydration without poll-tail-wait, idle wake-up budget < 1 fetch/min/tab, external-fault coverage (R31 — current-behavior-preserved cite).
+- `tests/live/codex-auth-live.test.js` — **AUTH-LIVE-01..10** — fresh-install OAuth path, fresh-install API-key path, toggle CHECK→UNCHECK / UNCHECK→CHECK on existing installs, invalid-state guard (API reject + UI disable), atomic rollback under fault injection, stale-auth indicator across N Codex tabs (cleared on session restart per R18), OAuth keepalive happy + `invalid_grant` banner, **#652 regression** (Codex SMOKE-CHAT-01 with checkbox unchecked → response contains "56", no `Quota exceeded`).
+- `tests/live/perf-live.test.js` — **PERF-LIVE-01..04** — cold-load p95/p50 percentile measurement, idle wake-up budget assertion, memory cap probe (R34 — snapshot fits in bound under N session counts), dispatcher precedence under WS-push + tab-switch + onclose same tick (R33).
+
+**REQ-001 per-module compliance (R25 Codex r2 MODIFY):** Each new module's mock tests + structured logging + exception handling + idempotency + fail-fast checks tracked in `docs/req-001-compliance-ms-01-stabilization.md` (committed at stage-1 close). Per-commit message references the corresponding checklist row.
+
+**Coverage budget:** Mock ≥85% (per project standard). Live + UI = 100% (per memory `feedback_coverage_gate`).
+
 **Reviewed by (R1):** Claude (Sonnet 4.6), Gemini, Grok, GPT
 **Reviewed by (R2):** Claude (Sonnet 4.6), Gemini, Grok, GPT
 **Review disposition:** R1 incorporated into Revision 2.0/3.0; R2 incorporated into Revision 4.0; see Appendix A and Appendix B

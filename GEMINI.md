@@ -50,36 +50,17 @@ The Project Manager maintains this block. Update on milestone open and milestone
 
 # Anchor Documents
 
-These documents define the standards and context this project must be reviewed and developed against. **`README.md` (under §This Repository) must be read on every session.** Other documents must be read fully when relevant to your current task. Do not grep or search within documents — content cannot be understood out of context. A document that is partially read is a document misread.
+These are the project-specific files. **`README.md` must be read on every session.** The runbooks and test plans must be read fully when relevant to your current task. Do not grep or search within documents — content cannot be understood out of context.
 
-## This Repository
+Cross-project standards, requirements, SDLCs, PROCs, and role files are NOT listed here — they are referenced from the role files (`Admin/roles/*.md`) and from the process docs themselves. Load those when your role file or current task directs you to.
+
+## Project files
 
 - `README.md` — architecture, module structure, dependency graph, configuration reference, and compliance notes. **Read on every session.**
-- `tests/workbench-test-plan-backend.md` — backend test plan. Read before writing backend tests or reviewing backend changes.
-- `tests/workbench-test-plan-ui.md` — UI test plan. Read before writing UI tests or reviewing UI changes.
+- `tests/workbench-test-plan-backend.md` — backend test plan (mock + integration scope). Not in the Tester's run-time reading list (the runbooks are); read at plan time.
+- `tests/workbench-test-plan-ui.md` — UI test plan. Not in the Tester's run-time reading list; read at plan time.
+- `tests/workbench-mock-runbook.md` — mock test runbook (framework, invocation, project quirks). Read when running stage-2 mock tests.
+- `tests/workbench-integration-runbook.md` — integration test runbook. Read when running stage-4 integration tests.
+- `tests/workbench-ui-runbook.md` — UI test catalog. Read when running stage-5 UI tests or the stage-7 pre-merge UI pass.
 - `/data/workspace/repos/Admin/docs/guides/workbench-deployment.md` — deployment specifics for this repo: safety rules, architecture, `/data` volume, dev/prod indicator, add-on installation. Read before deploying or working on container/infrastructure code.
-
-## Engineering Standards
-
-- `/data/workspace/repos/Admin/docs/requirements/REQ-001-base-engineering.md` — engineering requirements all code in this project must satisfy. Read before writing or reviewing any application code.
-- `/data/workspace/repos/Admin/docs/standards/STD-003-test-plan-standard.md` — defines what a test plan must contain and how it must be maintained. Read before reviewing or updating the test plans.
-- `/data/workspace/repos/Admin/docs/standards/STD-004-code-standard.md` — defines what a code deliverable must look like as an artifact. Read before writing or reviewing application code.
-- `/data/workspace/repos/Admin/docs/standards/STD-005-test-code-standard.md` — defines what test code must look like. Read before writing or reviewing test code.
-- `/data/workspace/repos/Admin/docs/standards/STD-007-readme-standard.md` — defines what the README must contain and how it must be maintained. Read before updating `README.md`.
-- `/data/workspace/repos/Admin/docs/standards/STD-008-process-document-standard.md` — defines the shape of SDLC-N and PROC-N docs (closed vocabularies, inline antipatterns, signal+path hand-offs, no back-references). Read before authoring or reviewing any process doc.
-- `/data/workspace/repos/Admin/docs/standards/STD-009-role-file-standard.md` — defines the shape of `Admin/roles/*.md` (required sections, Prime Directives canonical wording, optional sections by role type). Read before authoring or reviewing any role file.
-- `/data/workspace/repos/Admin/docs/standards/STD-010-project-system-prompt-standard.md` — defines the shape of `CLAUDE.md` / `GEMINI.md` / `AGENTS.md` (required sections, CLI parity, anchor-doc list format). Read before authoring or reviewing this file or its siblings.
-
-## Process
-
-- `/data/workspace/repos/Admin/docs/process/SDLC-1-version-creation.md` — open a new release `rN`, set up team + artifact paths. Read when starting a new project or just after release close.
-- `/data/workspace/repos/Admin/docs/process/SDLC-2-release-planning.md` — populate the open `rN` Project with milestones + issues + release-specific scope matrix. Read at planning time.
-- `/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md` — seven-stage label-driven milestone pipeline (implement / mock / deploy / integration / ui / docs / close). Read whenever you're executing a milestone.
-- `/data/workspace/repos/Admin/docs/process/SDLC-4-release-close.md` — full-scope release-close test pass, prod deploy, close `rN` Project, open `rN+1`. Read at release close.
-- `/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md` — conversational vs autonomous mode rules. Read at session start.
-- `/data/workspace/repos/Admin/docs/process/PROC-002-test-execution-policy.md` — canonical policy for which tests run and when (includes the UI-headless-browser rule in Principle 8). Read before authoring or running tests.
-- `/data/workspace/repos/Admin/docs/process/PROC-003-test-scope-matrix.md` — global test scope matrix (consumed during SDLC-2 to produce the release-specific matrix).
-- `/data/workspace/repos/Admin/docs/process/PROC-004-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Used by SDLC-3 (UI test stage) and SDLC-4 (release-close UI run).
-- `/data/workspace/repos/Admin/docs/process/PROC-005-review.md` — unified review procedure (code and docs) via 3-CLI quorum. Reviewer verdict is a stage-pass label flip on each in-scope issue (backed by cited evidence in the issue's seven-row workflow grid) plus optional supplementary notes. Stage 7 (close) variant uses GitHub PR reviews instead of labels.
-- `/data/workspace/repos/Admin/docs/process/PROC-006-memory-hygiene.md` — per-project agent-memory audit procedure (D/N/B/K/Obsolete triage; tracked as a closed audit issue per cycle). Read before running a memory hygiene audit.
 - `/data/workspace/repos/Admin/docs/runbooks/RUN-001-deployment.md` — step-by-step deploy procedure (build → push → pull → up). Read before any deploy.

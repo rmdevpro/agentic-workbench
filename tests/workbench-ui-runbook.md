@@ -2712,3 +2712,241 @@ For each `<cli>`:
 **Teardown:** none — restored tabs are the expected end state.
 
 **Result:** ☐ PASS ☐ FAIL
+
+## Section 17: State Engine + refresh/sync stack (#651)
+
+### 17.1: F-STATE-ENGINE-WS-SUBSCRIBE — Status bar shows `ws: open` after page load; engine snapshot drives sidebar render
+
+**Cascade-from:** SMOKE-LOGIN-01 (page loaded)
+**Closes gap for:** #651 — replacement of the 10s /api/state poll with the /ws/state subscription channel.
+
+**Setup:**
+
+1. Browser at `${WORKBENCH_URL}`, gate passed if applicable. Ensure `localStorage.getItem('legacy_polling_enabled')` returns null or '0' (the engine path is the default).
+2. At least one project with one CLI session of each `{claude, gemini, codex}` exists in the sidebar from baseline.
+
+**Steps:**
+
+1. Reload the page: `browser_navigate('${WORKBENCH_URL}/')`. Wait up to 5s for the initial render.
+2. Capture a screenshot of the bottom status bar AND the sidebar.
+
+**Verify (numbered assertions):**
+
+1. Within 5s of reload, the status bar's leftmost pill reads `ws: open` (rendered as a pill with the open/connected visual treatment per the product's pill styling) — confirming the `/ws/state` WebSocket subscription succeeded. → `17.1/assertion-01-ws-pill-open.png`
+2. The sidebar shows the baseline projects and at least one session row for each of claude/gemini/codex — confirming the engine snapshot populated `projectState` and the sidebar rendered from it. → `17.1/assertion-02-sidebar-populated.png`
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.2: F-STATE-ENGINE-CONNECTION-PILL — Status bar reflects WS state transitions (R6/§6.6)
+
+**Cascade-from:** 17.1
+**Closes gap for:** #651 — central status-bar dispatcher replaces scattered DOM writes.
+
+**Setup:**
+
+1. State as left by 17.1: page loaded, status bar shows `ws: open`.
+
+**Steps:**
+
+1. Drop the engine WS connection: `browser_evaluate(() => { try { window._engineClient && window._engineClient.disconnect && window._engineClient.disconnect(); return 'ok'; } catch (e) { return e.message; } })` — setup trigger; not a verify.
+2. Capture a screenshot of the status bar within 2s.
+3. Reload the page to restore the engine subscription (`browser_navigate('${WORKBENCH_URL}/')`).
+4. Capture a screenshot of the status bar within 5s of the reload completing.
+
+**Verify (numbered assertions):**
+
+1. Within 2s of step 1, the status bar's ws-pill text changes from `ws: open` to `ws: closed` (rendered with the closed/error visual treatment) — confirming the central dispatcher observed the disconnect. → `17.2/assertion-01-ws-pill-closed.png`
+2. Within 5s of step 3, the status bar's ws-pill returns to `ws: open` — confirming the engine client reconnects on reload and the dispatcher re-renders. → `17.2/assertion-02-ws-pill-reopened.png`
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.3: F-STATE-ENGINE-AUTH-MODE-PILL — Codex tab shows auth-mode pill (R14) — `oauth` | `api-key` | `stale`
+
+**Cascade-from:** SMOKE-CHAT-01 codex variant (a codex session exists and is selected)
+**Closes gap for:** #651 R14 — auth-mode pill driven by engine state.
+
+**Setup:**
+
+1. Browser at `${WORKBENCH_URL}`, page loaded, codex tab selected as active.
+2. Settings → Codex section: confirm `codex_api_key` is set to a non-empty value AND saved (baseline known by 1.0 chat smoke).
+
+**Steps:**
+
+1. Capture a screenshot of the status bar showing the codex tab active.
+
+**Verify (numbered assertions):**
+
+1. The status bar contains an auth-mode pill (class includes `auth-pill`) reading `api-key` (or `oauth` if the test container is OAuth-only) — confirming the central dispatcher derived auth mode from the engine snapshot for the active codex session. → `17.3/assertion-01-codex-auth-pill.png`
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.4: F-STATE-ENGINE-NO-POLLING — `/api/state` hit count stays at 0 after initial load (R1 / R6)
+
+**Cascade-from:** 17.1
+**Closes gap for:** #651 — the 10s /api/state polling loop is removed.
+
+**Setup:**
+
+1. State as left by 17.1.
+
+**Steps:**
+
+1. Start a network capture: `browser_network_requests` baseline before the next 30 seconds elapse — note the timestamp.
+2. Wait 30 seconds with the page idle (no clicks).
+3. Re-call `browser_network_requests` and capture only requests issued in the 30s window.
+
+**Verify (numbered assertions):**
+
+1. In the 30s window, the count of `GET /api/state` requests is 0 — confirming the periodic poll is gone and the engine WS is the steady-state channel. (Reload-triggered initial fetch is excluded by capturing AFTER reload completes.) → recorded by `browser_network_requests` JSON in the runbook log.
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.5: F-STATE-ENGINE-RECONNECT — WS close + reconnect re-delivers state:snapshot; sidebar stays consistent
+
+**Cascade-from:** 17.1
+**Closes gap for:** #651 — engine subscription survives transient WS drops without losing state.
+
+**Setup:**
+
+1. State as left by 17.1.
+
+**Steps:**
+
+1. Force a WS close: `browser_evaluate(() => { try { window._engineClient && window._engineClient.disconnect && window._engineClient.disconnect(); return 'ok'; } catch (e) { return e.message; } })`.
+2. Wait 3s.
+3. Reload the page to trigger a fresh engine client + subscription.
+4. Capture a screenshot of the sidebar.
+
+**Verify (numbered assertions):**
+
+1. Within 5s of step 3, the sidebar shows the same project + session set it did before step 1 — confirming the fresh subscription re-delivered a state:snapshot and the engine model was repopulated. → `17.5/assertion-01-sidebar-after-reconnect.png`
+2. Within 5s of step 3, the status bar's ws-pill reads `ws: open`. → `17.5/assertion-02-ws-pill-reopened.png`
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.6: F-STATE-ENGINE-TOKEN-FRESHNESS — Token counter updates within 5s of CLI write (R5 / R7)
+
+**Cascade-from:** SMOKE-CHAT-01 (an active claude session exists)
+**Closes gap for:** #651 — chokidar JSONL change → engine.updateSession → status bar token counter.
+
+**Setup:**
+
+1. Browser at `${WORKBENCH_URL}`, claude session tab open and active.
+
+**Steps:**
+
+1. Capture a baseline screenshot showing the current `[N tokens]` value on the status bar's token-counter pill.
+2. Send a short prompt to the active claude session that produces a known response (e.g. `say "ok"` via `browser_type` on the canonical input selector). Press Enter.
+3. Wait up to 10s for the response to complete.
+4. Capture a screenshot of the status bar's token-counter pill.
+
+**Verify (numbered assertions):**
+
+1. Within 10s of step 2 completing, the token-counter pill value is strictly greater than the baseline from step 1 — confirming the chokidar event published a session:update diff with new `input_tokens` and the status bar re-rendered. → `17.6/assertion-01-token-counter-increased.png`
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.7: F-STATE-ENGINE-QDRANT-MTIME — Re-sync of unchanged file short-circuits (CLI-agnostic)
+
+**Cascade-from:** baseline workbench with vector embeddings enabled and at least one synced collection
+**Closes gap for:** #651 commit 4 — `syncFileToCollection` mtime shortcut.
+
+**Setup:**
+
+1. A document file in `${WORKSPACE}` has already been synced to qdrant in a prior run (baseline state).
+
+**Steps:**
+
+1. Trigger a sync that includes the unchanged file (Settings → Re-index, or wait for the next scheduled sync window).
+2. Observe the workbench-server log (or `/api/qdrant/stats` if exposed) for the sync result.
+
+**Verify (numbered assertions):**
+
+1. The sync result for the unchanged file shows the mtime-shortcut path was taken — the file's chunk count delta is 0, AND the sync log line for that file does NOT include a "rechunked" or "re-embedded" marker. The agent reads the sync result panel / log and affirms both conditions. → `17.7/assertion-01-mtime-shortcut.png`
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.8: F-STATE-ENGINE-WARMING-FALLBACK — `/api/state` returns 200 with `X-State-Engine-Warming` advisory header
+
+**Cascade-from:** none — this exercises the warming-fallback BLOCKER fix from commit 11.
+**Closes gap for:** #651 reviewer BLOCKER B1 (commit 11 `414b095`).
+
+**Setup:**
+
+1. A workbench instance has just been restarted (container restart or `docker compose restart workbench`). The engine warm-from-DB pass is in flight (typically < 30s for ≤ 100 sessions).
+
+**Steps:**
+
+1. Within 5s of the restart completing (server bound port, /health returns 200), open the browser DevTools Network panel.
+2. Reload `${WORKBENCH_URL}/`.
+3. Click the `/api/state` row in the Network panel.
+
+**Verify (numbered assertions):**
+
+1. The `/api/state` response status is `200` (NOT `503`) — confirming the warming branch falls through to the DB-walk instead of hard-returning 503. → `17.8/assertion-01-api-state-200-during-warm.png`
+2. The response header `X-State-Engine-Warming` reads `1` while the warm pass is in flight (header is absent once `markWarm()` fires) — confirming the warming hint is surfaced as advisory metadata, not as a failed request. → `17.8/assertion-02-warming-header.png`
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.9: F-STATE-ENGINE-IDLE-BUDGET — Hidden tab does not fire periodic tasks (R10)
+
+**Cascade-from:** 17.1
+**Closes gap for:** #651 R10 — `Timers` scheduler skips fires when document.visibilityState === 'hidden'.
+
+**Setup:**
+
+1. State as left by 17.1 (page loaded, status bar shows `ws: open`).
+
+**Steps:**
+
+1. Capture a baseline `window._timers.stats()` snapshot: `browser_evaluate(() => window._timers && window._timers.stats())`. Note the `totalFires` per task.
+2. Open a new browser tab and switch to it so the workbench tab becomes hidden (`document.visibilityState === 'hidden'`).
+3. Wait 90 seconds.
+4. Return to the workbench tab and re-capture `window._timers.stats()`.
+
+**Verify (numbered assertions):**
+
+1. Between step 1 and step 4 (≈ 90 seconds of hidden-tab time), each task's `totalFires` increased by at most 1 (the visible-tab fire before/after the hidden window) — confirming the scheduler skipped its hidden-window ticks. Without the skip, `checkAuth` and `checkErrors` (60s interval each) would have fired at least once during the window. → recorded by the two `_timers.stats()` JSON snapshots.
+
+**Teardown:** none.
+
+**Result:** ☐ PASS ☐ FAIL
+
+### 17.10: F-STATE-ENGINE-MEMORY-BOUND — Oversized snapshot path closes ws with `state:error` frame (R34)
+
+**Cascade-from:** none — synthetic; requires a workbench with `MAX_BYTES_DEFAULT` lowered or a session set large enough to exceed 5 MB serialized.
+**Closes gap for:** #651 reviewer BLOCKER B4 (commit 11) — WS maxBytes parity with HTTP 507.
+
+**Setup:**
+
+1. A workbench instance configured with `state.maxBytes` ≤ the size of its current snapshot (developer can verify by reading `/api/state` body byte size and lowering the bound below it via env or config).
+
+**Steps:**
+
+1. Open `${WORKBENCH_URL}/` with DevTools open, Network panel filtered to `ws`.
+2. Inspect the `/ws/state` frames.
+
+**Verify (numbered assertions):**
+
+1. The first WS frame received is `{type: "state:error", error: "memory_bound_exceeded", actual_bytes: <N>, max_bytes: <M>}` with `N > M` — confirming the engine refuses to push an oversized snapshot. → `17.10/assertion-01-state-error-frame.png`
+2. Within 1s of the error frame, the WS connection closes — confirming the engine drops the subscriber rather than retrying indefinitely. → `17.10/assertion-02-ws-closed-after-error.png`
+
+**Teardown:** restore the original `state.maxBytes` configuration.
+
+**Result:** ☐ PASS ☐ FAIL

@@ -70,6 +70,14 @@ const resolver = createSessionResolver({
   logger,
 });
 
+// #651 commit 7d: instantiate the State Engine before watchers/keepalive/
+// route registration so all mutation sources can publish through it. The
+// engine's warm-from-DB pass still runs after server.listen (see below)
+// so the cold-start contract (R28) is preserved.
+const stateEngine = createStateEngine({ logger });
+stateEngine.setWorkspace(WORKSPACE);
+stateEngine.startWarm();
+
 const watchers = createWatchers({
   db,
   safe,
@@ -80,6 +88,7 @@ const watchers = createWatchers({
   tmuxExists: tmux.tmuxExists,
   CLAUDE_HOME,
   logger,
+  stateEngine,
 });
 
 const kbWatcher = createKbWatcher({ db, logger, config });
@@ -268,19 +277,11 @@ app.use(
 app.use('/lib/codemirror', express.static(join(__dirname, '..', 'public/lib/codemirror')));
 app.use('/lib/toastui-editor', express.static(join(__dirname, '..', 'public/lib/toastui-editor')));
 
-// ── State Engine ──────────────────────────────────────────────────────────
-// #651 commit 6: instantiate the in-memory state model + diff publisher.
-// Cold-start contract (R28): server binds port + serves /health immediately
-// and the engine warms in the background. Until markWarm fires, /api/state
-// returns 503 {warming: true} per the route's contract. Mutation source
-// wire-up (so every db.upsertSession etc. updates the engine) is a separate
-// cohesive change — until that lands, the engine is correct at boot but
-// goes stale on writes; routes/state.js falls back to the DB-walk by
-// default and the engine path is only used when explicitly enabled.
-const stateEngine = createStateEngine({ logger });
-stateEngine.setWorkspace(WORKSPACE);
-stateEngine.startWarm();
-
+// ── State Engine warm pass ────────────────────────────────────────────────
+// #651 commit 6: cold-start contract (R28) — server binds the port + serves
+// /health immediately; the engine warms in the background after listen().
+// The engine itself was instantiated above (before watchers) so all mutation
+// sources can publish through it; here we only kick off the warm pass.
 async function _warmStateEngine() {
   try {
     const programs = (db.getAllPrograms && db.getAllPrograms('active')) || [];

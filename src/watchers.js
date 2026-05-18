@@ -15,11 +15,26 @@ module.exports = function createWatchers({
   tmuxExists,
   CLAUDE_HOME,
   logger,
+  stateEngine,
   // #586: injectable chokidar lib so tests can mock the FS-event source
   // without touching the global require cache. Production callers pass
   // nothing and we lazy-load the real chokidar.
   _chokidar = null,
 }) {
+  // #651 commit 7d: JSONL chokidar change events fan out to the State Engine
+  // so subscribers see token/timestamp updates as soon as the watcher fires.
+  // The DB still owns the persistent token-meta state; the engine is a
+  // read-side fast-path for the WS subscription channel.
+  function _se(method, ...args) {
+    if (!stateEngine) return;
+    try {
+      stateEngine[method](...args);
+    } catch (err) {
+      logger.warn('state-engine call failed', {
+        module: 'watchers', op: method, err: err.message,
+      });
+    }
+  }
   // #586: lazy-load chokidar so tests that never touch JSONL watchers don't
   // pay the import cost (and so the injected mock takes precedence).
   let _chokidarLib = _chokidar;
@@ -52,6 +67,15 @@ module.exports = function createWatchers({
           if (ws && ws.readyState === 1 /* WebSocket.OPEN */) {
             ws.send(JSON.stringify({ type: 'token_update', data: usage }));
           }
+          // #651 commit 7d: publish the same activity update through the
+          // State Engine so the WS state-subscription channel (commit 8)
+          // sees per-session token/model/timestamp changes without polling.
+          _se('updateSession', entry.sessionId, {
+            input_tokens: usage.input_tokens,
+            max_tokens: usage.max_tokens,
+            model: usage.model,
+            last_activity_at: Date.now(),
+          });
           // Simple 75% nudge — replaces smart compaction
           const pct = usage.max_tokens > 0 ? (usage.input_tokens / usage.max_tokens) * 100 : 0;
           checkContextUsage(entry.sessionId, pct);

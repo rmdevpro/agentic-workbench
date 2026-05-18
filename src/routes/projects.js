@@ -16,6 +16,7 @@ function register(app, {
   safe,
   fireEvent,
   logger,
+  stateEngine,
   tmuxName,
   CLAUDE_HOME,
   WORKSPACE,
@@ -23,6 +24,18 @@ function register(app, {
   trustCodexProjectDirs,
   sessionUtils,
 }) {
+  // #651 commit 7b: every DB write in this module also publishes through the
+  // State Engine. See routes/sessions.js commit 7a for the rationale.
+  function _se(method, ...args) {
+    if (!stateEngine) return;
+    try {
+      stateEngine[method](...args);
+    } catch (err) {
+      logger.warn('state-engine call failed', {
+        module: 'routes', op: method, err: err.message,
+      });
+    }
+  }
   // trustDir is provided by sessions module; we re-implement a local reference
   // here since cascadeCleanupProject needs it and we can't easily share the
   // closure from sessions. Duplicate of the sessions version intentionally to
@@ -184,6 +197,7 @@ function register(app, {
             .json({ error: `Git clone failed: ${safe.sanitizeErrorForClient(gitErr.message)}` });
         }
         db.ensureProject(repoName, targetPath);
+        _se('upsertProject', { path: targetPath, name: repoName, missing: false, state: 'active', program_id: null });
         await trustDir(targetPath);
         if (trustGeminiProjectDirs) await trustGeminiProjectDirs().catch(() => {});
         if (trustCodexProjectDirs) await trustCodexProjectDirs().catch(() => {});
@@ -199,6 +213,7 @@ function register(app, {
       }
       const projectName = name || basename(projectPath);
       db.ensureProject(projectName, projectPath);
+      _se('upsertProject', { path: projectPath, name: projectName, missing: false, state: 'active', program_id: null });
       await trustDir(projectPath);
       if (trustGeminiProjectDirs) await trustGeminiProjectDirs().catch(() => {});
       if (trustCodexProjectDirs) await trustCodexProjectDirs().catch(() => {});
@@ -215,6 +230,9 @@ function register(app, {
       if (!project) return res.status(404).json({ error: 'project not found' });
       await cascadeCleanupProject(project);
       db.deleteProject(project.id);
+      // Engine cascade: removeProject also removes all sessions stored under
+      // it (state-engine.js project.sessions Map is gone with the project).
+      _se('removeProject', project.path);
       // #372 [E2] (Claude R2 F1): invalidate per-CLI discovery caches —
       // cascade removed JSONLs/rollouts may still appear in the cached
       // discovery results until the 10s TTL expires otherwise.
@@ -235,6 +253,7 @@ function register(app, {
     if (program_id != null && !db.getProgram(Number(program_id)))
       return res.status(404).json({ error: 'program not found' });
     const updated = db.setProjectProgram(project.id, program_id);
+    _se('upsertProject', { path: project.path, program_id: updated.program_id });
     fireEvent('project_program_changed', { project: project.name, program_id: updated.program_id });
     res.json(updated);
   });
@@ -251,6 +270,7 @@ function register(app, {
     if (cleanName.length > 60) return res.status(400).json({ error: 'name too long (max 60)' });
     if (db.getProgramByName(cleanName)) return res.status(409).json({ error: 'program with that name already exists' });
     const program = db.addProgram(cleanName, description ? String(description) : '');
+    _se('upsertProgram', program);
     fireEvent('program_added', { program_id: program.id, name: program.name });
     res.json(program);
   });
@@ -287,6 +307,7 @@ function register(app, {
     if (Object.keys(otherFields).length) {
       updated = db.updateProgram(id, otherFields);
     }
+    _se('upsertProgram', updated);
     res.json(updated);
   });
 
@@ -296,6 +317,7 @@ function register(app, {
     if (!program) return res.status(404).json({ error: 'program not found' });
     const projectsCount = db.countProjectsInProgram(id);
     db.deleteProgram(id);
+    _se('removeProgram', id);
     fireEvent('program_deleted', { program_id: id, name: program.name, orphaned_projects: projectsCount });
     res.json({ deleted: true, orphaned_projects: projectsCount });
   });
@@ -327,8 +349,14 @@ function register(app, {
     const project = db.getProject(req.params.name);
     if (!project) return res.status(404).json({ error: 'project not found' });
     const { name, state, notes } = req.body;
-    if (name && name !== project.name) db.renameProject(project.id, name);
-    if (state) db.setProjectState(project.id, state);
+    if (name && name !== project.name) {
+      db.renameProject(project.id, name);
+      _se('upsertProject', { path: project.path, name });
+    }
+    if (state) {
+      db.setProjectState(project.id, state);
+      _se('upsertProject', { path: project.path, state });
+    }
     if (notes !== undefined) db.setProjectNotes(project.id, notes);
     res.json({ ok: true });
   });

@@ -35,13 +35,19 @@ module.exports = function createWsState({ stateEngine, logger, config }) {
       // diffs, the subscriber is dead from our perspective. The client
       // reconnects (and re-subscribes to a fresh snapshot) which is the
       // snapshot+diff equivalent of drop-oldest.
+      //
+      // Reviewer-Claude NON-BLOCKER N6 (build-review-round1): RFC 6455
+      // 1009 ("Message Too Big") is per-frame, not aggregate buffer.
+      // Use 1011 ("Internal Error") for aggregate-backpressure close —
+      // it's the closest standard code; a custom 4xxx would also fit but
+      // 1011 is what generic clients already log meaningfully.
       if (ws.bufferedAmount > bufferHighWater) {
         log.warn('ws-state: subscriber over high-water mark, closing', {
           module: 'ws-state',
           bufferedAmount: ws.bufferedAmount,
           highWater: bufferHighWater,
         });
-        try { ws.close(1009 /* Message Too Big */, 'backpressure'); } catch (_e) { /* ok */ }
+        try { ws.close(1011 /* Internal Error */, 'backpressure'); } catch (_e) { /* ok */ }
         throw new Error('ws_backpressure');
       }
       ws.send(JSON.stringify(message));

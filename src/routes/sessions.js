@@ -871,6 +871,15 @@ function register(app, {
       const cliType = session.cli_type || 'claude';
       const { args: restartArgs } = await safe.buildResumeArgs(session, cwd);
       await safe.tmuxCreateCLIAsync(tmux, cwd, cliType, restartArgs || [], { workbenchSessionId: sessionId });
+      // Reviewer-Gemini BLOCKER B3 (build-review-round1): the engine never
+      // learned about the PTY respawn, so subscribers saw stale activity
+      // and any auth-broken / stale-auth flag persisted past the restart.
+      // Publish a restart marker so the WS subscription can react.
+      _se('updateSession', sessionId, {
+        last_restarted_at: Date.now(),
+        // Clear flags that a successful respawn invalidates.
+        claude_auth_broken: false,
+      });
       res.json({ ok: true, sessionId, tmux });
     } catch (err) {
       res.status(500).json({ error: err.message });

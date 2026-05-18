@@ -141,22 +141,23 @@ function register(app, {
   // ── GET /api/state ─────────────────────────────────────────────────────────
 
   app.get('/api/state', async (req, res) => {
-    // Fast path: serve from state-engine when populated. Engine wire-up is
-    // a follow-on commit; until then this branch is skipped and the
-    // DB-walk runs as before.
-    if (stateEngine && typeof stateEngine.isWarming === 'function') {
-      if (stateEngine.isWarming()) {
-        // R28: server bound port + /health, but state is not yet built.
-        // Tell clients to back off; they'll re-poll or pick up via the WS
-        // state subscription once it lands.
-        const progress = typeof stateEngine.getWarmProgress === 'function'
-          ? stateEngine.getWarmProgress()
-          : { warming: true };
-        return res.status(503).json({ warming: true, progress });
-      }
+    // Fast path: serve from state-engine when populated.
+    //
+    // Reviewer-Codex BLOCKER (build-review-round1): if warmStateEngine
+    // never reaches markWarm() (transient DB failure leaves the engine
+    // permanently warming), this route would return 503 forever — breaking
+    // the REST contract. Fix: warming is now ADVISORY, not authoritative.
+    // We always fall back to the DB-walk when the engine isn't ready,
+    // surfacing the warming hint via a response header so clients that care
+    // can show a "loading" affordance without losing functionality.
+    if (stateEngine && typeof stateEngine.isWarming === 'function' && !stateEngine.isWarming()) {
       try {
-        const { snap } = stateEngine.serializeSnapshot();
-        return res.json(snap);
+        // Reviewer-Claude NON-BLOCKER N2 (build-review-round1): serializeSnapshot
+        // already stringified the snapshot to enforce the bound. res.json(snap)
+        // would stringify it a second time — wasteful on the dominant hot path.
+        // Send the pre-serialized JSON directly.
+        const { serialized } = stateEngine.serializeSnapshot();
+        return res.type('application/json').send(serialized);
       } catch (err) {
         // R34: snapshot exceeded the bound. Surface as 507 so clients know
         // to back off or request a paginated view.
@@ -179,6 +180,19 @@ function register(app, {
           err: err.message,
         });
         // fall through
+      }
+    }
+
+    // Engine warming OR engine absent OR engine threw: DB-walk fallback.
+    // The warming-progress header lets clients surface a loading hint
+    // without the REST contract degrading.
+    if (stateEngine && typeof stateEngine.isWarming === 'function' && stateEngine.isWarming()) {
+      const progress = typeof stateEngine.getWarmProgress === 'function'
+        ? stateEngine.getWarmProgress()
+        : { warming: true };
+      res.set('X-State-Engine-Warming', '1');
+      if (progress.started_at != null) {
+        res.set('X-State-Engine-Warm-Started-At', String(progress.started_at));
       }
     }
 

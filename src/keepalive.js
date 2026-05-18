@@ -11,18 +11,25 @@ module.exports = function createKeepalive({ safe, config, logger, db, stateEngin
   // — early callers don't have either, and the function is a no-op then.
   function _publishClaudeAuthBroken(broken) {
     if (!stateEngine || !db) return;
+    // Reviewer-Claude NON-BLOCKER N1 (build-review-round1): the inner
+    // catch used to `return`, aborting the fan-out on first per-session
+    // throw and skipping every subsequent Claude session. Continue
+    // instead, and log only the first failure to avoid spamming.
+    let warned = false;
     try {
       const projects = db.getProjects ? db.getProjects() : [];
       for (const proj of projects) {
         const sessions = (db.getSessionsForProject && db.getSessionsForProject(proj.id)) || [];
         for (const s of sessions) {
-          if ((s.cli_type || 'claude') === 'claude') {
-            try { stateEngine.updateSession(s.id, { claude_auth_broken: !!broken }); }
-            catch (err) {
+          if ((s.cli_type || 'claude') !== 'claude') continue;
+          try {
+            stateEngine.updateSession(s.id, { claude_auth_broken: !!broken });
+          } catch (err) {
+            if (!warned) {
               logger.warn('state-engine updateSession (claude_auth_broken) failed', {
-                module: 'keepalive', err: err.message,
+                module: 'keepalive', sessionId: s.id, err: err.message,
               });
-              return; // one warn per fan-out; don't spam
+              warned = true;
             }
           }
         }

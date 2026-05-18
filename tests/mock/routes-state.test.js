@@ -110,12 +110,16 @@ test('SR-MK-01: in-flight coalescing — concurrent GET /api/state share one sca
   assert.equal(c.buildCalls, 2, 'buildSessionList called per project, once per coalesced scan');
 });
 
-test('SR-MK-02: stateEngine warming → 503 with progress', async () => {
+test('SR-MK-02: stateEngine warming → DB-walk fallback (NOT 503) with X-State-Engine-Warming header', async () => {
+  // Reviewer-Codex/Claude/Gemini BLOCKER B1 (build-review-round1): the
+  // warming branch must not hard-return 503 — a transient warm failure
+  // would brick /api/state forever. Fall through to the DB-walk and
+  // surface the warming hint via an advisory response header.
   const app = express();
-  const deps = makeStubDeps();
+  const deps = makeStubDeps({
+    projects: [{ id: 1, name: 'p1', path: '/p1', state: 'active', program_id: null }],
+  });
   const helpers = makeHelpers();
-  // Inject a warming stateEngine — the route should short-circuit to 503
-  // without touching the DB path.
   deps.stateEngine = {
     isWarming: () => true,
     getWarmProgress: () => ({ warming: true, started_at: 1, completed_at: null }),
@@ -124,10 +128,28 @@ test('SR-MK-02: stateEngine warming → 503 with progress', async () => {
     },
   };
   register(app, deps, helpers);
-  const { status, json } = await fetchPath(app, '/api/state');
-  assert.equal(status, 503);
-  assert.equal(json.warming, true);
-  assert.equal(helpers.counts().reconcileCalls, 0, 'DB-walk skipped when engine is warming');
+  await new Promise((resolve, reject) => {
+    const server = app.listen(0, () => {
+      const port = server.address().port;
+      const http = require('http');
+      const req = http.get({ host: '127.0.0.1', port, path: '/api/state' }, (res) => {
+        let body = '';
+        res.on('data', (chunk) => (body += chunk));
+        res.on('end', () => {
+          server.close();
+          try {
+            assert.equal(res.statusCode, 200, 'warm engine no longer 503s the route');
+            assert.equal(res.headers['x-state-engine-warming'], '1', 'warming hint in response header');
+            const json = JSON.parse(body);
+            assert.equal(json.projects.length, 1, 'DB-walk produced a project');
+            assert.equal(helpers.counts().reconcileCalls, 1, 'DB-walk fallback ran');
+            resolve();
+          } catch (e) { reject(e); }
+        });
+      });
+      req.on('error', (err) => { server.close(); reject(err); });
+    });
+  });
 });
 
 test('SR-MK-03: stateEngine memory-bound exceeded → 507 with actual + max bytes', async () => {

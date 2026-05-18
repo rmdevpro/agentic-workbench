@@ -112,9 +112,12 @@ test('WS-MK-05: ws close → unsubscribe drops the engine subscriber', () => {
   assert.equal(engine.stats().subscribers, 0);
 });
 
-// ── WS-MK-06: backpressure → close with 1009 + drop subscriber ─────────────────
+// ── WS-MK-06: backpressure → close with 1011 + drop subscriber ─────────────────
 
-test('WS-MK-06: bufferedAmount > highWater → close 1009 + drop subscriber', () => {
+test('WS-MK-06: bufferedAmount > highWater → close 1011 + drop subscriber', () => {
+  // Reviewer-Claude NON-BLOCKER N6 (build-review-round1): RFC 6455 1009
+  // is per-frame ("Message Too Big"), not aggregate buffer overflow.
+  // Aggregate-backpressure close uses 1011 ("Internal Error").
   const engine = createStateEngine({ logger: silentLogger(), heartbeatIntervalMs: 0 });
   engine.markWarm();
   const wsState = createWsState({
@@ -128,7 +131,7 @@ test('WS-MK-06: bufferedAmount > highWater → close 1009 + drop subscriber', ()
   ws.bufferedAmount = 200;
   // Next diff should trigger the backpressure close path
   assert.doesNotThrow(() => engine.upsertProject({ path: '/oversize', name: 'big' }));
-  assert.equal(ws.closed?.code, 1009);
+  assert.equal(ws.closed?.code, 1011);
 });
 
 // ── WS-MK-07: malformed client message → debug log, no crash ───────────────────

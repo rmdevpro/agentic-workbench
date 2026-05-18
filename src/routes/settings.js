@@ -138,9 +138,14 @@ function register(app, {
 
     db.setSetting(key, JSON.stringify(value));
 
-    // Update process env when API keys change so new CLI sessions get them
+    // Update process env when API keys change so new CLI sessions get them.
+    // Reviewer-Claude NON-BLOCKER N5 (build-review-round1): empty-string sets
+    // were the #610-class footgun — some CLIs treat env-empty differently
+    // from env-absent. Delete the env var when the user clears the setting,
+    // matching the "no key configured" semantics the CLI expects.
     if (key === 'gemini_api_key') {
-      process.env.GEMINI_API_KEY = value || '';
+      if (value) process.env.GEMINI_API_KEY = value;
+      else delete process.env.GEMINI_API_KEY;
       // Reseed ~/.gemini/settings.json so the CLI doesn't open the auth menu
       // on the next session. Idempotent; preserves any existing selectedType.
       registerGeminiMcp().catch(err =>
@@ -148,7 +153,8 @@ function register(app, {
       );
     }
     if (key === 'codex_api_key') {
-      process.env.OPENAI_API_KEY = value || '';
+      if (value) process.env.OPENAI_API_KEY = value;
+      else delete process.env.OPENAI_API_KEY;
       // Seed ~/.codex/config.toml with the api-key provider so the CLI
       // reads OPENAI_API_KEY from env on the next session instead of
       // launching ChatGPT OAuth. Idempotent; preserves any user choice.
@@ -171,7 +177,8 @@ function register(app, {
     }
     if (key === 'huggingface_api_key') {
       // qdrant-sync's HF embedding provider reads process.env.HF_TOKEN
-      process.env.HF_TOKEN = value || '';
+      if (value) process.env.HF_TOKEN = value;
+      else delete process.env.HF_TOKEN;
     }
 
     if (key === 'keepalive_mode') {

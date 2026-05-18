@@ -357,7 +357,15 @@ function register(app, {
       db.setProjectState(project.id, state);
       _se('upsertProject', { path: project.path, state });
     }
-    if (notes !== undefined) db.setProjectNotes(project.id, notes);
+    if (notes !== undefined) {
+      db.setProjectNotes(project.id, notes);
+      // Reviewer-Gemini NON-BLOCKER N8 (build-review-round1): symmetric
+      // engine notification with the rename/state branches. Engine
+      // doesn't currently surface notes in the snapshot, but the upsert
+      // is cheap and keeps mutation-source coverage uniform — when notes
+      // do land in the engine schema, no caller change is required.
+      _se('upsertProject', { path: project.path, notes });
+    }
     res.json({ ok: true });
   });
 

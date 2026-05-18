@@ -27,6 +27,11 @@ function createStateEngine({
   let workspace = null;
   const projects = new Map();
   const programs = new Map();
+  // Reviewer-Codex NON-BLOCKER (build-review-round1): updateSession was
+  // O(total sessions) because it scanned every project. Watcher-driven
+  // token-update events fire hot, so we maintain a sessionId → projectPath
+  // index that makes updateSession / removeSession / getSession O(1).
+  const sessionIndex = new Map();
 
   let warming = true;
   let warmStartedAt = null;
@@ -82,20 +87,40 @@ function createStateEngine({
       programs: [],
       workspace,
     };
+    // Reviewer-Gemini NON-BLOCKER N7 (build-review-round1): legacy _scanState
+    // sorts projects by most-recent session timestamp. Mirror that here so
+    // the sidebar order doesn't visibly shift when engine warms / falls
+    // back / takes over. Session-level ordering is preserved as-stored.
     for (const project of projects.values()) {
+      const sessionsArr = Array.from(project.sessions.values());
       out.projects.push({
         name: project.name,
         path: project.path,
-        sessions: Array.from(project.sessions.values()),
+        sessions: sessionsArr,
         missing: project.missing || false,
         state: project.state || 'active',
         program_id: project.program_id ?? null,
       });
     }
+    out.projects.sort((a, b) => {
+      const at = _maxTimestamp(a.sessions);
+      const bt = _maxTimestamp(b.sessions);
+      return bt - at;
+    });
     for (const program of programs.values()) {
       out.programs.push(program);
     }
     return out;
+  }
+
+  function _maxTimestamp(sessions) {
+    if (!sessions || sessions.length === 0) return 0;
+    let max = 0;
+    for (const s of sessions) {
+      const t = s && s.timestamp ? new Date(s.timestamp).getTime() : 0;
+      if (Number.isFinite(t) && t > max) max = t;
+    }
+    return max;
   }
 
   function serializeSnapshot() {
@@ -162,7 +187,14 @@ function createStateEngine({
   }
 
   function removeProject(path) {
-    if (!projects.has(path)) return false;
+    const project = projects.get(path);
+    if (!project) return false;
+    // Drop the project's sessions from the index too, so updateSession()
+    // on a now-orphan session id returns false instead of finding a stale
+    // pointer.
+    for (const sessId of project.sessions.keys()) {
+      sessionIndex.delete(sessId);
+    }
     projects.delete(path);
     _publish({ kind: 'project:remove', path });
     return true;
@@ -179,6 +211,7 @@ function createStateEngine({
     const existing = project.sessions.get(session.id);
     if (existing) {
       Object.assign(existing, session);
+      sessionIndex.set(session.id, session.project_path);
       _publish({
         kind: 'session:update',
         id: session.id,
@@ -187,6 +220,7 @@ function createStateEngine({
       });
     } else {
       project.sessions.set(session.id, { ...session });
+      sessionIndex.set(session.id, session.project_path);
       _publish({
         kind: 'session:add',
         id: session.id,
@@ -197,42 +231,52 @@ function createStateEngine({
   }
 
   function updateSession(sessionId, partialFields) {
-    for (const project of projects.values()) {
-      const s = project.sessions.get(sessionId);
-      if (s) {
-        Object.assign(s, partialFields);
-        _publish({
-          kind: 'session:update',
-          id: sessionId,
-          project_path: project.path,
-          fields: partialFields,
-        });
-        return true;
-      }
+    const projectPath = sessionIndex.get(sessionId);
+    if (!projectPath) return false;
+    const project = projects.get(projectPath);
+    if (!project) {
+      // Index points to a path that no longer holds the project — stale entry.
+      sessionIndex.delete(sessionId);
+      return false;
     }
-    return false;
+    const s = project.sessions.get(sessionId);
+    if (!s) {
+      sessionIndex.delete(sessionId);
+      return false;
+    }
+    Object.assign(s, partialFields);
+    _publish({
+      kind: 'session:update',
+      id: sessionId,
+      project_path: project.path,
+      fields: partialFields,
+    });
+    return true;
   }
 
   function removeSession(sessionId) {
-    for (const project of projects.values()) {
-      if (project.sessions.delete(sessionId)) {
-        _publish({
-          kind: 'session:remove',
-          id: sessionId,
-          project_path: project.path,
-        });
-        return true;
-      }
+    const projectPath = sessionIndex.get(sessionId);
+    if (!projectPath) return false;
+    const project = projects.get(projectPath);
+    sessionIndex.delete(sessionId);
+    if (!project) return false;
+    if (project.sessions.delete(sessionId)) {
+      _publish({
+        kind: 'session:remove',
+        id: sessionId,
+        project_path: project.path,
+      });
+      return true;
     }
     return false;
   }
 
   function getSession(sessionId) {
-    for (const project of projects.values()) {
-      const s = project.sessions.get(sessionId);
-      if (s) return s;
-    }
-    return null;
+    const projectPath = sessionIndex.get(sessionId);
+    if (!projectPath) return null;
+    const project = projects.get(projectPath);
+    if (!project) return null;
+    return project.sessions.get(sessionId) || null;
   }
 
   function upsertProgram(program) {
@@ -257,12 +301,41 @@ function createStateEngine({
     subscribers.set(id, sub);
 
     try {
+      // R34 parity with HTTP /api/state: refuse to push a snapshot that
+      // exceeds the bound. WS subscribers receive a sized-out error frame
+      // and the engine drops them — the client surfaces the same "too big"
+      // affordance HTTP would have given via 507.
+      const snap = snapshot();
+      const serialized = JSON.stringify(snap);
+      const bytes = Buffer.byteLength(serialized, 'utf-8');
+      if (bytes > maxBytes) {
+        log.warn('state-engine: subscriber snapshot exceeds memory bound', {
+          module: 'state-engine',
+          subscriberId: id,
+          actual_bytes: bytes,
+          max_bytes: maxBytes,
+        });
+        try {
+          send({
+            type: 'state:error',
+            version: 1,
+            seq: nextSeq++,
+            at: clock(),
+            error: 'memory_bound_exceeded',
+            actual_bytes: bytes,
+            max_bytes: maxBytes,
+          });
+        } catch (_innerErr) { /* drop sub anyway */ }
+        sub.dead = true;
+        subscribers.delete(id);
+        return () => unsubscribe(id);
+      }
       send({
         type: 'state:snapshot',
         version: 1,
         seq: nextSeq++,
         at: clock(),
-        snapshot: snapshot(),
+        snapshot: snap,
         warming,
       });
       sub.lastSeen = clock();

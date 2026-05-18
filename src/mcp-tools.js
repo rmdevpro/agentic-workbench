@@ -326,6 +326,12 @@ handlers.session_restart = async (args) => {
   await safe.tmuxKill(tmux);
   const projectPath = session.project_path || safe.resolveProjectPath(session.project_name);
   const newTmux = await ensureSessionTmux(session, projectPath);
+  // Reviewer-Gemini BLOCKER B3 (build-review-round1): mirror the HTTP
+  // /api/sessions/:id/restart engine notification for MCP-driven restarts.
+  _se('updateSession', args.session_id, {
+    last_restarted_at: Date.now(),
+    claude_auth_broken: false,
+  });
   return { session_id: session.id, tmux: newTmux, cli: session.cli_type || 'claude', restarted: true };
 };
 

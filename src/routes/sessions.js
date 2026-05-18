@@ -294,98 +294,10 @@ function register(app, {
     return sessions;
   }
 
-  // ── GET /api/state ─────────────────────────────────────────────────────────
-
-  app.get('/api/state', async (req, res) => {
-    try {
-      const projects = [];
-      const dbProjects = db.getProjects();
-      // Allocate once per request so the claim sets span all projects.
-      // Gemini/Codex disk sessions are global, not scoped per project.
-      const claimedGemini = new Set();
-      const claimedCodex = new Set();
-
-      for (const dbProject of dbProjects) {
-        const projectName = dbProject.name;
-        const projectPath = dbProject.path;
-        const project = dbProject;
-
-        let dirMissing = false;
-        try {
-          await stat(projectPath);
-        } catch (err) {
-          if (err.code === 'ENOENT') {
-            dirMissing = true;
-          } else {
-            logger.warn('Error checking project directory', {
-              module: 'routes',
-              project: projectName,
-              err: err.message,
-            });
-            dirMissing = true;
-          }
-        }
-
-        const sessDir = safe.findSessionsDir(projectPath);
-
-        // #257: reconcile MUST run BEFORE the autonomous JSONL discovery below.
-        // For MCP-spawned sessions there's no session-resolver running, so the
-        // provisional `new_<ts>` row needs the reconciler to bind it to its
-        // realID JSONL. If discovery runs first, it creates a separate realID
-        // row using parseSessionFile-derived name (the prompt text), which then
-        // makes the reconciler treat the JSONL as "claimed" — leaving the
-        // provisional row as a permanent orphan in the sidebar AND mis-naming
-        // the real row. Run reconcile first; discovery picks up any leftover
-        // unbound JSONLs (e.g. sessions created via the CLI directly).
-        const currentSessionsForReconcile = db.getSessionsForProject(project.id);
-        await reconcileStaleSessionsForProject(currentSessionsForReconcile, sessDir, project.id);
-
-        try {
-          const sessionFiles = await readdir(sessDir);
-          for (const file of sessionFiles) {
-            if (!file.endsWith('.jsonl')) continue;
-            const sessionId = basename(file, '.jsonl');
-            // Skip JSONL files that belong to non-Claude sessions (Gemini/Codex UUIDs
-            // may end up here as empty files — don't overwrite their DB records)
-            const existing = db.getSession(sessionId);
-            if (existing && existing.cli_type && existing.cli_type !== 'claude') continue;
-            const fileMeta = await sessionUtils.parseSessionFile(join(sessDir, file));
-            if (fileMeta) db.upsertSession(sessionId, project.id, fileMeta.name);
-          }
-        } catch (err) {
-          if (err.code !== 'ENOENT') {
-            logger.warn('Error reading sessions dir in state handler', {
-              module: 'routes',
-              project: projectName,
-              err: err.message,
-            });
-          }
-          /* expected for ENOENT: no sessions dir */
-        }
-
-        const dbSessions = db.getSessionsForProject(project.id);
-        const sessions = await buildSessionList(dbSessions, sessDir, claimedGemini, claimedCodex);
-
-        for (const s of sessions) {
-          s.project_missing = dirMissing;
-        }
-
-        projects.push({ name: projectName, path: projectPath, sessions, missing: dirMissing, state: project.state || 'active', program_id: project.program_id ?? null });
-      }
-
-      projects.sort((a, b) => {
-        const aTime = a.sessions[0]?.timestamp || '1970-01-01';
-        const bTime = b.sessions[0]?.timestamp || '1970-01-01';
-        return new Date(bTime) - new Date(aTime);
-      });
-
-      const programs = db.getAllPrograms('active');
-      res.json({ projects, programs, workspace: WORKSPACE });
-    } catch (err) {
-      logger.error('Error listing state', { module: 'routes', err: err.message });
-      res.status(500).json({ error: err.message });
-    }
-  });
+  // ── GET /api/state ── extracted to src/routes/state.js in #651 commit 5.
+  //   The state route module receives reconcileStaleSessionsForProject +
+  //   buildSessionList via the helpers value returned at the end of this
+  //   register() function. routes.js wires them through.
 
   // ── GET /api/search ────────────────────────────────────────────────────────
 
@@ -943,7 +855,14 @@ function register(app, {
     }
   });
 
-  return { checkAuthStatus, trustDir };
+  return {
+    checkAuthStatus,
+    trustDir,
+    // #651 commit 5: expose the discovery helpers so the extracted /api/state
+    // handler in routes/state.js can call them without duplicating logic.
+    reconcileStaleSessionsForProject,
+    buildSessionList,
+  };
 }
 
 module.exports = { register };

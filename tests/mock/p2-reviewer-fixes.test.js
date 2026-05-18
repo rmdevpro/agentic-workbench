@@ -18,6 +18,10 @@ const { registerMcpRoutes } = require('../../src/mcp-tools.js');
 
 const SESSIONS_SRC = fs.readFileSync(
   path.join(__dirname, '..', '..', 'src', 'routes', 'sessions.js'), 'utf-8');
+// #651 commit 5: /api/state handler moved into its own domain module.
+// Structural checks targeting the state handler now read from state.js.
+const STATE_SRC = fs.readFileSync(
+  path.join(__dirname, '..', '..', 'src', 'routes', 'state.js'), 'utf-8');
 const SEEDER_SRC = fs.readFileSync(
   path.join(__dirname, '..', '..', 'src', 'session-seeder.js'), 'utf-8');
 
@@ -36,27 +40,33 @@ test('#453-01: buildSessionList signature accepts claimedGemini and claimedCodex
 test('#453-02: /api/state handler allocates claimedGemini and claimedCodex Sets before project loop', () => {
   // The fix requires the Sets to be allocated once per request so they span
   // all projects. The old fix (inside buildSessionList) re-allocated per project.
-  const stateHandlerIdx = SESSIONS_SRC.indexOf("app.get('/api/state'");
-  assert.ok(stateHandlerIdx >= 0, '/api/state handler must be present');
-  const handlerBody = SESSIONS_SRC.slice(stateHandlerIdx, stateHandlerIdx + 1500);
+  // #651 commit 5: the /api/state handler now lives in routes/state.js. The
+  // Set-allocation pattern is preserved verbatim — check there.
+  const stateHandlerIdx = STATE_SRC.indexOf("app.get('/api/state'");
+  assert.ok(stateHandlerIdx >= 0, '/api/state handler must be present in routes/state.js');
 
+  // The Set-allocation now lives in _scanState() — the function the handler
+  // delegates to via _coalescedScan(). Either it's inline in the handler or
+  // hoisted into a helper; both pass.
   assert.ok(
-    /const claimedGemini\s*=\s*new Set\(\)/.test(handlerBody),
-    'claimedGemini must be allocated inside the /api/state handler before the project loop',
+    /const claimedGemini\s*=\s*new Set\(\)/.test(STATE_SRC),
+    'claimedGemini must be allocated once per scan (not module-level)',
   );
   assert.ok(
-    /const claimedCodex\s*=\s*new Set\(\)/.test(handlerBody),
-    'claimedCodex must be allocated inside the /api/state handler before the project loop',
+    /const claimedCodex\s*=\s*new Set\(\)/.test(STATE_SRC),
+    'claimedCodex must be allocated once per scan (not module-level)',
   );
-  // The old module-level Sets must not exist
-  assert.ok(
-    !/^  const _claimedGemini\s*=\s*new Set/m.test(SESSIONS_SRC),
-    'module-level _claimedGemini Set must not exist (race condition eliminated)',
-  );
-  assert.ok(
-    !/^  const _claimedCodex\s*=\s*new Set/m.test(SESSIONS_SRC),
-    'module-level _claimedCodex Set must not exist (race condition eliminated)',
-  );
+  // The old module-level Sets must not exist in EITHER file
+  for (const [src, name] of [[SESSIONS_SRC, 'sessions.js'], [STATE_SRC, 'state.js']]) {
+    assert.ok(
+      !/^  const _claimedGemini\s*=\s*new Set/m.test(src),
+      `module-level _claimedGemini Set must not exist in ${name} (race condition eliminated)`,
+    );
+    assert.ok(
+      !/^  const _claimedCodex\s*=\s*new Set/m.test(src),
+      `module-level _claimedCodex Set must not exist in ${name} (race condition eliminated)`,
+    );
+  }
 });
 
 // ── #454 — createTrustDir consolidated ──────────────────────────────────────

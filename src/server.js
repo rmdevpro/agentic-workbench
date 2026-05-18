@@ -23,6 +23,7 @@ const createKbWatcher = require('./kb-watcher');
 const createWsTerminal = require('./ws-terminal');
 const registerCoreRoutes = require('./routes');
 const { createQdrantSync } = require('./qdrant-sync');
+const createStateEngine = require('./state-engine');
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -267,6 +268,58 @@ app.use(
 app.use('/lib/codemirror', express.static(join(__dirname, '..', 'public/lib/codemirror')));
 app.use('/lib/toastui-editor', express.static(join(__dirname, '..', 'public/lib/toastui-editor')));
 
+// ── State Engine ──────────────────────────────────────────────────────────
+// #651 commit 6: instantiate the in-memory state model + diff publisher.
+// Cold-start contract (R28): server binds port + serves /health immediately
+// and the engine warms in the background. Until markWarm fires, /api/state
+// returns 503 {warming: true} per the route's contract. Mutation source
+// wire-up (so every db.upsertSession etc. updates the engine) is a separate
+// cohesive change — until that lands, the engine is correct at boot but
+// goes stale on writes; routes/state.js falls back to the DB-walk by
+// default and the engine path is only used when explicitly enabled.
+const stateEngine = createStateEngine({ logger });
+stateEngine.setWorkspace(WORKSPACE);
+stateEngine.startWarm();
+
+async function _warmStateEngine() {
+  try {
+    const programs = (db.getAllPrograms && db.getAllPrograms('active')) || [];
+    for (const program of programs) {
+      stateEngine.upsertProgram(program);
+    }
+    const projects = db.getProjects() || [];
+    for (const project of projects) {
+      stateEngine.upsertProject({
+        path: project.path,
+        name: project.name,
+        missing: false,
+        state: project.state || 'active',
+        program_id: project.program_id ?? null,
+      });
+      const dbSessions = db.getSessionsForProject(project.id) || [];
+      for (const s of dbSessions) {
+        stateEngine.upsertSession({
+          id: s.id,
+          project_path: project.path,
+          name: s.name,
+          cli_type: s.cli_type || 'claude',
+          state: s.state || 'active',
+        });
+      }
+    }
+    stateEngine.markWarm();
+    logger.info('State Engine warm', {
+      module: 'server',
+      stats: stateEngine.stats(),
+    });
+  } catch (err) {
+    logger.error('State Engine warm failed', { module: 'server', err: err.message });
+    // Leave engine in `warming: true`; /api/state will keep falling back to
+    // the DB-walk. The next mutation wire-up commit will give us a way to
+    // re-attempt warm after a transient failure.
+  }
+}
+
 // ── Route registration ──────────────────────────────────────────────────────
 
 const { checkAuthStatus } = registerCoreRoutes(app, {
@@ -277,6 +330,7 @@ const { checkAuthStatus } = registerCoreRoutes(app, {
   keepalive,
   fireEvent,
   logger,
+  stateEngine,
   tmuxName: tmux.tmuxName,
   tmuxExists: tmux.tmuxExists,
   enforceTmuxLimit: tmux.enforceTmuxLimit,
@@ -362,6 +416,11 @@ if (require.main === module) {
 
       server.listen(PORT, '0.0.0.0', () => {
         logger.info('Workbench running', { module: 'server', port: PORT });
+        // #651 R28: kick off State Engine warm AFTER bind. Server is already
+        // serving /health by this point; engine populates in the background.
+        // Errors are logged inside _warmStateEngine — server lifecycle is
+        // not affected.
+        setImmediate(() => { _warmStateEngine(); });
         keepalive.start();
         tmux.startPeriodicScan();
         watchers.startSettingsWatcher();

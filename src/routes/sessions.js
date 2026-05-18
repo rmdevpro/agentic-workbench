@@ -33,6 +33,7 @@ function register(app, {
   keepalive,
   fireEvent,
   logger,
+  stateEngine,
   tmuxName,
   tmuxExists,
   enforceTmuxLimit,
@@ -45,6 +46,22 @@ function register(app, {
   trustCodexProjectDirs,
   sleep,
 }) {
+  // #651 commit 7a: every DB mutation in this module also publishes through
+  // the State Engine so the in-memory model + WS subscribers stay current.
+  // Errors are warned, not thrown: a buggy engine call must not break the
+  // REST contract (R28: engine is an optimisation, DB is the source of truth).
+  function _se(method, ...args) {
+    if (!stateEngine) return;
+    try {
+      stateEngine[method](...args);
+    } catch (err) {
+      logger.warn('state-engine call failed', {
+        module: 'routes',
+        op: method,
+        err: err.message,
+      });
+    }
+  }
   async function checkAuthStatus() {
     const credsFile = join(CLAUDE_HOME, '.credentials.json');
     try {
@@ -85,6 +102,15 @@ function register(app, {
     const staleTmps = currentSessions.filter((s) => s.id.startsWith('new_'));
     if (staleTmps.length === 0) return;
 
+    // #651 commit 7a: engine.upsertSession requires project_path; look it up
+    // once from the project_id we already have. If the project lookup fails,
+    // engine updates degrade to no-ops via the existing _se try/catch.
+    let projectPath = null;
+    try {
+      const proj = db.getProjectById && db.getProjectById(projectId);
+      if (proj) projectPath = proj.path;
+    } catch (_e) { /* engine wire-up best-effort */ }
+
     const dbIds = new Set(currentSessions.map((s) => s.id));
     try {
       const files = await readdir(sessDir);
@@ -97,6 +123,7 @@ function register(app, {
         if (cliType !== 'claude') {
           if (!(await safe.tmuxExists(tmuxName(tmp.id)))) {
             db.deleteSession(tmp.id);
+            _se('removeSession', tmp.id);
           }
           continue;
         }
@@ -104,10 +131,29 @@ function register(app, {
           const realFile = unmatched.shift();
           const realId = basename(realFile, '.jsonl');
           db.upsertSession(realId, projectId, tmp.name || null, cliType);
-          if (tmp.user_renamed) db.renameSession(realId, tmp.name);
-          if (tmp.notes) db.setSessionNotes(realId, tmp.notes);
-          if (tmp.state && tmp.state !== 'active') db.setSessionState(realId, tmp.state);
+          if (projectPath) {
+            _se('upsertSession', {
+              id: realId,
+              project_path: projectPath,
+              name: tmp.name || null,
+              cli_type: cliType,
+              state: 'active',
+            });
+          }
+          if (tmp.user_renamed) {
+            db.renameSession(realId, tmp.name);
+            _se('updateSession', realId, { name: tmp.name });
+          }
+          if (tmp.notes) {
+            db.setSessionNotes(realId, tmp.notes);
+            _se('updateSession', realId, { notes: tmp.notes });
+          }
+          if (tmp.state && tmp.state !== 'active') {
+            db.setSessionState(realId, tmp.state);
+            _se('updateSession', realId, { state: tmp.state, archived: tmp.state === 'archived' });
+          }
           db.deleteSession(tmp.id);
+          _se('removeSession', tmp.id);
           const oldTmux = tmuxName(tmp.id);
           const newTmux = tmuxName(realId);
           try {
@@ -128,6 +174,7 @@ function register(app, {
           }
         } else if (!(await safe.tmuxExists(tmuxName(tmp.id)))) {
           db.deleteSession(tmp.id);
+          _se('removeSession', tmp.id);
         }
       }
     } catch (err) {
@@ -192,7 +239,10 @@ function register(app, {
         (d) => d.sessionId,
         (sess, match) => {
           if (match.sessionId) {
-            try { db.setCliSessionId(sess.id, match.sessionId); } catch { /* race ok */ }
+            try {
+              db.setCliSessionId(sess.id, match.sessionId);
+              _se('updateSession', sess.id, { cli_session_id: match.sessionId });
+            } catch { /* race ok */ }
           }
         }
       );
@@ -217,7 +267,10 @@ function register(app, {
           const uuidMatch = name.match(CODEX_ROLLOUT_UUID_RE);
           const rolloutId = uuidMatch ? uuidMatch[1] : name;
           if (rolloutId && rolloutId !== 'sessions') {
-            try { db.setCliSessionId(sess.id, rolloutId); } catch { /* race ok */ }
+            try {
+              db.setCliSessionId(sess.id, rolloutId);
+              _se('updateSession', sess.id, { cli_session_id: rolloutId });
+            } catch { /* race ok */ }
           }
         }
       );
@@ -400,6 +453,15 @@ function register(app, {
       }
 
       const proj = db.ensureProject(project, projectPath);
+      // #651 commit 7a: ensure the engine knows the project before the
+      // session upsert lands (upsertSession asserts the project exists).
+      _se('upsertProject', {
+        path: proj.path,
+        name: proj.name || project,
+        missing: false,
+        state: proj.state || 'active',
+        program_id: proj.program_id ?? null,
+      });
 
       // Insert the session row up front so role seeding's setCliSessionId
       // UPDATEs (Codex rollout id, Gemini chat id) hit an existing row.
@@ -407,7 +469,17 @@ function register(app, {
       const nameMaxLen = config.get('session.nameMaxLength', 60);
       const sessionName = name.substring(0, nameMaxLen).replace(/\s+/g, ' ').trim();
       db.upsertSession(tmpId, proj.id, sessionName, cliType);
-      if (hidden) db.setSessionState(tmpId, 'hidden');
+      _se('upsertSession', {
+        id: tmpId,
+        project_path: proj.path,
+        name: sessionName,
+        cli_type: cliType,
+        state: 'active',
+      });
+      if (hidden) {
+        db.setSessionState(tmpId, 'hidden');
+        _se('updateSession', tmpId, { state: 'hidden', archived: false });
+      }
 
       // Role seeding — two-phase launch when a role is selected
       if (role) {
@@ -555,6 +627,7 @@ function register(app, {
       if (name.length > SESSION_NAME_MAX_LEN)
         return res.status(400).json({ error: `name too long (max ${SESSION_NAME_MAX_LEN})` });
       db.renameSession(sessionId, name.trim());
+      _se('updateSession', sessionId, { name: name.trim() });
       sessionUtils.invalidateSessionInfoCache(sessionId);
       try {
         const session = db.getSessionFull(sessionId);
@@ -627,6 +700,7 @@ function register(app, {
         if (name.length > SESSION_NAME_MAX_LEN)
           return res.status(400).json({ error: `name too long (max ${SESSION_NAME_MAX_LEN})` });
         db.renameSession(sessionId, name);
+        _se('updateSession', sessionId, { name });
       }
       if (state !== undefined) {
         if (!VALID_STATES.includes(state))
@@ -634,11 +708,13 @@ function register(app, {
             .status(400)
             .json({ error: `state must be one of: ${VALID_STATES.join(', ')}` });
         db.setSessionState(sessionId, state);
+        _se('updateSession', sessionId, { state, archived: state === 'archived' });
       }
       if (notes !== undefined) {
         if (notes.length > NOTES_MAX_LEN)
           return res.status(400).json({ error: `notes too long (max ${NOTES_MAX_LEN})` });
         db.setSessionNotes(sessionId, notes);
+        _se('updateSession', sessionId, { notes });
       }
       sessionUtils.invalidateSessionInfoCache(sessionId);
       res.json({ saved: true });
@@ -656,7 +732,9 @@ function register(app, {
       if (!validateSessionId(sessionId))
         return res.status(400).json({ error: 'invalid session ID format' });
       const { archived } = req.body;
-      db.setSessionState(sessionId, archived ? 'archived' : 'active');
+      const newState = archived ? 'archived' : 'active';
+      db.setSessionState(sessionId, newState);
+      _se('updateSession', sessionId, { state: newState, archived: !!archived });
       sessionUtils.invalidateSessionInfoCache(sessionId);
       res.json({ id: sessionId, archived: !!archived });
     } catch (err) {

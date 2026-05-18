@@ -3,7 +3,36 @@
 const { readFile, stat } = require('fs/promises');
 const { join } = require('path');
 
-module.exports = function createKeepalive({ safe, config, logger }) {
+module.exports = function createKeepalive({ safe, config, logger, db, stateEngine }) {
+  // #651 commit 7e: Claude auth-broken transitions fan out to every Claude
+  // session via stateEngine.updateSession({claude_auth_broken: bool}). This
+  // is the precursor for the R18 stale-auth badge (#657 commit 22). The DB
+  // (when injected) provides the session enumeration; both args are optional
+  // — early callers don't have either, and the function is a no-op then.
+  function _publishClaudeAuthBroken(broken) {
+    if (!stateEngine || !db) return;
+    try {
+      const projects = db.getProjects ? db.getProjects() : [];
+      for (const proj of projects) {
+        const sessions = (db.getSessionsForProject && db.getSessionsForProject(proj.id)) || [];
+        for (const s of sessions) {
+          if ((s.cli_type || 'claude') === 'claude') {
+            try { stateEngine.updateSession(s.id, { claude_auth_broken: !!broken }); }
+            catch (err) {
+              logger.warn('state-engine updateSession (claude_auth_broken) failed', {
+                module: 'keepalive', err: err.message,
+              });
+              return; // one warn per fan-out; don't spam
+            }
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn('claude_auth_broken state-engine fan-out failed', {
+        module: 'keepalive', err: err.message,
+      });
+    }
+  }
   const WORKSPACE = safe.WORKSPACE;
   const CLAUDE_HOME = safe.CLAUDE_HOME;
   const HOME = safe.HOME;
@@ -129,10 +158,12 @@ module.exports = function createKeepalive({ safe, config, logger }) {
       // Successful query — clear any auth-broken state so we don't stay
       // suppressed after the user fixes their credentials.
       if (_authBrokenCount > 0 || _authBrokenLogged) {
+        const wasBroken = _authBrokenLogged;
         _authBrokenCount = 0;
         _authBrokenLogged = false;
         _authBrokenMtime = 0;
         if (_credsWatchTimer) { clearInterval(_credsWatchTimer); _credsWatchTimer = null; }
+        if (wasBroken) _publishClaudeAuthBroken(false);
       }
       return result.trim();
     } catch (err) {
@@ -151,6 +182,7 @@ module.exports = function createKeepalive({ safe, config, logger }) {
             credsMtime: _authBrokenMtime ? new Date(_authBrokenMtime).toISOString() : null,
           });
           startCredsWatch();
+          _publishClaudeAuthBroken(true);
         } else if (!_authBrokenLogged) {
           // Below threshold — still log the ERROR so transient single hiccups
           // remain visible. Suppression only kicks in after N in a row.

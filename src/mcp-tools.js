@@ -20,6 +20,24 @@ const WORKSPACE = safe.WORKSPACE;
 const CLAUDE_HOME = safe.CLAUDE_HOME;
 const HOME = safe.HOME;
 
+// #651 commit 7e: mcp-tools.js loads `db` at module level (not factory-DI),
+// so the State Engine is wired in via a module-level setter that server.js
+// invokes once after engine construction. All session-mutating handlers
+// publish through `_se()` so the engine + WS subscribers stay current
+// alongside the DB writes.
+let _stateEngine = null;
+function setStateEngine(se) { _stateEngine = se; }
+function _se(method, ...args) {
+  if (!_stateEngine) return;
+  try {
+    _stateEngine[method](...args);
+  } catch (err) {
+    logger.warn('state-engine call failed', {
+      module: 'mcp-tools', op: method, err: err.message,
+    });
+  }
+}
+
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const VALID_CLI_TYPES = ['claude', 'gemini', 'codex'];
 const VALID_CLI_TYPES_FOR_NEW = ['claude', 'gemini', 'codex', 'bash'];
@@ -253,9 +271,26 @@ handlers.session_new = async (args) => {
   const tmux = safe.tmuxNameFor(tmpId);
   safe.tmuxCreateCLI(tmux, proj.path, cliType, [], { workbenchSessionId: tmpId });
   db.upsertSession(tmpId, proj.id, name, cliType);
+  _se('upsertProject', {
+    path: proj.path,
+    name: proj.name || args.project,
+    missing: false,
+    state: proj.state || 'active',
+    program_id: proj.program_id ?? null,
+  });
+  _se('upsertSession', {
+    id: tmpId,
+    project_path: proj.path,
+    name,
+    cli_type: cliType,
+    state: 'active',
+  });
   // MCP-spawned sessions default to hidden — agents creating sub-sessions
   // shouldn't clutter the human's sidebar. Pass hidden:false to override.
-  if (args.hidden !== false) db.setSessionState(tmpId, 'hidden');
+  if (args.hidden !== false) {
+    db.setSessionState(tmpId, 'hidden');
+    _se('updateSession', tmpId, { state: 'hidden', archived: false });
+  }
   return { session_id: tmpId, tmux, project: args.project, cli: cliType };
 };
 
@@ -339,9 +374,18 @@ handlers.session_list = async (args) => {
 
 handlers.session_config = async (args) => {
   requireSessionId(args);
-  if (args.name !== undefined) db.renameSession(args.session_id, args.name);
-  if (args.state !== undefined) db.setSessionState(args.session_id, args.state);
-  if (args.notes !== undefined) db.setSessionNotes(args.session_id, args.notes);
+  if (args.name !== undefined) {
+    db.renameSession(args.session_id, args.name);
+    _se('updateSession', args.session_id, { name: args.name });
+  }
+  if (args.state !== undefined) {
+    db.setSessionState(args.session_id, args.state);
+    _se('updateSession', args.session_id, { state: args.state, archived: args.state === 'archived' });
+  }
+  if (args.notes !== undefined) {
+    db.setSessionNotes(args.session_id, args.notes);
+    _se('updateSession', args.session_id, { notes: args.notes });
+  }
   // #198: return read-after-write metadata, not just {saved:true}. Drop the
   // session's cache entry so the post-write read reflects fresh DB values
   // (rename / state / notes), then re-fetch via the same path session_info
@@ -1263,4 +1307,7 @@ module.exports = {
   // through the UI, matching the side-effects that the MCP-tool handlers
   // produce (project_mcp_enable / project_mcp_disable).
   _writeProjectMcpForAllCLIs,
+  // #651 commit 7e: server.js calls this once after engine construction so
+  // session_new / session_config handlers can publish through the engine.
+  setStateEngine,
 };

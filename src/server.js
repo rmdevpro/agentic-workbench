@@ -24,6 +24,7 @@ const createWsTerminal = require('./ws-terminal');
 const registerCoreRoutes = require('./routes');
 const { createQdrantSync } = require('./qdrant-sync');
 const createStateEngine = require('./state-engine');
+const mcpTools = require('./mcp-tools');
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -56,8 +57,6 @@ process.on('unhandledRejection', (reason) => {
 
 // ── Construct modules with explicit deps ────────────────────────────────────
 
-const keepalive = createKeepalive({ safe, config, logger });
-
 const tmux = createTmuxLifecycle({ safe, config, logger });
 
 const resolver = createSessionResolver({
@@ -77,6 +76,16 @@ const resolver = createSessionResolver({
 const stateEngine = createStateEngine({ logger });
 stateEngine.setWorkspace(WORKSPACE);
 stateEngine.startWarm();
+// #651 commit 7e: mcp-tools.js loads `db` at module scope (not factory-DI),
+// so the engine is injected via a one-shot setter immediately after
+// construction. All session_new / session_config handlers then publish
+// through `_se()`. Tests that exercise the handlers without ever calling
+// setStateEngine see the no-op fallback (engine === null).
+mcpTools.setStateEngine(stateEngine);
+
+// #651 commit 7e: keepalive gets `db` + `stateEngine` so Claude auth-broken
+// transitions can fan out to every Claude session.
+const keepalive = createKeepalive({ safe, config, logger, db, stateEngine });
 
 const watchers = createWatchers({
   db,

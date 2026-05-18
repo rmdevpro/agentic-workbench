@@ -4,6 +4,7 @@
 
 const { readFile, stat } = require('fs/promises');
 const { join, basename } = require('path');
+const tailParse = require('./tail-parse.js');
 
 module.exports = function createClaudeJsonl({ db, safe, config, logger }) {
   const CLAUDE_HOME = safe.CLAUDE_HOME;
@@ -38,7 +39,9 @@ module.exports = function createClaudeJsonl({ db, safe, config, logger }) {
       const size = fileStat.size;
 
       const cached = db.getSessionMeta(sessionId);
-      if (cached && cached.file_mtime === mtime && cached.file_size === size) {
+      const decision = tailParse.decideParseMode(cached, { mtimeMs: mtime, size });
+
+      if (decision.mode === 'cached') {
         return {
           name: cached.name || 'Untitled Session',
           timestamp: cached.timestamp || new Date().toISOString(),
@@ -47,14 +50,28 @@ module.exports = function createClaudeJsonl({ db, safe, config, logger }) {
         };
       }
 
-      const content = await readFile(filepath, 'utf-8');
-      const lines = content.trim().split('\n');
-      let name = null;
-      let timestamp = null;
-      let messageCount = 0;
-      let model = null;
+      let linesToParse;
+      let isTailParse = false;
+      if (decision.mode === 'tail') {
+        // Read only the bytes that grew since the last successful parse.
+        const tailText = await tailParse.readTail(filepath, decision.fromOffset, decision.toOffset);
+        const { lines: tailLines } = tailParse.splitTailIntoLines(tailText);
+        linesToParse = tailLines;
+        isTailParse = true;
+      } else {
+        // Full parse — either truncate, rotate, no-cache, or no-cursor.
+        const content = await readFile(filepath, 'utf-8');
+        linesToParse = content.trim().split('\n').filter((l) => l.length > 0);
+      }
 
-      for (const line of lines) {
+      // Start from cached metadata when tail-parsing; from zero for full parse.
+      let name = isTailParse ? cached.name || null : null;
+      let timestamp = isTailParse ? cached.timestamp || null : null;
+      let messageCount = isTailParse ? cached.message_count || 0 : 0;
+      let model = isTailParse ? cached.model || null : null;
+      let newLineCount = 0;
+
+      for (const line of linesToParse) {
         try {
           const entry = JSON.parse(line);
           if (!name && entry.type === 'user' && entry.message?.content) {
@@ -76,6 +93,7 @@ module.exports = function createClaudeJsonl({ db, safe, config, logger }) {
           if (entry.timestamp) {
             timestamp = entry.timestamp;
           }
+          newLineCount++;
         } catch (parseErr) {
           if (!(parseErr instanceof SyntaxError)) {
             logger.debug('Unexpected error parsing JSONL line in parseSessionFile', {
@@ -93,6 +111,13 @@ module.exports = function createClaudeJsonl({ db, safe, config, logger }) {
       };
 
       db.upsertSessionMeta(sessionId, filepath, mtime, size, result.name, result.timestamp, result.messageCount, result.model || '');
+      // #651 R7: persist the cursor for the next parse. Stored offset = full
+      // size (we just consumed bytes 0..size). For tail-parse, newLineCount
+      // is the count of newly-parsed lines; for full-parse it is total lines.
+      const newLastLineCount = isTailParse
+        ? (cached?.last_line_count || 0) + newLineCount
+        : newLineCount;
+      db.updateSessionMetaCursor(sessionId, size, newLastLineCount);
       return result;
     } catch (err) {
       if (err.code === 'ENOENT') return null;

@@ -58,6 +58,19 @@ try {
 } catch (_e) {
   /* column exists */
 }
+// #651 R7: byte-offset cursor for tail-parse on JSONL growth. Primary cursor;
+// line-count is optional metadata. Without these columns the parser falls
+// back to full-readFile on every cache miss (today's behaviour).
+try {
+  db.exec('ALTER TABLE session_meta ADD COLUMN last_byte_offset INTEGER DEFAULT 0');
+} catch (_e) {
+  /* column exists */
+}
+try {
+  db.exec('ALTER TABLE session_meta ADD COLUMN last_line_count INTEGER DEFAULT 0');
+} catch (_e) {
+  /* column exists */
+}
 try {
   db.exec("ALTER TABLE sessions ADD COLUMN cli_session_id TEXT DEFAULT NULL");
 } catch (_e) {
@@ -149,7 +162,9 @@ db.exec(`
     name TEXT,
     timestamp TEXT,
     message_count INTEGER DEFAULT 0,
-    model TEXT DEFAULT ''
+    model TEXT DEFAULT '',
+    last_byte_offset INTEGER DEFAULT 0,
+    last_line_count INTEGER DEFAULT 0
   );
 
   CREATE TABLE IF NOT EXISTS tasks (
@@ -423,6 +438,13 @@ const stmts = {
       model = excluded.model
   `),
   deleteSessionMeta: db.prepare('DELETE FROM session_meta WHERE session_id = ?'),
+  // #651 R7: separate cursor-update statement so existing callers of
+  // upsertSessionMeta (which passes 8 args) don't have to change. The
+  // tail-parse helper sets these after a successful parse so the next call
+  // can skip already-parsed bytes.
+  updateSessionMetaCursor: db.prepare(
+    'UPDATE session_meta SET last_byte_offset = ?, last_line_count = ? WHERE session_id = ?',
+  ),
 
   // MCP registry
   getMcpServers: db.prepare('SELECT * FROM mcp_registry ORDER BY name'),
@@ -866,6 +888,12 @@ module.exports = {
   },
   upsertSessionMeta(sessionId, filePath, mtime, size, name, timestamp, messageCount, model) {
     stmts.upsertSessionMeta.run(sessionId, filePath, mtime, size, name, timestamp, messageCount, model || '');
+  },
+  // #651 R7: persist tail-parse cursor after a successful incremental parse.
+  // Must be called AFTER upsertSessionMeta (which inserts the row) or the
+  // UPDATE will silently match 0 rows. The helper module handles ordering.
+  updateSessionMetaCursor(sessionId, lastByteOffset, lastLineCount) {
+    stmts.updateSessionMetaCursor.run(lastByteOffset || 0, lastLineCount || 0, sessionId);
   },
   deleteSessionMeta(sessionId) {
     stmts.deleteSessionMeta.run(sessionId);

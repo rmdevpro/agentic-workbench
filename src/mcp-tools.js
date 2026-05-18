@@ -20,6 +20,24 @@ const WORKSPACE = safe.WORKSPACE;
 const CLAUDE_HOME = safe.CLAUDE_HOME;
 const HOME = safe.HOME;
 
+// #651 commit 7e: mcp-tools.js loads `db` at module level (not factory-DI),
+// so the State Engine is wired in via a module-level setter that server.js
+// invokes once after engine construction. All session-mutating handlers
+// publish through `_se()` so the engine + WS subscribers stay current
+// alongside the DB writes.
+let _stateEngine = null;
+function setStateEngine(se) { _stateEngine = se; }
+function _se(method, ...args) {
+  if (!_stateEngine) return;
+  try {
+    _stateEngine[method](...args);
+  } catch (err) {
+    logger.warn('state-engine call failed', {
+      module: 'mcp-tools', op: method, err: err.message,
+    });
+  }
+}
+
 const SESSION_ID_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 const VALID_CLI_TYPES = ['claude', 'gemini', 'codex'];
 const VALID_CLI_TYPES_FOR_NEW = ['claude', 'gemini', 'codex', 'bash'];
@@ -253,9 +271,26 @@ handlers.session_new = async (args) => {
   const tmux = safe.tmuxNameFor(tmpId);
   safe.tmuxCreateCLI(tmux, proj.path, cliType, [], { workbenchSessionId: tmpId });
   db.upsertSession(tmpId, proj.id, name, cliType);
+  _se('upsertProject', {
+    path: proj.path,
+    name: proj.name || args.project,
+    missing: false,
+    state: proj.state || 'active',
+    program_id: proj.program_id ?? null,
+  });
+  _se('upsertSession', {
+    id: tmpId,
+    project_path: proj.path,
+    name,
+    cli_type: cliType,
+    state: 'active',
+  });
   // MCP-spawned sessions default to hidden — agents creating sub-sessions
   // shouldn't clutter the human's sidebar. Pass hidden:false to override.
-  if (args.hidden !== false) db.setSessionState(tmpId, 'hidden');
+  if (args.hidden !== false) {
+    db.setSessionState(tmpId, 'hidden');
+    _se('updateSession', tmpId, { state: 'hidden', archived: false });
+  }
   return { session_id: tmpId, tmux, project: args.project, cli: cliType };
 };
 
@@ -291,6 +326,12 @@ handlers.session_restart = async (args) => {
   await safe.tmuxKill(tmux);
   const projectPath = session.project_path || safe.resolveProjectPath(session.project_name);
   const newTmux = await ensureSessionTmux(session, projectPath);
+  // Reviewer-Gemini BLOCKER B3 (build-review-round1): mirror the HTTP
+  // /api/sessions/:id/restart engine notification for MCP-driven restarts.
+  _se('updateSession', args.session_id, {
+    last_restarted_at: Date.now(),
+    claude_auth_broken: false,
+  });
   return { session_id: session.id, tmux: newTmux, cli: session.cli_type || 'claude', restarted: true };
 };
 
@@ -339,10 +380,28 @@ handlers.session_list = async (args) => {
 
 handlers.session_config = async (args) => {
   requireSessionId(args);
-  if (args.name !== undefined) db.renameSession(args.session_id, args.name);
-  if (args.state !== undefined) db.setSessionState(args.session_id, args.state);
-  if (args.notes !== undefined) db.setSessionNotes(args.session_id, args.notes);
-  return { saved: true };
+  if (args.name !== undefined) {
+    db.renameSession(args.session_id, args.name);
+    _se('updateSession', args.session_id, { name: args.name });
+  }
+  if (args.state !== undefined) {
+    db.setSessionState(args.session_id, args.state);
+    _se('updateSession', args.session_id, { state: args.state, archived: args.state === 'archived' });
+  }
+  if (args.notes !== undefined) {
+    db.setSessionNotes(args.session_id, args.notes);
+    _se('updateSession', args.session_id, { notes: args.notes });
+  }
+  // #198: return read-after-write metadata, not just {saved:true}. Drop the
+  // session's cache entry so the post-write read reflects fresh DB values
+  // (rename / state / notes), then re-fetch via the same path session_info
+  // uses. Throws 404 if the session_id doesn't resolve, matching session_info
+  // semantics. `saved:true` is preserved alongside the metadata so callers
+  // keyed off the prior shape continue to work.
+  sessionUtils.invalidateSessionInfoCache(args.session_id);
+  const info = await sessionUtils.getSessionInfo(args.session_id);
+  if (!info) throw new ToolError('session not found', 404);
+  return { ...info, saved: true };
 };
 
 handlers.session_summarize = async (args) => {
@@ -457,14 +516,32 @@ handlers.session_resume_post_compact = async (args) => {
 handlers.session_export = async (args) => {
   requireSessionId(args);
   const session = db.getSessionFull(args.session_id);
+  // #268 Case B: truly-invalid session_id (no row in DB) — keep the 404.
   if (!session) throw new ToolError('session not found', 404);
   const projectPath = session.project_path || '';
   const cliType = session.cli_type || 'claude';
   if (cliType === 'claude') {
     const sessDir = sessionUtils.sessionsDir(projectPath);
     const path = join(sessDir, `${args.session_id}.jsonl`);
-    try { return { format: 'jsonl', path, content: fs.readFileSync(path, 'utf-8') }; }
-    catch (e) { throw new ToolError(`session file not found: ${path}`, 404); }
+    try {
+      return { format: 'jsonl', path, content: fs.readFileSync(path, 'utf-8') };
+    } catch (e) {
+      // #268: session exists in DB but the JSONL transcript file isn't on
+      // disk yet — typical for a freshly-created Claude session before any
+      // messages. Return an empty-content shape (distinguishes "no
+      // transcript yet" from "invalid session_id" above) rather than
+      // throwing. Other read errors (permission, IO) still throw 404.
+      if (e.code === 'ENOENT') {
+        return {
+          format: 'jsonl',
+          path,
+          content: '',
+          session_id: args.session_id,
+          note: 'no transcript',
+        };
+      }
+      throw new ToolError(`session file not found: ${path}`, 404);
+    }
   }
   // Gemini/Codex — return parsed transcript via summarizer's tail mechanism
   return await sessionUtils.summarizeSession(args.session_id, args.project);
@@ -1236,4 +1313,7 @@ module.exports = {
   // through the UI, matching the side-effects that the MCP-tool handlers
   // produce (project_mcp_enable / project_mcp_disable).
   _writeProjectMcpForAllCLIs,
+  // #651 commit 7e: server.js calls this once after engine construction so
+  // session_new / session_config handlers can publish through the engine.
+  setStateEngine,
 };

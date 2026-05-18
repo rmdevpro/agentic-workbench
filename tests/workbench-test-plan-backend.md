@@ -60,6 +60,39 @@
   - #468-LIVE-01 — Gemini session disambiguation via per-request claimed Set
   - #453-LIVE-01, #454-LIVE-01 — reviewer fix behavioral confirmation
   - A8-LIVE-01/02 — `/api/auth/login` no-CLI-fork fast path (code inspection now reads `src/routes/auth.js` after G0)
+
+### Milestone 01-stabilization additions (2026-05-17, ship with #651 + #657)
+
+Two design issues fold into ms-01: **#651** (refresh/sync stack — State Engine + WS state subscription + central status-bar dispatcher) and **#657** (Codex auth subsystem — checkbox-driven API-key vs OAuth, atomic toggle, OAuth keepalive). See those issues' "Engineer Implementation Plan — Final" sections for full design + per-commit work order. Round-2 reviewer consensus produced 34 dispositions (R1–R34); test classes below trace to those.
+
+**New server modules:**
+
+- `src/state-engine.js` — in-memory model, immutable-snapshot diff publisher (R6), subscriber registry, bounded memory cap (R34), cold-start warm-in-background (R28). Mock tests: **SE-MK-01..14** — subscriber lifecycle (sub/unsub/dead-socket per R30), snapshot correctness, mutation-source call signatures (R5 §6.1.1 table coverage), immutable-snapshot consistency under concurrent readers, cold-start `warming:true` transition, memory bound fail-fast, ordering contract (R33) state-WS authoritative for indicator transitions.
+- `src/routes/state.js` — `GET /api/state` from State Engine, in-flight coalescing (R6), `503 {warming:true}` during cold-start (R28), `507` on memory overflow (R34), `legacy_polling_enabled` flag fallback (R1). Mock tests: **SR-MK-01..08** — coalescing under N concurrent callers, 503 during warming, 507 on overflow, fallback-flag wire-up.
+- `src/routes/ws-state.js` — `/ws/state` per-tab subscription endpoint (R29 separate path from PTY), subscription protocol (R2: version + monotonic seq + idempotent diff apply), heartbeat-driven dead-subscriber eviction at 90s (R30), bounded server-side push queue with drop-oldest under backpressure. Mock tests: **WS-MK-01..10** — subscribe-snapshot flow, diff push, seq replay idempotency, dead-subscriber eviction, drop-oldest under push backpressure.
+- `src/session-utils/{claude-jsonl,gemini,codex}.js` — `last_byte_offset` cursor (R7 primary) + tail-parse on size growth + truncate/rotate detection → full-parse fallback. `last_line_count` is optional metadata. Mock tests: **TP-MK-01..09** — tail-parse against interleaved writes, partial-trailing-lines, truncate (size shrank), rotate (mtime out-of-order), per-CLI parser parity.
+- `src/spawn-env.js` (#657 R11) — single authoritative spawn-env builder reading (DB settings + checkbox state + `auth.json` mode) and returning env for `child_process.spawn`. Mock tests: **SP-MK-01..06** — every (key present/absent × checkbox checked/unchecked × auth.json oauth/apikey/none) combination → expected env output.
+- `src/auth/codex-config.js` (#657 R12 atomic toggle) — per-session mutex, `auth.json.bak` on disk + atomic restore (tmp+fsync+rename). Mock tests: **CC-MK-01..12** — toggle CHECK→UNCHECK, UNCHECK→CHECK, invalid state (key empty + checkbox checked), each step's rollback path with fault injection, concurrent-save mutex behavior, `.bak` atomic restore correctness.
+- `src/keepalive/codex-oauth.js` (#657 R13 OAuth refresh) — OpenAI OAuth refresh loop, atomic `auth.json` rewrite, `invalid_grant` banner emit via State Engine. Mock tests: **CO-MK-01..08** — refresh happy path, 5xx backoff with banner suppression until 3 consecutive failures, `invalid_grant` banner + scheduling-stop, fresh-`/login`-detection (auth.json mtime change) resume.
+
+**Modified server modules:**
+
+- `src/qdrant-sync.js` — `syncFileToCollection` mtime shortcut (R7 / mirror `syncSessionFile`). Mock tests: **QS-MK-01..03** — mtime hit → 0 hash+embed, mtime miss → one cycle, truncate/rotate detection.
+- `src/sessions.js` + `src/routes/projects.js` + `src/routes/sessions.js` + `src/watchers.js` + `src/keepalive.js` + `src/mcp-tools.js` — every mutation source per the §6.1.1 table (R5) calls `stateEngine.updateSession(id, partialFields)`. Mock test: **ME-MK-01..09** — one assertion per mutation-source row covering the §6.1.1 enumeration.
+- `src/routes/settings.js` — Codex section invokes `auth/codex-config.js` toggle on key/checkbox change; returns inline error on failure; migration-marker logic per R20 (DB key `codex_auth_migration_v1_seen`). Mock tests: **CS-MK-01..06** — happy save, save with toggle fault, migration-marker first-save behavior.
+
+**Live tests (Layer 2, deployed infrastructure):**
+
+20 scenarios (10 #651 per design §9 + 10 #657 per design §13) parameterized × {claude, gemini, codex} except scenario 7 (qdrant mtime, CLI-agnostic). Files:
+
+- `tests/live/state-engine-live.test.js` — **STATE-LIVE-01..10** — M5 cold-load smoke (p95 ≤ 30s / p50 ≤ 10s at 283 sessions per R4), status-bar tab-switch + WS-close + Gemini/Codex model-name, reconnect storm under N concurrent tabs, sidebar timestamp freshness, qdrant `syncFileToCollection` mtime gate, reconnect hydration without poll-tail-wait, idle wake-up budget < 1 fetch/min/tab, external-fault coverage (R31 — current-behavior-preserved cite).
+- `tests/live/codex-auth-live.test.js` — **AUTH-LIVE-01..10** — fresh-install OAuth path, fresh-install API-key path, toggle CHECK→UNCHECK / UNCHECK→CHECK on existing installs, invalid-state guard (API reject + UI disable), atomic rollback under fault injection, stale-auth indicator across N Codex tabs (cleared on session restart per R18), OAuth keepalive happy + `invalid_grant` banner, **#652 regression** (Codex SMOKE-CHAT-01 with checkbox unchecked → response contains "56", no `Quota exceeded`).
+- `tests/live/perf-live.test.js` — **PERF-LIVE-01..04** — cold-load p95/p50 percentile measurement, idle wake-up budget assertion, memory cap probe (R34 — snapshot fits in bound under N session counts), dispatcher precedence under WS-push + tab-switch + onclose same tick (R33).
+
+**REQ-001 per-module compliance (R25 Codex r2 MODIFY):** Each new module's mock tests + structured logging + exception handling + idempotency + fail-fast checks tracked in `docs/req-001-compliance-ms-01-stabilization.md` (committed at stage-1 close). Per-commit message references the corresponding checklist row.
+
+**Coverage budget:** Mock ≥85% (per project standard). Live + UI = 100% (per memory `feedback_coverage_gate`).
+
 **Reviewed by (R1):** Claude (Sonnet 4.6), Gemini, Grok, GPT
 **Reviewed by (R2):** Claude (Sonnet 4.6), Gemini, Grok, GPT
 **Review disposition:** R1 incorporated into Revision 2.0/3.0; R2 incorporated into Revision 4.0; see Appendix A and Appendix B
@@ -2461,6 +2494,9 @@ Single source of truth. Updated on every write/run. One row per scenario.
 | WS-09 | Mock + Live | tests/mock/ws-terminal.test.js, tests/live/ws-terminal.test.js | Not started | - | Not run | |
 | WS-10 | Mock | tests/mock/ws-terminal.test.js | Not started | - | Not run | |
 | WS-11 | Mock | tests/mock/ws-terminal.test.js | Not started | - | Not run | |
+| WS-12 | Mock | tests/mock/ws-terminal.test.js | Written | - | Not run | #483 — no `initialDims` falls back to hardcoded 120×40 and skips pre-resize |
+| WS-13 | Mock | tests/mock/ws-terminal.test.js | Written | - | Not run | #483 — with `initialDims`, tmux `resize-window` fires BEFORE capture and PTY spawns at those dims |
+| WS-14 | Mock | tests/mock/ws-terminal.test.js | Written | - | Not run | #483 — `resize-window` failure is non-fatal (capture + PTY still proceed) |
 
 ### 15.12 Authentication & Keepalive
 
@@ -2903,7 +2939,41 @@ QRM-01..15: REMOVED — quorum.js deleted.
 | AUTH-ANSI-02 | Mock | tests/mock/auth-parsing.test.js | Not started | - | Not run | |
 | AUTH-ANSI-03 | Mock | tests/mock/auth-parsing.test.js | Not started | - | Not run | |
 
-### 15.37 Fresh-Container Checks
+### 15.37 Frontend Utility Helpers (`public/js/util.js`)
+
+The pure helpers exported from `public/js/util.js` are unit-testable as mocks under `tests/mock/util.test.js` (no DOM, no fetch unless stubbed). Existing UTL-01..07 cover the HTML escapers; milestone 01-stabilization adds two new helpers.
+
+| ID | Layer | Test File | Status | Last Run | Result | Notes |
+|----|-------|-----------|--------|----------|--------|-------|
+| UTL-01..07 | Mock | tests/mock/util.test.js | Written | - | Not run | `escapeHtml`, `escapeAttr` HTML-escaping suite (pre-existing) |
+| UTL-08 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` returns first successful response without retrying |
+| UTL-09 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` retries on `TypeError` and succeeds before exhaustion |
+| UTL-10 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` throws after exhausting all attempts |
+| UTL-11 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` does NOT retry on HTTP 5xx (response returned, not thrown) |
+| UTL-12 | Mock | tests/mock/util.test.js | Written | - | Not run | #564 — `fetchWithRetry` honors custom `attempts`/`backoffMs` settings |
+| UTL-13 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` drop-before-target reorders correctly (CLI tabs) |
+| UTL-14 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` drop-after-target reorders correctly (file tabs) |
+| UTL-15 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` drop on empty bar (no `targetTabId`) appends to end |
+| UTL-16 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` drop on self is a no-op |
+| UTL-17 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` dragged id not in `currentOrder` is inserted relative to target |
+| UTL-18 | Mock | tests/mock/util.test.js | Written | - | Not run | #522 — `computeReorderedTabOrder` handles null/empty `currentOrder` |
+
+### 15.38 Milestone 01-stabilization MCP-tool regressions
+
+| ID | Layer | Test File | Status | Last Run | Result | Notes |
+|----|-------|-----------|--------|----------|--------|-------|
+| REG-META-04-mock | Mock | tests/mock/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` returns full session metadata after write (read-after-write) |
+| REG-META-04-mock-404 | Mock | tests/mock/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` 404s on missing session (read-after-write contract) |
+| REG-META-04-live-claude | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` per-CLI parity, claude variant (notes/name reflected in response) |
+| REG-META-04-live-gemini | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` per-CLI parity, gemini variant |
+| REG-META-04-live-codex | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #198 — `session_config` per-CLI parity, codex variant |
+| MCP-EXPORT-EMPTY-mock | Mock | tests/mock/mcp-tools.test.js | Written | - | Not run | #268 — `session_export` empty-transcript shape on fresh Claude session |
+| MCP-EXPORT-EMPTY-mock-404 | Mock | tests/mock/mcp-tools.test.js | Written | - | Not run | #268 — `session_export` 404s on truly-invalid `session_id` (Case B preserved) |
+| MCP-EXPORT-EMPTY-live | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #268 — fresh Claude session returns `{format, content:'', session_id, note:'no transcript'}` |
+| MCP-EXPORT-INVALID-live | Live | tests/live/mcp-tools.test.js | Written | - | Not run | #268 — invalid `session_id` still 404s (Case B preserved) |
+| CODEX-SEED-275 | Live | tests/live/issue-275-codex-role-seed.test.js | Written | - | Not run | #275 — codex role-seed Phase 1 completes within bounded time via workbench HTTP path |
+
+### 15.39 Fresh-Container Checks
 
 | ID | Layer | Test File | Status | Last Run | Result | Notes |
 |----|-------|-----------|--------|----------|--------|-------|
@@ -3088,7 +3158,7 @@ Gate A must pass before Gate B and C are attempted. Gate B and Gate C run agains
 | Claude H-1 | SRV-05 "test endpoint" | Removed; child process only |
 | Claude H-2 | ENG-06/07 manual gate undefined | Added checklist, reviewer procedure, sign-off |
 | Claude H-3 | No CI enforcement | Added §18 |
-| Claude H-4 | prime-test-session.js self-test | Added UTIL-01/02 (§3.7) |
+| Claude H-4 | prime-test-session.js self-test | ~~Added UTIL-01/02 (§3.7)~~ — REMOVED in #320 (Phase 0); `scripts/prime-test-session.js`, UTIL-01/02, and §3.7 were all retired together. |
 | Claude H-5 | No concurrent write test | Added DB-12, RTE-01 |
 | Claude M-1 | MCS stdio methodology | Added §3.6 |
 | Claude M-3 | BRW-01 console error unspecified | Added console capture spec in §12.3 |
@@ -3146,7 +3216,7 @@ Gate A must pass before Gate B and C are attempted. Gate B and Gate C run agains
 | Claude MIN-01 | AUTH-ANSI-01..03 missing from traceability | Added to §15.36 |
 | Claude MIN-02 | `shared-state.js` not addressed | Added to §14.1 exclusions with justification |
 | Claude MIN-04 | Screenshot capture failure-only | Changed §3.5 step 9 to capture every browser test |
-| Claude MIN-05 | `prime-test-session.js` path unspecified | Added path and invocation detail to §3.3 |
+| Claude MIN-05 | `prime-test-session.js` path unspecified | ~~Added path and invocation detail to §3.3~~ — REMOVED in #320 (Phase 0); the §3.3 priming guidance and the script itself were retired with smart-compaction (test plan v7.0). |
 | Claude MIN-06 | §4.2 references §6.2 instead of scenario ID | Replaced with SES-01 reference |
 | Claude MIN-07 | ENT-02, 04, 06, 07, 08, 10 lack §5 detail | Added scenario detail in §5.26 |
 | Claude MIN-08 | ENT-12 mechanism unspecified | Added execution method in §5.26 |
@@ -3209,7 +3279,7 @@ Gate A must pass before Gate B and C are attempted. Gate B and Gate C run agains
 | Gemini | `lockedAppend` dead-code trap | Added implementation note to §14.1 warning test authors |
 | Gemini | Playwright xterm.js buffer extraction | Added fixture entry in §3.4 with correct extraction method |
 | Gemini | Host vs container tmux commands | Fixed §9.4 to use `docker exec` prefix |
-| Gemini | `prime-test-session.js` automation + append mode | Updated §3.3 to require programmatic execution and `--append` mode |
+| Gemini | `prime-test-session.js` automation + append mode | ~~Updated §3.3 to require programmatic execution and `--append` mode~~ — REMOVED in #320 (Phase 0); the script and §3.3 priming guidance no longer exist. |
 | Gemini | WAT-13 V8 crash risk | Covered by existing scenario; test author warned via WAT-13 description |
 | GPT/Grok | ENT-12 brittle tmux binary mutation | Changed to PATH override method in §5.26 |
 | GPT/Grok | Watcher timing tolerance | Added tolerance window note in §3.5 |

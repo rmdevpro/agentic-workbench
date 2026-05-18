@@ -33,8 +33,24 @@ export function connectTab(tabId) {
   renderTabs();
   tabDbg('connectTab:opening', { tabId, tmux: tab.tmux });
 
+  // #483: pass the xterm's actual dims to the server in the WS URL query
+  // string. The server uses these to resize the tmux pane BEFORE capturing
+  // scrollback, eliminating the race where the capture is taken at the
+  // pane's old (possibly stale) cols width and then rendered at a different
+  // xterm cols width — that mismatch is what produced the "progressive
+  // right-indent" + reshuffle artifact in #483. Falls back to no query if
+  // proposeDimensions() isn't ready (defensive — the server then keeps its
+  // historical 120x40 hardcoded default which preserves prior behavior).
+  let dimsQuery = '';
+  try {
+    const dims = tab.fitAddon && tab.fitAddon.proposeDimensions && tab.fitAddon.proposeDimensions();
+    if (dims && Number.isFinite(dims.cols) && Number.isFinite(dims.rows) && dims.cols > 0 && dims.rows > 0) {
+      dimsQuery = `?cols=${dims.cols}&rows=${dims.rows}`;
+    }
+  } catch { /* fitAddon not ready — server falls back to default */ }
+
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  const ws = new WebSocket(`${proto}//${location.host}/ws/${tab.tmux}`);
+  const ws = new WebSocket(`${proto}//${location.host}/ws/${tab.tmux}${dimsQuery}`);
   ws.binaryType = 'arraybuffer';
   tab.ws = ws;
 
@@ -152,6 +168,13 @@ export function connectTab(tabId) {
     tab.status = 'disconnected';
     if (tab.heartbeat) { clearInterval(tab.heartbeat); tab.heartbeat = null; }
     renderTabs();
+    // #596: refresh status bar so the connection indicator transitions to the
+    // disconnected visual state. Pre-fix, `tab.status` flipped in memory and
+    // renderTabs() updated the tab badge, but the bottom status-bar's
+    // `${tab.status}` value (set in updateStatusBar) stayed stale at
+    // 'connected'. Symmetric with ws.onopen which already calls
+    // _updateStatusBarRef.
+    _updateStatusBarRef && _updateStatusBarRef();
 
     if (tabs.has(tabId) && !tab.noReconnect) {
       tab.reconnectTimer = setTimeout(() => {
@@ -161,7 +184,13 @@ export function connectTab(tabId) {
     }
   };
 
-  ws.onerror = (ev) => { tabDbg('ws:error', { tabId, tmux: tab.tmux }); tab.status = 'disconnected'; renderTabs(); };
+  ws.onerror = (ev) => {
+    tabDbg('ws:error', { tabId, tmux: tab.tmux });
+    tab.status = 'disconnected';
+    renderTabs();
+    // #596: same status-bar refresh symmetry as ws.onclose.
+    _updateStatusBarRef && _updateStatusBarRef();
+  };
 }
 
 export function createTerminalTab(tabId, tmuxSession, name, project, cliType, targetPanel, targetAreaId) {

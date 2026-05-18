@@ -3,7 +3,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const { get, post } = require('../helpers/http-client');
-const { resetBaseline } = require('../helpers/reset-state');
+const { resetBaseline, dockerExec } = require('../helpers/reset-state');
 const { queryCount } = require('../helpers/db-query');
 
 test('MCP-01: GET /api/mcp/tools lists the flat tool catalog', async () => {
@@ -81,3 +81,103 @@ test('MCP unknown tool returns 404', async () => {
   const r = await post('/api/mcp/call', { tool: 'nonexistent_tool', args: {} });
   assert.equal(r.status, 404);
 });
+
+// #268: session_export on a freshly-created Claude session (row in DB but
+// JSONL transcript file not yet written) used to throw `ToolError(404)`;
+// now returns an empty-transcript shape that distinguishes "no messages
+// yet" from "session never existed". Direct DB insert via dockerExec/sqlite3
+// is used so the assertion targets the exact `ENOENT-on-readFileSync`
+// branch without the Claude standby-hint side effect that POST /api/sessions
+// would trigger.
+const { dockerExec: _dockerExec } = require('../helpers/reset-state');
+test('#268: session_export on fresh Claude session returns empty-transcript shape', async () => {
+  await resetBaseline();
+  const proj = 'issue268_proj';
+  _dockerExec(`mkdir -p /data/workspace/${proj}`);
+  await post('/api/projects', { path: `/data/workspace/${proj}`, name: proj });
+  const sid = 'live-268-fresh-claude';
+  // Insert a Claude session row directly so the JSONL transcript file is
+  // guaranteed absent.
+  _dockerExec(
+    `sqlite3 /data/.workbench/workbench.db ` +
+    `"INSERT INTO sessions(id, project_id, name, cli_type) ` +
+    `VALUES('${sid}', (SELECT id FROM projects WHERE name='${proj}'), 'fresh-claude', 'claude');"`,
+  );
+
+  try {
+    const r = await post('/api/mcp/call', {
+      tool: 'session_export',
+      args: { session_id: sid },
+    });
+    assert.equal(r.status, 200, `expected 200; got ${r.status}: ${JSON.stringify(r.data)}`);
+    const result = r.data.result;
+    assert.equal(result.format, 'jsonl', `format must be 'jsonl'; got ${result.format}`);
+    assert.equal(result.content, '', `content must be empty string; got ${JSON.stringify(result.content)}`);
+    assert.equal(result.session_id, sid, `session_id must echo arg; got ${result.session_id}`);
+    assert.equal(result.note, 'no transcript', `note must be 'no transcript'; got ${result.note}`);
+    assert.ok(result.path && result.path.endsWith('.jsonl'), `path must end with .jsonl; got ${result.path}`);
+  } finally {
+    _dockerExec(`sqlite3 /data/.workbench/workbench.db "DELETE FROM sessions WHERE id='${sid}';"`);
+  }
+});
+
+test('#268: session_export 404s on truly-invalid session_id (Case B preserved)', async () => {
+  const r = await post('/api/mcp/call', {
+    tool: 'session_export',
+    args: { session_id: 'definitely-not-a-real-268-live-session-id' },
+  });
+  assert.equal(r.status, 404, `expected 404; got ${r.status}: ${JSON.stringify(r.data)}`);
+  assert.match(r.data.error || '', /session not found/i);
+});
+
+// #198 / REG-META-04: session_config used to return `{saved:true}` only. The
+// fix makes it read-after-write via getSessionInfo (cache invalidated first)
+// and return the merged metadata. Three variants — one per cli_type — verify
+// per-CLI parity through the same MCP call path.
+async function _seedProjectAndSession(projName, sessId, sessName, cliType) {
+  // POST /api/projects with a local path requires the directory to already
+  // exist on disk (src/routes/projects.js:193-198 — stat() fails with
+  // ENOENT → 404 "Path does not exist"). dockerExec runs inside the test
+  // container so this creates the dir at /data/workspace/<projName> on the
+  // sandbox's isolated /data volume. Same pattern as the #268 + #275 tests.
+  dockerExec(`mkdir -p /data/workspace/${projName}`);
+  await post('/api/projects', { path: `/data/workspace/${projName}`, name: projName });
+  // POST /api/sessions inserts the DB row synchronously before launching
+  // the CLI via tmuxCreateCLIAsync, so session_list returns the row even
+  // when the CLI later dies (e.g., real gemini with no DNS in the sandbox).
+  // We rely on that — neither real CLI auth nor a JSONL appearing is
+  // required for session_config to operate on the row.
+  await post('/api/sessions', { project: projName, name: sessName, prompt: sessName, cli_type: cliType });
+  // Resolve the actual session_id from session_list (live CLIs assign their
+  // own IDs; the mock-style "use a fixed sessId" doesn't apply).
+  const r = await post('/api/mcp/call', { tool: 'session_list', args: { project: projName } });
+  const sessions = r.data?.result?.sessions || [];
+  const match = sessions.filter(s => s.cli_type === cliType).pop();
+  // session_list returns each row keyed `session_id` (src/mcp-tools.js:319),
+  // not `id` — alignment locked in commit a5fb405.
+  return match?.session_id || sessId;
+}
+
+for (const cliType of ['claude', 'gemini', 'codex']) {
+  test(`#198 REG-META-04 (${cliType}): session_config returns full metadata after rename, not just {saved:true}`, async () => {
+    await resetBaseline();
+    const projName = `issue198_${cliType}_proj`;
+    const id = await _seedProjectAndSession(projName, null, `198-${cliType}`, cliType);
+    assert.ok(id, `failed to seed/resolve ${cliType} session in ${projName}`);
+
+    // Rename via session_config and assert the returned shape carries the
+    // new name + cli_type + state (post-write, not stale cache).
+    const r = await post('/api/mcp/call', {
+      tool: 'session_config',
+      args: { session_id: id, name: `198-${cliType}-renamed`, notes: 'REG-META-04 live test' },
+    });
+    assert.equal(r.status, 200, `${cliType} session_config status: ${r.status}: ${JSON.stringify(r.data)}`);
+    const result = r.data.result;
+    assert.equal(result.saved, true, `${cliType}: saved:true must be preserved`);
+    assert.equal(result.id, id, `${cliType}: id must echo the session_id; got ${result.id}`);
+    assert.equal(result.cli_type, cliType, `${cliType}: cli_type mismatch; got ${result.cli_type}`);
+    assert.equal(result.name, `198-${cliType}-renamed`, `${cliType}: name must reflect the rename; got ${result.name}`);
+    assert.equal(result.notes, 'REG-META-04 live test', `${cliType}: notes must reflect the write; got ${result.notes}`);
+    assert.ok(typeof result.state === 'string', `${cliType}: state must be a string; got ${typeof result.state}`);
+  });
+}

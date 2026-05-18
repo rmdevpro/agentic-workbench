@@ -37,3 +37,66 @@ test('WS-02/03: bidirectional terminal flow', async () => {
   );
   c.close();
 });
+
+// #643: the #483 fix changes the WS connection lifecycle to issue
+// `tmux resize-window` to the client's reported xterm dims BEFORE
+// `tmuxCaptureScrollback` runs, so the captured bytes encode the layout at
+// the client's actual width. Mock WS-13 pins the order (resize-call index
+// strictly less than capture-call index). This live test pins the behavioral
+// outcome at the live integration surface: WS connect with ?cols=X&rows=Y
+// must result in the tmux pane being at those dims by the time the capture
+// fires. Both the early resize and the subsequent PTY attach put the pane
+// at the requested dims, so post-connect dims matching is a necessary
+// condition for the fix; without resize-window, the captured-then-replayed
+// scrollback would encode the pre-resize 200x50 layout (the original bug).
+test('WS-04: WS connect with ?cols=X&rows=Y resizes tmux pane (#483 resize-before-capture)', async () => {
+  await resetBaseline();
+  dockerExec('mkdir -p /data/workspace/ws_resize_proj');
+  await post('/api/projects', { path: '/data/workspace/ws_resize_proj', name: 'ws_resize_proj' });
+  const r = await post('/api/terminals', { project: 'ws_resize_proj' });
+  assert.equal(r.status, 200, `Terminal creation failed: ${JSON.stringify(r.data)}`);
+  const tmuxSess = r.data.tmux;
+
+  // Wait for tmux session to register so display-message can query it.
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  // Sanity-check the initial pane is at the new-session default 200x50
+  // (per src/safe-exec.js tmuxCreateCLI / tmuxCreateCLIAsync). This anchors
+  // the post-connect assertion below — without it, "post is 180x60" could
+  // be a coincidence if the default ever changed.
+  const dimsInit = dockerExec(
+    `tmux display-message -t ${tmuxSess} -p '#{window_width}x#{window_height}'`,
+  );
+  assert.equal(
+    dimsInit,
+    '200x50',
+    `pre-WS-connect tmux pane must be at 200x50 default; got '${dimsInit}'`,
+  );
+
+  // Connect WS with non-default cols/rows. Per #483: server's handleUpgrade
+  // parses ?cols=X&rows=Y → initialDims; handleTerminalConnection issues
+  // `tmux resize-window` BEFORE tmuxCaptureScrollback, then spawns the PTY
+  // at the same dims. The first WS message after open is the captured
+  // scrollback bytes.
+  const c = await connectWs(`/ws/${tmuxSess}?cols=180&rows=60`);
+  // Allow the resize → capture → PTY-attach sequence to finish before we
+  // query tmux dims.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+
+  const dimsAfter = dockerExec(
+    `tmux display-message -t ${tmuxSess} -p '#{window_width}x#{window_height}'`,
+  );
+  assert.equal(
+    dimsAfter,
+    '180x60',
+    `post-WS-connect tmux pane must reflect ?cols=180&rows=60; got '${dimsAfter}'`,
+  );
+
+  // tmuxCaptureScrollback runs after the resize; its bytes are sent as a WS
+  // message. The capture may be empty if the bash prompt hasn't rendered
+  // yet, but the WS itself must be alive and accepting messages — the
+  // ws.onmessage handler proves the bridge survived the resize step.
+  assert.ok(c.ws.readyState === 1, `WS readyState must be OPEN(1) after connect; got ${c.ws.readyState}`);
+
+  c.close();
+});

@@ -9,7 +9,7 @@ import {
   _settingsCache, setSettingsCache, db_getSetting,
   REFRESH_MS, TERM_THEME, setFilter,
   _lastClickedProjectPath, sessionSortBy, setSessionSortBy,
-  _appendToOrder,
+  _appendToOrder, tabOrders,
 } from './state.js';
 
 import {
@@ -1186,6 +1186,19 @@ async function pickerSelect(overlayId) {
         body: JSON.stringify({ program_id: window._pendingProgramId }),
       }).catch(() => {});
     }
+    // #592: auto-expand the destination program so the new project is visible
+    // immediately. Pre-fix the program kept its prior collapsed state and the
+    // user had to manually toggle the header to see their just-created project
+    // (a confusing "did Save work?" UX). The CSS rule
+    // `.program-header.collapsed + .program-children { display: none; }` was
+    // hiding the new child until the manual toggle. Match the existing
+    // pattern from program-create at line 245 (`expandedPrograms.add(...)
+    // + persist`). For `_pendingProgramId == null` (Add Project from the
+    // Unassigned context) the `__unassigned__` virtual program is the
+    // bucket; auto-expand that too.
+    const expandKey = window._pendingProgramId == null ? '__unassigned__' : String(window._pendingProgramId);
+    expandedPrograms.add(expandKey);
+    try { localStorage.setItem('expandedPrograms', JSON.stringify([...expandedPrograms])); } catch {}
     window._pendingProgramId = null;
     document.getElementById(overlayId).remove();
     loadState();
@@ -2008,11 +2021,175 @@ _wireDropZones();
 initTaskEventListeners();
 initIssuePickerListeners();
 
-loadState();
+// #587: self-rescheduling loadState loop. Pre-fix the baseline used a fixed
+// `setInterval(loadState, REFRESH_MS)` that fired regardless of whether a
+// WS push had ALREADY triggered a loadState in the last few seconds — the
+// baseline tick ~8s after a WS-driven loadState repeated work that just
+// happened. The new pattern reschedules from the END of each loadState
+// invocation, so the next baseline tick is always REFRESH_MS after the
+// most-recent loadState (whatever caused it). The WS handler in
+// terminal.js:95 calls `window._loadStateRef()` → `scheduleLoadState` →
+// resets the baseline timer naturally.
+let _loadStateTimer = null;
+async function scheduleLoadState() {
+  if (_loadStateTimer) { clearTimeout(_loadStateTimer); _loadStateTimer = null; }
+  try { await loadState(); }
+  finally {
+    _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+  }
+}
+
+// Wire WS-triggered loadState through the same rescheduling helper so a WS
+// push (terminal.js:111 token_update / line 122 settings_update) resets the
+// baseline timer for free. Pre-fix `_loadStateRef` was referenced but never
+// assigned, so WS pushes silently no-op'd and the baseline 10s tick ran
+// solo regardless. Now both paths share the same self-rescheduling entry.
+window._loadStateRef = scheduleLoadState;
+
+// #597: restore previously-open CLI session tabs from persisted `tabOrders`
+// after the initial /api/state populates projectState. tabOrders is already
+// localStorage-backed (state.js:14-21); pre-fix, no init pass iterated it
+// to actually re-open the tabs, so the tab bar reset to empty on every
+// reload. File tabs are intentionally NOT restored — they're keyed by an
+// ephemeral `file-<timestamp>` id with no persisted filePath; restoring
+// them needs a separate "file tabs panel" feature beyond this fix's scope.
+async function restoreOpenTabsFromOrder() {
+  const allIds = [...(tabOrders.primary || []), ...(tabOrders.side || [])];
+  if (allIds.length === 0) return;
+  const lookup = new Map();
+  for (const p of projectState) {
+    for (const s of p.sessions) lookup.set(s.id, { session: s, project: p.name });
+  }
+  for (const id of allIds) {
+    if (id.startsWith('file-') || id.startsWith('new_') || id.startsWith('t_')) continue;
+    if (tabs.has(id)) continue;
+    const entry = lookup.get(id);
+    if (!entry) continue; // session deleted upstream; leave order entry as-is (harmless)
+    openSession(entry.session, entry.project);
+  }
+}
+
+// Initial load + tab-restore, THEN engage the State Engine WS subscription
+// or fall back to the legacy /api/state poll (R1: legacy_polling_enabled
+// flag for incident-response rollback).
+//
+// #651 commit 12: this is the load-relief commit. The periodic
+// `setTimeout(scheduleLoadState, REFRESH_MS)` (10s baseline poll) and the
+// per-second `setInterval(checkAuth, 60000)` / `setInterval(checkErrors,
+// 60000)` are replaced by:
+//
+//   1. WS state subscription via window.EngineState — snapshot on connect,
+//      diff push per mutation, no polling. loadState() is still callable
+//      explicitly (button presses, post-create refresh).
+//
+//   2. window.Timers scheduler — coalesces checkAuth + checkErrors into a
+//      single bucketed tick. visibilitychange-aware (hidden tab → skip).
+//
+//   3. window.StatusBar — central dispatcher reading the engine snapshot;
+//      replaces the scattered DOM writes that used to live in app.js +
+//      terminal.js + tabs.js + oauth-detector.js.
+//
+// The legacy_polling_enabled flag (localStorage key, defaults to false)
+// reverts all three to the pre-commit polling behaviour for safe rollback.
+
+const _legacyPollingEnabled = (() => {
+  try { return localStorage.getItem('legacy_polling_enabled') === '1'; }
+  catch { return false; }
+})();
+
+(async () => {
+  await loadState();
+  restoreOpenTabsFromOrder();
+
+  if (_legacyPollingEnabled) {
+    // Legacy cutover-safety path: original setInterval-based polling.
+    // eslint-disable-next-line no-console
+    console.warn('[#651] legacy_polling_enabled=1 — using pre-commit-12 polling');
+    _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+    setTimeout(checkAuth, 1000);
+    setInterval(checkAuth, 60000);
+    setTimeout(checkErrors, 2000);
+    setInterval(checkErrors, 60000);
+    return;
+  }
+
+  // ── State Engine WS subscription ─────────────────────────────────────────
+  // engine-state.js (UMD) exposes window.EngineState.createEngineStateClient.
+  // We subscribe and treat snapshot/diff events as "state refreshed"; the
+  // existing loadState() pipeline is still the source of session-meta
+  // enrichment (timestamps from session_meta), so on engine pushes we
+  // coalesce a single loadState() call.
+  let _wsRefreshTimer = null;
+  function _coalescedRefresh() {
+    if (_wsRefreshTimer) return;
+    _wsRefreshTimer = setTimeout(() => {
+      _wsRefreshTimer = null;
+      try { loadState(); }
+      catch (err) { console.warn('[#651] WS-triggered loadState failed', err); }
+    }, 250);
+  }
+
+  let _engineClient = null;
+  let _engineWsState = 'connecting';
+  try {
+    if (window.EngineState && window.EngineState.createEngineStateClient) {
+      _engineClient = window.EngineState.createEngineStateClient({
+        onConnect: () => { _engineWsState = 'open'; },
+        onDisconnect: () => { _engineWsState = 'closed'; },
+      });
+      _engineClient.subscribe((event) => {
+        if (event.type === 'snapshot' || event.type === 'diff') {
+          _coalescedRefresh();
+        }
+      });
+      _engineClient.connect();
+      window._engineClient = _engineClient; // expose for debug + tests
+    } else {
+      // engine-state.js not loaded → behave like legacy, but only for the
+      // session-state path. checkAuth/checkErrors still use the scheduler.
+      console.warn('[#651] window.EngineState missing; loadState polling fallback');
+      _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+    }
+  } catch (err) {
+    console.warn('[#651] engine-state client init failed; falling back', err);
+    _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+  }
+
+  // ── Unified scheduler for checkAuth + checkErrors ────────────────────────
+  if (window.Timers && window.Timers.createTimers) {
+    const _timers = window.Timers.createTimers({
+      isVisible: () => document.visibilityState !== 'hidden',
+    });
+    _timers.register('checkAuth', 60000, () => { checkAuth(); });
+    _timers.register('checkErrors', 60000, () => { checkErrors(); });
+    // First fire after a short delay (mirror the legacy 1s/2s offset).
+    setTimeout(checkAuth, 1000);
+    setTimeout(checkErrors, 2000);
+    window._timers = _timers; // expose for debug
+  } else {
+    setTimeout(checkAuth, 1000);
+    setInterval(checkAuth, 60000);
+    setTimeout(checkErrors, 2000);
+    setInterval(checkErrors, 60000);
+  }
+
+  // ── Status-bar dispatcher ────────────────────────────────────────────────
+  if (_engineClient && window.StatusBar && window.StatusBar.createStatusBar) {
+    const statusBarEl = document.getElementById('status-bar');
+    if (statusBarEl) {
+      try {
+        window._statusBar = window.StatusBar.createStatusBar({
+          el: statusBarEl,
+          getState: () => _engineClient.getState(),
+          subscribe: _engineClient.subscribe,
+          getActiveTabId: () => activeTabId,
+          getWsState: () => _engineWsState,
+        });
+      } catch (err) {
+        console.warn('[#651] status-bar init failed', err);
+      }
+    }
+  }
+})();
 loadFiles();
-setInterval(loadState, REFRESH_MS);
-setTimeout(checkAuth, 1000);
-setInterval(checkAuth, 60000);
-setTimeout(checkErrors, 2000);
-setInterval(checkErrors, 60000);
 loadAppearanceSettings();

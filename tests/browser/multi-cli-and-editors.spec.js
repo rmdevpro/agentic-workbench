@@ -501,7 +501,16 @@ describe('Multi-CLI sessions, editors, and task panel (browser)', () => {
     await apiPost('/api/mcp/call', {
       tool: 'task_add', args: { project_name: 'wb-seed', title: 'inline-test' },
     });
-    await page.evaluate(() => { switchPanel('tasks'); expandedTaskFolders.add('/data/workspace'); expandedTaskFolders.add('/data/workspace/wb-seed'); loadTaskTree(); });
+    // #611: pre-F0 spec used `expandedTaskFolders.add(<folder-path>)` but the
+    // post-F0 task tree is project-keyed (`expandedTaskProjects: Set<project.id>`);
+    // there's no folder layer anymore. Expand via the DOM — clicking a
+    // `.project-row.collapsed` toggles its project id into the live set and
+    // re-renders the tree, which is what the spec actually needed.
+    await page.evaluate(async () => {
+      switchPanel('tasks');
+      await loadTaskTree();
+      document.querySelectorAll('.project-row.collapsed').forEach((r) => r.click());
+    });
     await new Promise(r => setTimeout(r, 2000));
     const before = await page.evaluate(() => {
       const node = document.querySelector('.task-node');
@@ -525,7 +534,11 @@ describe('Multi-CLI sessions, editors, and task panel (browser)', () => {
     const t1 = await apiPost('/api/mcp/call', { tool: 'task_add', args: { project_name: 'wb-seed', title: 'filter-todo' } });
     const t2 = await apiPost('/api/mcp/call', { tool: 'task_add', args: { project_name: 'wb-seed', title: 'filter-done' } });
     await apiPost('/api/mcp/call', { tool: 'task_update', args: { task_id: Number(t2.result.id), status: 'done' } });
-    await page.evaluate(() => { expandedTaskFolders.add('/data/workspace'); expandedTaskFolders.add('/data/workspace/wb-seed'); });
+    // #611: same DOM-based expansion as TASKUX-02 above.
+    await page.evaluate(async () => {
+      await loadTaskTree();
+      document.querySelectorAll('.project-row.collapsed').forEach((r) => r.click());
+    });
 
     // Active filter
     await page.evaluate(() => setTaskFilter('todo'));

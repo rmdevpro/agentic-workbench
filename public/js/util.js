@@ -32,11 +32,72 @@
     return String(s ?? '').replace(/[&<>"']/g, c => HTML_ENTITIES[c]);
   }
 
-  const exports = { escapeHtml, escapeAttr };
+  // #522: pure reorder helper. The drop handler in tabs.js previously inlined
+  // its tabOrders[panel] mutation, mixing array surgery with renderTabs()
+  // side-effects. Extracting the array-surgery half lets us pin the contract
+  // in a Node-side test and gives the drop handler a single call-site that
+  // also handles the previously-missed "drop on empty bar background (no
+  // target tab)" case — that case used to do nothing silently; now it
+  // appends the dragged tab to the end of the order. The function is tab-
+  // type-agnostic (works for CLI and file tabs identically) — the bug
+  // report's "doc tab" framing may turn out to be coincidental.
+  //
+  //   currentOrder: array of tab ids in their current panel order
+  //   draggedId:    id of the tab being dragged
+  //   targetTabId:  id of the tab the drop is over, or null/undefined if the
+  //                 drop landed on bar background (past the last tab)
+  //   dropBefore:   true → insert before target; false → insert after target
+  //
+  // Returns the new order array (does NOT mutate the input).
+  function computeReorderedTabOrder(currentOrder, draggedId, targetTabId, dropBefore) {
+    const withoutDragged = (currentOrder || []).filter(x => x !== draggedId);
+    if (!targetTabId || targetTabId === draggedId) {
+      return [...withoutDragged, draggedId];
+    }
+    const ti = withoutDragged.indexOf(targetTabId);
+    if (ti === -1) return [...withoutDragged, draggedId];
+    const result = [...withoutDragged];
+    result.splice(dropBefore ? ti : ti + 1, 0, draggedId);
+    return result;
+  }
+
+  // #564: short-window retry wrapper around fetch. The bare /api/state fetch
+  // in loadState() previously errored out on a single TypeError ("Failed to
+  // fetch" — transient network/process flake) and never recovered until the
+  // next 10s poll, blowing past SMOKE-PROJ-01 assertion-03's bounded ≤5s
+  // window for "new project appears in sidebar after Save."
+  //
+  // Retry semantics:
+  //  - Retries ONLY on thrown errors (TypeError on network failure).
+  //  - Does NOT retry HTTP 4xx/5xx — those are application-level, not
+  //    transient, and silently retrying would mask real failures.
+  //  - Defaults to 3 attempts (1 initial + 2 retries) with 500ms backoff —
+  //    total worst-case 1.0s before final failure, well inside the 5s bound.
+  //
+  // Caller owns the response (status check, .json() etc.) — this helper is
+  // purely about wrapping `fetch()` itself.
+  async function fetchWithRetry(url, options = {}, { attempts = 3, backoffMs = 500 } = {}) {
+    let lastErr;
+    for (let i = 0; i < attempts; i++) {
+      try {
+        return await fetch(url, options);
+      } catch (err) {
+        lastErr = err;
+        if (i < attempts - 1) {
+          await new Promise(r => setTimeout(r, backoffMs));
+        }
+      }
+    }
+    throw lastErr;
+  }
+
+  const exports = { escapeHtml, escapeAttr, fetchWithRetry, computeReorderedTabOrder };
   if (typeof module !== 'undefined' && module.exports) module.exports = exports;
   else {
     global.escapeHtml = escapeHtml;
     global.escapeAttr = escapeAttr;
+    global.fetchWithRetry = fetchWithRetry;
+    global.computeReorderedTabOrder = computeReorderedTabOrder;
     global.WorkbenchUtil = exports;
   }
 })(typeof window !== 'undefined' ? window : globalThis);

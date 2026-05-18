@@ -28,6 +28,10 @@ async function makeEnv({
   const safe = {
     WORKSPACE: workspace,
     CLAUDE_HOME: claudeHome,
+    // #588: createKeepalive reads `safe.HOME` to compute the Gemini OAuth
+    // creds path (`<HOME>/.gemini/oauth_creds.json`). Without this the
+    // factory throws `path argument must be of type string` at module load.
+    HOME: root,
     claudeExecAsync: async (args) => {
       claudeCalls.push(args);
       if (claudeResponses.length) {

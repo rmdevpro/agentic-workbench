@@ -5,6 +5,32 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const createWatchers = require('../../src/watchers.js');
 
+// #586: mock chokidar lib. Captures every watch() call so tests can assert
+// 1-watcher-per-dir refcounting + invoke add/change handlers manually.
+function makeMockChokidar() {
+  const watchers = [];
+  return {
+    watchers,
+    watch(path /*, opts */) {
+      const w = {
+        _path: path,
+        _closed: false,
+        _handlers: { add: [], change: [], error: [] },
+        on(event, fn) {
+          if (this._handlers[event]) this._handlers[event].push(fn);
+          return this;
+        },
+        close() { this._closed = true; return Promise.resolve(); },
+        emit(event, payload) {
+          (this._handlers[event] || []).forEach((fn) => fn(payload));
+        },
+      };
+      watchers.push(w);
+      return w;
+    },
+  };
+}
+
 function makeEnv(overrides = {}) {
   const watched = new Map(),
     unwatchCalls = [],
@@ -19,6 +45,9 @@ function makeEnv(overrides = {}) {
   global.clearTimeout = (h) => {
     if (h) h.cleared = true;
   };
+  // Keep the fs.watchFile/unwatchFile patches in place because the settings
+  // watchers (startSettingsWatcher / startGeminiSettingsWatcher / startCodexSettingsWatcher)
+  // still use fs.watchFile (smaller blast radius — only 3 file handles total).
   const origW = fs.watchFile,
     origU = fs.unwatchFile;
   fs.watchFile = (p, o, l) => {
@@ -31,6 +60,7 @@ function makeEnv(overrides = {}) {
 
   const ccCalls = [];
   const swc = overrides.sessionWsClients || new Map();
+  const _chokidar = overrides._chokidar || makeMockChokidar();
   const w = createWatchers({
     db: {
       getSessionByPrefix: (p) => overrides.sessionByPrefix?.[p],
@@ -54,6 +84,7 @@ function makeEnv(overrides = {}) {
     tmuxExists: async () => false,
     CLAUDE_HOME: '/tmp/claude',
     logger: { info() {}, warn() {}, error() {}, debug() {} },
+    _chokidar,
   });
 
   return {
@@ -63,6 +94,7 @@ function makeEnv(overrides = {}) {
     timers,
     ccCalls,
     swc,
+    _chokidar,
     cleanup() {
       fs.watchFile = origW;
       fs.unwatchFile = origU;
@@ -82,10 +114,14 @@ test('WAT-03: debounces rapid changes into one callback', async () => {
   });
   try {
     env.w.startJsonlWatcher('wb_abc123');
-    const entry = [...env.watched.values()][0];
-    entry.listener();
-    entry.listener();
-    entry.listener();
+    // #586: one chokidar watcher rooted at the parent dir; we simulate three
+    // rapid `change` events on the routed file path.
+    assert.equal(env._chokidar.watchers.length, 1, 'startJsonlWatcher must register exactly one chokidar watcher');
+    const fw = env._chokidar.watchers[0];
+    const filePath = '/tmp/sessions/abc123.jsonl';
+    fw.emit('change', filePath);
+    fw.emit('change', filePath);
+    fw.emit('change', filePath);
     const active = env.timers.filter((t) => !t.cleared);
     assert.equal(active.length, 1);
     await active[0].fn();
@@ -96,16 +132,17 @@ test('WAT-03: debounces rapid changes into one callback', async () => {
   }
 });
 
-test('WAT-04: stopJsonlWatcher removes watch and timer', () => {
+test('WAT-04: stopJsonlWatcher closes the chokidar watcher when its last session unsubscribes', () => {
   const env = makeEnv({
     sessionByPrefix: { abc: { id: 'abc', project_id: 1 } },
     projectsById: { 1: { id: 1, name: 'p', path: '/tmp' } },
   });
   try {
     env.w.startJsonlWatcher('wb_abc');
-    [...env.watched.values()][0].listener();
+    const fw = env._chokidar.watchers[0];
+    fw.emit('change', '/tmp/sessions/abc.jsonl');
     env.w.stopJsonlWatcher('wb_abc');
-    assert.equal(env.unwatchCalls.length, 1);
+    assert.equal(fw._closed, true, '#586: dir watcher must close when its last session detaches');
     assert.equal(env.timers[0].cleared, true);
   } finally {
     env.cleanup();
@@ -116,9 +153,9 @@ test('WAT: watcher does not start for new_ or t_ sessions', () => {
   const env = makeEnv({ sessionByPrefix: {} });
   try {
     env.w.startJsonlWatcher('wb_new_123');
-    assert.equal(env.watched.size, 0);
+    assert.equal(env._chokidar.watchers.length, 0);
     env.w.startJsonlWatcher('wb_t_456');
-    assert.equal(env.watched.size, 0);
+    assert.equal(env._chokidar.watchers.length, 0);
   } finally {
     env.cleanup();
   }
@@ -128,7 +165,7 @@ test('WAT: watcher does not start when session not in DB', () => {
   const env = makeEnv({ sessionByPrefix: {} });
   try {
     env.w.startJsonlWatcher('wb_unknown');
-    assert.equal(env.watched.size, 0);
+    assert.equal(env._chokidar.watchers.length, 0);
   } finally {
     env.cleanup();
   }
@@ -141,7 +178,7 @@ test('WAT: watcher does not start when project not in DB', () => {
   });
   try {
     env.w.startJsonlWatcher('wb_xyz');
-    assert.equal(env.watched.size, 0, 'Should not watch when project missing');
+    assert.equal(env._chokidar.watchers.length, 0, 'Should not watch when project missing');
   } finally {
     env.cleanup();
   }
@@ -150,9 +187,9 @@ test('WAT: watcher does not start when project not in DB', () => {
 test('WAT: stopJsonlWatcher is idempotent when no watcher exists', () => {
   const env = makeEnv({});
   try {
-    // Should not throw
+    // Should not throw — refcount has nothing to decrement.
     env.w.stopJsonlWatcher('wb_nonexistent');
-    assert.equal(env.unwatchCalls.length, 0);
+    assert.equal(env._chokidar.watchers.length, 0);
   } finally {
     env.cleanup();
   }
@@ -160,13 +197,8 @@ test('WAT: stopJsonlWatcher is idempotent when no watcher exists', () => {
 
 test('WAT: JSONL watcher callback handles ENOENT gracefully', async () => {
   const ws = { readyState: 1, send: () => {} };
-  const env = makeEnv({
-    sessionByPrefix: { err1: { id: 'err1', project_id: 1 } },
-    projectsById: { 1: { id: 1, name: 'p', path: '/tmp' } },
-    sessionWsClients: new Map([['wb_err1', ws]]),
-  });
-  // Override sessionUtils.getTokenUsage to throw ENOENT
-  const _origW = createWatchers;
+  const errors = [];
+  const _chokidar = makeMockChokidar();
   const w2 = createWatchers({
     db: {
       getSessionByPrefix: (p) => ({ err1: { id: 'err1', project_id: 1 } })[p],
@@ -186,19 +218,76 @@ test('WAT: JSONL watcher callback handles ENOENT gracefully', async () => {
     tmuxName: (id) => `wb_${id}`,
     tmuxExists: async () => false,
     CLAUDE_HOME: '/tmp/claude',
-    logger: { info() {}, warn() {}, error() {}, debug() {} },
+    logger: { info() {}, warn() {}, error: (msg) => errors.push(msg), debug() {} },
+    _chokidar,
   });
+  const env = makeEnv({});  // for timer patching
   try {
     w2.startJsonlWatcher('wb_err1');
-    const entry = [...env.watched.values()][0];
-    if (entry) {
-      entry.listener();
+    const fw = _chokidar.watchers[0];
+    if (fw) {
+      fw.emit('change', '/tmp/sessions/err1.jsonl');
       const active = env.timers.filter((t) => !t.cleared);
       if (active.length > 0) {
-        // Should not throw — ENOENT is handled
+        // Should not throw — ENOENT is swallowed by the handler.
         await active[0].fn();
       }
     }
+    assert.equal(errors.length, 0, 'ENOENT must not surface as an error log');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('WAT-586-01: two sessions in the same project share a single chokidar watcher (refcounted)', () => {
+  const env = makeEnv({
+    sessionByPrefix: {
+      a1: { id: 'a1', project_id: 1 },
+      b2: { id: 'b2', project_id: 1 },
+    },
+    projectsById: { 1: { id: 1, name: 'p', path: '/workspace/p' } },
+  });
+  try {
+    env.w.startJsonlWatcher('wb_a1');
+    env.w.startJsonlWatcher('wb_b2');
+    assert.equal(env._chokidar.watchers.length, 1,
+      '#586: 2 sessions in the same project must share 1 chokidar watcher (not spawn 2)');
+    // Detach a1 — watcher must stay open (b2 still subscribed)
+    env.w.stopJsonlWatcher('wb_a1');
+    assert.equal(env._chokidar.watchers[0]._closed, false,
+      '#586: shared watcher must remain open while any session is still subscribed');
+    // Detach b2 — watcher should now close
+    env.w.stopJsonlWatcher('wb_b2');
+    assert.equal(env._chokidar.watchers[0]._closed, true,
+      '#586: shared watcher must close after the last session detaches');
+  } finally {
+    env.cleanup();
+  }
+});
+
+test('WAT-586-02: routes change events to the right session by file path', async () => {
+  const msgsA = []; const msgsB = [];
+  const wsA = { readyState: 1, send: (m) => msgsA.push(JSON.parse(m)) };
+  const wsB = { readyState: 1, send: (m) => msgsB.push(JSON.parse(m)) };
+  const env = makeEnv({
+    sessionByPrefix: {
+      a1: { id: 'a1', project_id: 1 },
+      b2: { id: 'b2', project_id: 1 },
+    },
+    projectsById: { 1: { id: 1, name: 'p', path: '/workspace/p' } },
+    sessionWsClients: new Map([['wb_a1', wsA], ['wb_b2', wsB]]),
+  });
+  try {
+    env.w.startJsonlWatcher('wb_a1');
+    env.w.startJsonlWatcher('wb_b2');
+    const fw = env._chokidar.watchers[0];
+    // Change event on a1's file path — only a1's ws should receive token_update
+    fw.emit('change', '/tmp/sessions/a1.jsonl');
+    const active = env.timers.filter((t) => !t.cleared);
+    assert.equal(active.length, 1, 'only one session\'s handler should be scheduled');
+    await active[0].fn();
+    assert.equal(msgsA.length, 1, 'a1 must receive token_update');
+    assert.equal(msgsB.length, 0, 'b2 must NOT receive token_update for a1\'s change');
   } finally {
     env.cleanup();
   }

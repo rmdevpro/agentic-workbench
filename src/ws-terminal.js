@@ -1,5 +1,40 @@
 'use strict';
 
+// WebSocket terminal: bridges a browser xterm.js tab to a tmux-attached PTY.
+//
+// Connection lifecycle (each WS open follows this ordering — load-bearing for
+// correctness; see #483 + #589):
+//
+//   1. WS upgrade. `src/server.js` `handleUpgrade` validates auth + parses the
+//      URL `?cols=X&rows=Y` query into `initialDims` (or `null` if absent /
+//      invalid), then hands off here via `handleTerminalConnection(ws,
+//      tmuxSession, initialDims)`.
+//   2. `tmuxExists` check. If the session's tmux pane is gone (idle cleanup,
+//      container restart, etc.) and the session id resolves to a workbench
+//      row, auto-respawn via `tmuxCreateCLI` (deduped through
+//      `_respawnsInFlight`). Otherwise send `{type:'error'}` + close.
+//   3. `tmux resize-window` to `initialDims`. tmux reflows pane content to
+//      the new cols × rows BEFORE capture so the captured visual layout
+//      matches what xterm will render it at. Skip when `initialDims` is null
+//      (older clients) — fallback to the historical 120x40 default. Failure
+//      is non-fatal (logged); the subsequent PTY attach resizes tmux on its
+//      own.
+//   4. `tmuxCaptureScrollback` → `ws.send`. The captured pane bytes flow to
+//      the client first so they land in xterm's scrollback above the live
+//      viewport; the PTY's `attach-session` redraws the visible pane on top.
+//   5. `ptySpawn('tmux','attach-session',...)` at `targetCols × targetRows`
+//      (either `initialDims` or 120x40 default). Live PTY ↔ WS forwarding
+//      begins. `_registerPty` stores the handle for graceful shutdown reap.
+//   6. PTY ↔ WS bidirectional forwarding + heartbeat. `ptyProcess.onData → ws.send`
+//      with backpressure pause/resume around `ws.bufferedAmount`. `ws.on('message')`
+//      consumes JSON control frames (`resize`, `ping`) and forwards everything
+//      else to `ptyProcess.write`. Heartbeat ping every `pingIntervalMs`;
+//      terminate on missed pong.
+//
+// Steps 1-3 must precede steps 4-6 — if capture (step 4) runs before resize
+// (step 3), captured bytes encode layout for the wrong width and the user
+// sees the "progressive right-indent + reshuffle" artifact #483 fixed.
+
 const ptyDefault = require('node-pty');
 
 module.exports = function createWsTerminal({
@@ -69,9 +104,9 @@ module.exports = function createWsTerminal({
   // calling tmuxCreateCLI (which would double-spawn or race the existence check).
   const _respawnsInFlight = new Map();
 
-  async function handleTerminalConnection(ws, tmuxSession) {
+  async function handleTerminalConnection(ws, tmuxSession, initialDims = null) {
     tmuxSession = safe.sanitizeTmuxName(tmuxSession);
-    dbgTab('connect:enter', { tmuxSession });
+    dbgTab('connect:enter', { tmuxSession, initialDims });
 
     if (!(await tmuxExists(tmuxSession))) {
       // #157: tab is reconnecting to a session whose tmux pane is gone (idle
@@ -149,12 +184,40 @@ module.exports = function createWsTerminal({
       }
     }
 
-    // #241: replay the tmux pane's scrollback BEFORE attaching the PTY so a
-    // reconnecting browser sees history above the visible viewport. tmux
-    // attach-session only redraws the visible pane on its own; without this
-    // the user loses everything they could previously scroll up to. We send
-    // the captured bytes first so they land in xterm's scrollback, then the
-    // PTY's tmux attach-session redraws the visible pane on top.
+    // #483: resolve the dims that will govern (a) tmux pane size at capture
+    // time, (b) the capture itself, and (c) the spawned PTY's initial dims.
+    // Without these matching the client's xterm cols, the capture bytes
+    // encode visual layout for a different width and re-rendering at the
+    // client width produces the "progressive right-indent + reshuffle"
+    // artifact reported in the bug. Missing initialDims → fall back to the
+    // historical 120x40 default (preserves prior behavior for older clients
+    // that don't send dims).
+    const targetCols = (initialDims && initialDims.cols) || 120;
+    const targetRows = (initialDims && initialDims.rows) || 40;
+
+    // #483: resize the tmux window to the target dims BEFORE capture. tmux
+    // reflows visible buffer content to match; the capture afterwards is at
+    // the correct width. Detached sessions accept resize-window; failure is
+    // non-fatal (PTY attach below will resize regardless).
+    if (initialDims) {
+      try {
+        await safe.tmuxExecAsync(['resize-window', '-t', tmuxSession, '-x', String(targetCols), '-y', String(targetRows)]);
+      } catch (err) {
+        logger.warn('Pre-capture tmux resize-window failed (non-fatal)', {
+          module: 'ws-terminal', tmuxSession, targetCols, targetRows, err: err.message,
+        });
+      }
+    }
+
+    // #241 / #483: replay the tmux pane's scrollback BEFORE attaching the
+    // PTY so a reconnecting browser sees history above the visible viewport.
+    // tmux attach-session only redraws the visible pane on its own; without
+    // this the user loses everything they could previously scroll up to. We
+    // send the captured bytes first so they land in xterm's scrollback,
+    // then the PTY's tmux attach-session redraws the visible pane on top.
+    // Per #483, the pane has been resized to `targetCols x targetRows`
+    // immediately above, so the capture's visual layout matches what
+    // xterm will render it at.
     try {
       const replayLines = config ? config.get('ws.scrollbackReplayLines', 10000) : 10000;
       const captured = safe.tmuxCaptureScrollback(tmuxSession, replayLines);
@@ -173,10 +236,12 @@ module.exports = function createWsTerminal({
     // TODO(async): ERQ-001 §4.1 — if a non-blocking PTY library becomes available, migrate.
     let ptyProcess;
     try {
+      // #483: spawn the PTY at the client's actual dims (or default 120x40)
+      // — was previously hardcoded 120x40 regardless of client width.
       ptyProcess = ptySpawn('tmux', ['attach-session', '-t', tmuxSession], {
         name: 'xterm-256color',
-        cols: 120,
-        rows: 40,
+        cols: targetCols,
+        rows: targetRows,
         env: { ...process.env, TERM: 'xterm-256color', COLORTERM: 'truecolor' },
       });
     } catch (err) {

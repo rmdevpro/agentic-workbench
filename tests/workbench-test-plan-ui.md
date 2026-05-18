@@ -36,9 +36,22 @@ This plan was originally written for a single-CLI (Claude) system with notes, me
 - **Filter/sort dropdowns** — replaced filter buttons
 - **45 MCP tools** — flat names grouped by domain: `file_*` (8), `session_*` (19), `project_*` (11), `task_*` (5), `log_*` (1)
 
----
+### Milestone 01-stabilization additions (2026-05-15)
 
-## 0. Executive Summary
+- **Runbook Section 16 — stage-5 backfill entries.** Four new feature entries (`16.1` through `16.4`) plus four SMOKE/baseline entries (`SMOKE-CHAT-01`, `SMOKE-WS-01`, `SMOKE-NAV-01`, `SMOKE-VEC-01`) added to `tests/workbench-test-runbook.md`. Section 16 covers the UI-consumer surface for milestone 01-stabilization fixes: #198 (session_config rename via sidebar), #483 (terminal scrollback resize-before-capture), #522 (tab reorder drop semantics), #564 (loadState retry on transient `/api/state` failure). Section 16 also baseline-smoke-cascades #252 / #253 / #268 / #275 (no separate UI consumer surface; baseline verifies these).
+- **Canonical xterm input selector — `.xterm-helper-textarea`.** Per commit `874571c`, every runbook entry that types into an xterm pane MUST cite this selector. The previous mix (`canvas[role="presentation"]`, `.xterm-screen`, blind page-level `keyboard.press`) was non-deterministic — only the helper textarea reliably receives synthetic key events under Playwright. Cited at runbook §16.0 Conventions and enforced by stage-5 review.
+
+### Milestone 01-stabilization additions (2026-05-17, ship with #651 + #657)
+
+Two design issues fold into ms-01: **#651** (refresh/sync stack — instant status bar + sidebar updates, State Engine + WS state subscription + central status-bar dispatcher) and **#657** (Codex auth subsystem — checkbox-driven API-key vs OAuth, atomic toggle, OAuth keepalive). See those issues' "Engineer Implementation Plan — Final" for full design + per-commit work order. Round-2 reviewer consensus produced 34 dispositions (R1–R34); UI scope below traces to those.
+
+- **New runbook section: `workbench-ui-runbook.md` Section 17 (post-Section 16).** 10 #651 scenarios (M5 cold-load smoke, status-bar tab switch / WS close / Gemini-Codex model name, reconnect storm, sidebar timestamp freshness, qdrant `syncFileToCollection` mtime gate, reconnect hydration, idle wake-up budget, external-fault coverage) + 10 #657 scenarios (fresh OAuth, fresh API-key, toggle CHECK↔UNCHECK, invalid-state guard, atomic rollback under fault, stale-auth indicator, OAuth keepalive happy + `invalid_grant`, **#652 regression**) — all 20 parameterized × {claude, gemini, codex} except scenario 7 (qdrant mtime, CLI-agnostic). Plus 1 migration-UX entry (R20: irina-class existing-install migration end-to-end).
+- **New client modules (#364 [F0] partial credit):** `public/js/status-bar.js` (F8 central dispatcher per design §6.6 — symmetric across CLIs), `public/js/timers.js` (F9 timer coordinator — measured wake-up budget per R10), `public/js/settings/codex.js` (F12 settings checkbox + invalid-state guard per #657 §5). Plus state-engine client mirror extending existing `state.js` (F2).
+- **Modified client modules:** `terminal.js` (WS state-subscription handler, reconnect hydration per design §6.7), `sidebar.js` (replace `loadState` 10s baseline poll with State Engine WS subscription; refresh button remains as manual fallback), `tabs.js` (`switchTab` calls central dispatcher only, stale-auth badge surfaced from State Engine push), `oauth-detector.js` (strip Codex URL patterns; R19 regression-guard tests for Claude + Gemini), `app.js` (remove `pollTokenUsage` 3s + `scheduleLoadState` 10s + `checkAuth`/`checkErrors` 60s timers; `legacy_polling_enabled` flag check per R1 for incident-response fallback).
+- **§12.7 verify mechanism updates:** Section 17 entries observe state via rendered status-bar pill, sidebar row content, tab badge presence — all screen-affirmable per §12.5. No `browser_evaluate` internal-state reads in verify clauses (per the #650 sweep). State WS push observability via rendered indicator transition (R33: state WS authoritative for indicator state; PTY WS authoritative for data plane).
+- **Performance gate:** Section 17 scenario 1 (cold-load) asserts **p50 ≤ 10s + p95 ≤ 30s at 283 sessions** on dev workbench (R4). Scenario 9 (idle wake-up budget) asserts < 1 fetch/min/tab post-redesign vs ~24/min/tab pre-redesign.
+- **Auth-mode status-bar pill:** new indicator showing `OAuth` or `API key` per Codex tab (Claude tabs always `OAuth`; Gemini tabs unchanged this milestone). Sourced from State Engine `auth_mode` field per R14.
+- **Stale-auth tab badge:** after a successful #657 toggle, all currently-running Codex tabs render a stale-auth badge (cleared on session restart per R18). Section 17 scenario 7 asserts this with 3 concurrent Codex tabs.
 
 Workbench is a **UI-first system** (WPR-103 §12.1). Browser tests are the primary acceptance gate -- not backend API tests. The UI IS the product.
 
@@ -1483,6 +1496,7 @@ Playwright tests use a custom reporter. On failure: capture screenshot, DOM snap
 | CST-01..20 | `context-stress.spec.js` | Live/Stress | Not started | Not run | -- | ~15 min runtime |
 | HR-01..04 | `hot-reload.spec.js` | Live | Not started | Not run | -- | -- |
 | FR-01 | `fresh-boot.spec.js` | Live | Not started | Not run | -- | -- |
+| RUN-16.1..16.4, SMOKE-CHAT-01, SMOKE-WS-01, SMOKE-NAV-01, SMOKE-VEC-01 | `tests/workbench-test-runbook.md` §16 (agent-driven) | Live | Not started | Not run | -- | Milestone 01-stabilization stage-5 backfill: 16.1 (#522 tab reorder), 16.2 (#483 terminal scrollback resize-before-capture), 16.3 (#198 session_config rename via sidebar), 16.4 (#564 loadState retry on transient /api/state failure). SMOKE-* entries baseline-smoke-cascade #252/#253/#268/#275 (no separate consumer surface). All entries cite the canonical xterm input selector `.xterm-helper-textarea` per §16.0 Conventions. |
 
 ---
 

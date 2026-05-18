@@ -239,14 +239,11 @@ test('MCP task_add rejects without project_id or project_name (no folder_path fa
 test('MCP project_mcp_enable writes per-project config for claude+gemini+codex (#445)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_445_proj');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-445-'));
   const proj = db.ensureProject('mock_445_proj', projPath);
-  // Cleanup any prior state
-  try { fs.unlinkSync(join(projPath, '.mcp.json')); } catch { /* ignore */ }
-  try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
-  try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
 
   // Register a fixture MCP server (db.registerMcp internally JSON.stringifies the
   // config, so we pass an object to avoid the double-stringify edge case).
@@ -285,10 +282,8 @@ test('MCP project_mcp_enable writes per-project config for claude+gemini+codex (
     });
   } finally {
     try { db.unregisterMcp('mock-445-fixture'); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.mcp.json'), { force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -302,22 +297,21 @@ test('MCP project_mcp_enable writes per-project config for claude+gemini+codex (
 test('MCP project_mcp_disable strips inline-array Codex blocks cleanly (#445 follow-up)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_445_followup');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-445-fu-'));
   const proj = db.ensureProject('mock_445_followup', projPath);
-  // Cleanup any prior state
-  try { fs.unlinkSync(join(projPath, '.mcp.json')); } catch { /* ignore */ }
-  try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
-  try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
 
   // Pre-seed a non-mcp_servers section so we can verify it's preserved
   // through the strip (real codex configs commonly have model_provider /
-  // [projects."<path>"] / etc.).
+  // [projects."<path>"] / etc.). The [projects."<path>"] section embeds
+  // the test's dynamic project path so the strip exercises a realistic
+  // shape; the assertions below match the literal [projects." prefix only.
   fs.mkdirSync(join(projPath, '.codex'), { recursive: true });
   fs.writeFileSync(
     join(projPath, '.codex', 'config.toml'),
-    'model = "gpt-5"\n\n[projects."/data/workspace/mock_445_followup"]\ntrust_level = "trusted"\n',
+    `model = "gpt-5"\n\n[projects."${projPath}"]\ntrust_level = "trusted"\n`,
   );
 
   // Register an MCP whose config triggers the inline-array case.
@@ -348,10 +342,8 @@ test('MCP project_mcp_disable strips inline-array Codex blocks cleanly (#445 fol
     });
   } finally {
     try { db.unregisterMcp('mock-445-fu'); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.mcp.json'), { force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.gemini'), { recursive: true, force: true }); } catch { /* ignore */ }
-    try { fs.rmSync(join(projPath, '.codex'), { recursive: true, force: true }); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -363,9 +355,10 @@ test('MCP project_mcp_disable strips inline-array Codex blocks cleanly (#445 fol
 test('MCP session_prepare_pre_compact dispatches per cli_type (#446)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_446_prepare');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-446-'));
   const proj = db.ensureProject('mock_446_prepare', projPath);
   try {
     db.upsertSession('mock-446-claude-prep', proj.id, 'c', 'claude');
@@ -396,6 +389,7 @@ test('MCP session_prepare_pre_compact dispatches per cli_type (#446)', async () 
     try { db.deleteSession('mock-446-gemini-prep'); } catch { /* ignore */ }
     try { db.deleteSession('mock-446-codex-prep');  } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });
 
@@ -414,6 +408,75 @@ test('MCP session_resume_post_compact 404s on missing session (#446 no-silent-fa
   });
 });
 
+// #252: session_resume_post_compact writes the requested tail to
+// `/tmp/workbench-resume-<sid>.txt` and returns a prompt that references that
+// path — instead of stuffing the full tail inline (which blew past the CLI's
+// tool-result token cap on long sessions, the original #252 symptom). Commit
+// `f5d3bb1` is the file-based fix; this test pins the file-write contract +
+// the prompt-references-path shape directly, so a regression that reverts to
+// inline tail fails here at the mock layer rather than only at live.
+test('MCP session_resume_post_compact writes tail to /tmp file and returns prompt referencing path (#252)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const fsp = require('fs/promises');
+  const os = require('os');
+  const { join } = require('path');
+  const safe = require('../../src/safe-exec.js');
+  const sid = 'mock-252-claude-session';
+  const projName = 'mock_252_proj';
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-252-'));
+  const proj = db.ensureProject(projName, projPath);
+  const sessDir = safe.findSessionsDir(projPath);
+  fs.mkdirSync(sessDir, { recursive: true });
+  const jsonlPath = join(sessDir, `${sid}.jsonl`);
+  // Seed a JSONL fixture with 5 lines so tail_lines:3 returns the last 3
+  // (the substring check below pins this ordering — line-3, line-4, line-5).
+  const fixtureLines = [
+    JSON.stringify({ type: 'user', message: { content: 'line-1' } }),
+    JSON.stringify({ type: 'assistant', message: { content: 'line-2' } }),
+    JSON.stringify({ type: 'user', message: { content: 'line-3' } }),
+    JSON.stringify({ type: 'assistant', message: { content: 'line-4' } }),
+    JSON.stringify({ type: 'user', message: { content: 'line-5' } }),
+  ];
+  fs.writeFileSync(jsonlPath, fixtureLines.join('\n') + '\n', 'utf-8');
+  db.upsertSession(sid, proj.id, 'resume-tail-test', 'claude');
+  const tmpResumeFile = `/tmp/workbench-resume-${sid}.txt`;
+  try {
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, {
+        tool: 'session_resume_post_compact',
+        args: { session_id: sid, tail_lines: 3 },
+      });
+      assert.equal(r.status, 200, `expected 200; got ${r.status}: ${JSON.stringify(r.body)}`);
+      const prompt = typeof r.body.result === 'string' ? r.body.result : JSON.stringify(r.body.result);
+      assert.ok(
+        prompt.includes(tmpResumeFile),
+        `returned prompt must reference the tail file path ${tmpResumeFile}; got: ${prompt.slice(0, 200)}…`,
+      );
+      // The tail file exists with the last 3 lines of the JSONL fixture.
+      const tail = await fsp.readFile(tmpResumeFile, 'utf-8');
+      assert.ok(tail.includes('line-5'), `tail must include last line; got: ${tail}`);
+      assert.ok(tail.includes('line-4'), `tail must include penultimate line; got: ${tail}`);
+      assert.ok(tail.includes('line-3'), `tail must include third-from-last line; got: ${tail}`);
+      assert.ok(!tail.includes('line-2'), `tail must NOT include lines beyond tail_lines:3; got: ${tail}`);
+      assert.ok(!tail.includes('line-1'), `tail must NOT include lines beyond tail_lines:3; got: ${tail}`);
+      // The fix is "tail goes to file, prompt points at it" — pin the
+      // negative: the response body MUST NOT contain the raw tail content
+      // inline (that was the pre-fix shape causing the unreadable dump).
+      assert.ok(
+        !prompt.includes('line-5'),
+        `pre-fix regression: tail content must NOT be inlined in the prompt; got: ${prompt.slice(0, 400)}…`,
+      );
+    });
+  } finally {
+    try { fs.unlinkSync(tmpResumeFile); } catch { /* ignore */ }
+    try { db.deleteSession(sid); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
 // #450: session_summarize previously threw "path argument must be string" when
 // called without an explicit `project` arg (e.g. from a CLI tab calling
 // session_summarize {session_id: <sid>}). Root cause: db.getProject(undefined)
@@ -422,9 +485,10 @@ test('MCP session_resume_post_compact 404s on missing session (#446 no-silent-fa
 test('MCP session_summarize resolves project from session row when arg missing (#450)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_450_proj');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-450-'));
   const proj = db.ensureProject('mock_450_proj', projPath);
   try {
     // Seed a codex session — Codex/Gemini branches don't need projectPath but
@@ -440,7 +504,108 @@ test('MCP session_summarize resolves project from session row when arg missing (
   } finally {
     try { db.deleteSession('mock-450-session'); } catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
+});
+
+// #268: session_export on a freshly-created Claude session previously threw
+// `ToolError('session file not found: <path>', 404)` even when the session
+// row was valid — the transcript file just hadn't been written yet because
+// no messages had been sent. Now distinguishes the two cases: truly-invalid
+// session_id still 404s; valid-row-but-no-transcript-yet returns
+// `{format:'jsonl', path, content:'', session_id, note:'no transcript'}`.
+test('MCP session_export returns empty-transcript shape for fresh Claude session (#268)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const os = require('os');
+  const { join } = require('path');
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-268-'));
+  const proj = db.ensureProject('mock_268_proj', projPath);
+  try {
+    // Seed a Claude session row but DO NOT create the JSONL transcript file.
+    // This mirrors a freshly-created session before any messages have flowed.
+    db.upsertSession('mock-268-fresh-claude', proj.id, 'fresh-claude', 'claude');
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, {
+        tool: 'session_export',
+        args: { session_id: 'mock-268-fresh-claude' },
+      });
+      assert.equal(r.status, 200, `expected 200; got ${r.status}: ${JSON.stringify(r.body)}`);
+      const result = r.body.result;
+      assert.equal(result.format, 'jsonl', `format must be 'jsonl'; got ${result.format}`);
+      assert.equal(result.content, '', `content must be empty string; got ${JSON.stringify(result.content)}`);
+      assert.equal(result.session_id, 'mock-268-fresh-claude', `session_id must echo arg; got ${result.session_id}`);
+      assert.equal(result.note, 'no transcript', `note must be 'no transcript'; got ${result.note}`);
+      assert.ok(result.path && result.path.endsWith('.jsonl'), `path must point at the missing JSONL; got ${result.path}`);
+    });
+  } finally {
+    try { db.deleteSession('mock-268-fresh-claude'); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
+test('MCP session_export 404s on truly-invalid session_id (#268 Case B preserved)', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'session_export',
+      args: { session_id: 'definitely-not-a-real-268-session-id' },
+    });
+    assert.equal(r.status, 404, `expected 404; got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.match(r.body.error || '', /session not found/i);
+  });
+});
+
+// #198: session_config previously returned `{saved:true}` only. Callers that
+// needed post-write metadata (id, name, state, cli_type, model, …) had to
+// follow up with session_info — costly and racy under cache TTL. The fix
+// invalidates the session_info cache then read-after-writes via
+// getSessionInfo and returns the merged shape `{...info, saved:true}`.
+test('MCP session_config returns full session metadata after write (#198)', async () => {
+  const db = require('../../src/db');
+  const fs = require('fs');
+  const os = require('os');
+  const { join } = require('path');
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-198-'));
+  const proj = db.ensureProject('mock_198_proj', projPath);
+  try {
+    db.upsertSession('mock-198-session', proj.id, 'pre-rename', 'claude');
+    await withServer(startMcpApp(), async ({ port }) => {
+      const r = await call(port, {
+        tool: 'session_config',
+        args: { session_id: 'mock-198-session', name: 'post-rename', notes: 'engineer-test' },
+      });
+      assert.equal(r.status, 200, `expected 200; got ${r.status}: ${JSON.stringify(r.body)}`);
+      const result = r.body.result;
+      // saved:true preserved for backward compat
+      assert.equal(result.saved, true, `saved:true must be preserved; got ${JSON.stringify(result)}`);
+      // Full metadata returned
+      assert.equal(result.id, 'mock-198-session', `id must echo session_id; got ${result.id}`);
+      assert.equal(result.cli_type, 'claude', `cli_type must be 'claude'; got ${result.cli_type}`);
+      // Read-after-write: the new name from this call must be reflected
+      assert.equal(result.name, 'post-rename', `name must reflect the rename; got ${result.name}`);
+      assert.equal(result.notes, 'engineer-test', `notes must reflect the write; got ${result.notes}`);
+      // Cache was invalidated, so a follow-up read sees the same fresh state
+      assert.ok(typeof result.state === 'string', `state must be present; got ${typeof result.state}`);
+    });
+  } finally {
+    try { db.deleteSession('mock-198-session'); } catch { /* ignore */ }
+    try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
+  }
+});
+
+test('MCP session_config 404s on missing session (#198 / read-after-write contract)', async () => {
+  await withServer(startMcpApp(), async ({ port }) => {
+    const r = await call(port, {
+      tool: 'session_config',
+      args: { session_id: 'definitely-not-a-real-198-session-id', name: 'noop' },
+    });
+    assert.equal(r.status, 404, `expected 404; got ${r.status}: ${JSON.stringify(r.body)}`);
+    assert.match(r.body.error || '', /session not found/i);
+  });
 });
 
 // #437: session_list previously walked <project>/.claude/sessions/*.jsonl which
@@ -451,10 +616,10 @@ test('MCP session_summarize resolves project from session row when arg missing (
 test('MCP session_list returns rows for all 3 cli_types (#437)', async () => {
   const db = require('../../src/db');
   const fs = require('fs');
+  const os = require('os');
   const { join } = require('path');
-  // Seed a temp project + 3 sessions with different cli_types.
-  const projPath = join(process.env.WORKSPACE || '/data/workspace', 'mock_437_proj');
-  fs.mkdirSync(projPath, { recursive: true });
+  // #619: scratch dir under os.tmpdir(); never write to /data/workspace/.
+  const projPath = fs.mkdtempSync(join(os.tmpdir(), 'wb-mock-437-'));
   const proj = db.ensureProject('mock_437_proj', projPath);
   try {
     db.upsertSession('mock-437-claude-session', proj.id, 'claude-sess', 'claude');
@@ -475,5 +640,6 @@ test('MCP session_list returns rows for all 3 cli_types (#437)', async () => {
     try { db.deleteSession('mock-437-gemini-session'); } catch { /* ignore */ }
     try { db.deleteSession('mock-437-codex-session'); }  catch { /* ignore */ }
     try { db.deleteProject(proj.id); } catch { /* ignore */ }
+    try { fs.rmSync(projPath, { recursive: true, force: true }); } catch { /* ignore */ }
   }
 });

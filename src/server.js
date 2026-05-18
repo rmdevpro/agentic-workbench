@@ -23,6 +23,8 @@ const createKbWatcher = require('./kb-watcher');
 const createWsTerminal = require('./ws-terminal');
 const registerCoreRoutes = require('./routes');
 const { createQdrantSync } = require('./qdrant-sync');
+const createStateEngine = require('./state-engine');
+const mcpTools = require('./mcp-tools');
 
 // ── Configuration ───────────────────────────────────────────────────────────
 
@@ -55,8 +57,6 @@ process.on('unhandledRejection', (reason) => {
 
 // ── Construct modules with explicit deps ────────────────────────────────────
 
-const keepalive = createKeepalive({ safe, config, logger });
-
 const tmux = createTmuxLifecycle({ safe, config, logger });
 
 const resolver = createSessionResolver({
@@ -69,6 +69,24 @@ const resolver = createSessionResolver({
   logger,
 });
 
+// #651 commit 7d: instantiate the State Engine before watchers/keepalive/
+// route registration so all mutation sources can publish through it. The
+// engine's warm-from-DB pass still runs after server.listen (see below)
+// so the cold-start contract (R28) is preserved.
+const stateEngine = createStateEngine({ logger });
+stateEngine.setWorkspace(WORKSPACE);
+stateEngine.startWarm();
+// #651 commit 7e: mcp-tools.js loads `db` at module scope (not factory-DI),
+// so the engine is injected via a one-shot setter immediately after
+// construction. All session_new / session_config handlers then publish
+// through `_se()`. Tests that exercise the handlers without ever calling
+// setStateEngine see the no-op fallback (engine === null).
+mcpTools.setStateEngine(stateEngine);
+
+// #651 commit 7e: keepalive gets `db` + `stateEngine` so Claude auth-broken
+// transitions can fan out to every Claude session.
+const keepalive = createKeepalive({ safe, config, logger, db, stateEngine });
+
 const watchers = createWatchers({
   db,
   safe,
@@ -79,6 +97,7 @@ const watchers = createWatchers({
   tmuxExists: tmux.tmuxExists,
   CLAUDE_HOME,
   logger,
+  stateEngine,
 });
 
 const kbWatcher = createKbWatcher({ db, logger, config });
@@ -101,6 +120,10 @@ const terminal = createWsTerminal({
   stopJsonlWatcher: watchers.stopJsonlWatcher,
   db,
 });
+
+// #651 commit 8: /ws/state subscription channel (R29 separate from /ws/terminal).
+const createWsState = require('./routes/ws-state');
+const wsState = createWsState({ stateEngine, logger, config });
 
 // Smart compaction removed — no kill callback needed
 
@@ -267,6 +290,50 @@ app.use(
 app.use('/lib/codemirror', express.static(join(__dirname, '..', 'public/lib/codemirror')));
 app.use('/lib/toastui-editor', express.static(join(__dirname, '..', 'public/lib/toastui-editor')));
 
+// ── State Engine warm pass ────────────────────────────────────────────────
+// #651 commit 6: cold-start contract (R28) — server binds the port + serves
+// /health immediately; the engine warms in the background after listen().
+// The engine itself was instantiated above (before watchers) so all mutation
+// sources can publish through it; here we only kick off the warm pass.
+async function _warmStateEngine() {
+  try {
+    const programs = (db.getAllPrograms && db.getAllPrograms('active')) || [];
+    for (const program of programs) {
+      stateEngine.upsertProgram(program);
+    }
+    const projects = db.getProjects() || [];
+    for (const project of projects) {
+      stateEngine.upsertProject({
+        path: project.path,
+        name: project.name,
+        missing: false,
+        state: project.state || 'active',
+        program_id: project.program_id ?? null,
+      });
+      const dbSessions = db.getSessionsForProject(project.id) || [];
+      for (const s of dbSessions) {
+        stateEngine.upsertSession({
+          id: s.id,
+          project_path: project.path,
+          name: s.name,
+          cli_type: s.cli_type || 'claude',
+          state: s.state || 'active',
+        });
+      }
+    }
+    stateEngine.markWarm();
+    logger.info('State Engine warm', {
+      module: 'server',
+      stats: stateEngine.stats(),
+    });
+  } catch (err) {
+    logger.error('State Engine warm failed', { module: 'server', err: err.message });
+    // Leave engine in `warming: true`; /api/state will keep falling back to
+    // the DB-walk. The next mutation wire-up commit will give us a way to
+    // re-attempt warm after a transient failure.
+  }
+}
+
 // ── Route registration ──────────────────────────────────────────────────────
 
 const { checkAuthStatus } = registerCoreRoutes(app, {
@@ -277,6 +344,7 @@ const { checkAuthStatus } = registerCoreRoutes(app, {
   keepalive,
   fireEvent,
   logger,
+  stateEngine,
   tmuxName: tmux.tmuxName,
   tmuxExists: tmux.tmuxExists,
   enforceTmuxLimit: tmux.enforceTmuxLimit,
@@ -306,12 +374,31 @@ function handleUpgrade(req, socket, head) {
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
 
+  // #651 commit 8: /ws/state is the State Engine subscription channel.
+  // Per R29 it is a SEPARATE endpoint from /ws/terminal (which is per-PTY).
+  // Route the upgrade to wsState before the terminal regex below.
+  if (url.pathname === '/ws/state') {
+    wss.handleUpgrade(req, socket, head, (ws) => wsState.handleStateConnection(ws));
+    return;
+  }
+
   const match = url.pathname.match(/^\/ws\/(.+)$/);
   if (!match) {
     socket.destroy();
     return;
   }
-  wss.handleUpgrade(req, socket, head, (ws) => terminal.handleTerminalConnection(ws, match[1]));
+  // #483: extract optional cols/rows query params so the WS handler can
+  // resize the tmux pane to match the client's xterm width BEFORE
+  // capturing scrollback. Without this the capture is taken at the pane's
+  // last-known cols (which can differ from the client's xterm cols) and the
+  // visual layout corrupts on render. Missing/invalid params → handler
+  // falls back to the historical 120x40 default.
+  const cols = Number.parseInt(url.searchParams.get('cols'), 10);
+  const rows = Number.parseInt(url.searchParams.get('rows'), 10);
+  const initialDims = (Number.isFinite(cols) && Number.isFinite(rows) && cols > 0 && rows > 0)
+    ? { cols, rows }
+    : null;
+  wss.handleUpgrade(req, socket, head, (ws) => terminal.handleTerminalConnection(ws, match[1], initialDims));
 }
 
 server.on('upgrade', handleUpgrade);
@@ -351,6 +438,11 @@ if (require.main === module) {
 
       server.listen(PORT, '0.0.0.0', () => {
         logger.info('Workbench running', { module: 'server', port: PORT });
+        // #651 R28: kick off State Engine warm AFTER bind. Server is already
+        // serving /health by this point; engine populates in the background.
+        // Errors are logged inside _warmStateEngine — server lifecycle is
+        // not affected.
+        setImmediate(() => { _warmStateEngine(); });
         keepalive.start();
         tmux.startPeriodicScan();
         watchers.startSettingsWatcher();

@@ -56,7 +56,7 @@ Workbench stores all data (database, sessions, workspace) under `/data`. To pers
 | `kb-watcher.js`       | KB repo `_cloneIfMissing()` + chokidar watcher + Qdrant sync poller (M1)                                |
 | `watchers.js`         | Filesystem monitoring: JSONL watchers, settings sync, MCP registration                                  |
 | `tmux-lifecycle.js`   | tmux session creation, cleanup, limit enforcement                                                       |
-| `ws-terminal.js`      | WebSocket ↔ PTY terminal bridge with backpressure handling                                              |
+| `ws-terminal.js`      | WebSocket ↔ PTY terminal bridge with backpressure handling. `handleTerminalConnection()` accepts `initialDims` so the tmux pane is resized to the client's xterm dimensions before scrollback capture (#483) |
 | `session-resolver.js` | Async temp→real session ID resolution                                                                   |
 | `session-utils.js`    | Thin factory adapter; delegates to `src/session-utils/`                                                 |
 | `shared-state.js`     | Shared runtime state (WebSocket client map, browser count)                                              |
@@ -69,6 +69,13 @@ Workbench stores all data (database, sessions, workspace) under `/data`. To pers
 | `gate-page.js`        | Public-Space gate HTML                                                                                  |
 
 Supporting: `mcp-server.js`, `mcp-tools.js`, `mcp-catalog.js`, `webhooks.js`, `safe-exec.js`, `session-seeder.js`, `constants.js`.
+
+`mcp-tools.js` MCP tool contracts updated in milestone 01-stabilization:
+
+- `session_config` now returns the full session metadata after a write (read-after-write via `getSessionInfo()`), not just `{saved: true}` (#198).
+- `session_export` returns the empty-transcript shape `{format, content:'', session_id, note:'no transcript'}` on a fresh session with no transcript; the `404 ToolError` shape is reserved for genuinely-invalid `session_id` (#268).
+
+`server.js` `handleUpgrade()` parses `cols`/`rows` from the WebSocket upgrade URL and forwards them as `initialDims` to `ws-terminal.handleTerminalConnection()` so the tmux pane can be sized before scrollback replay (#483).
 
 ### `src/routes/` — domain handlers (G0)
 
@@ -107,16 +114,16 @@ The `createSessionUtils()` factory in `session-utils.js` composes these into a s
 | ------------------- | ------------------------------------------------------------------------------ |
 | `app.js`            | Entrypoint: imports modules, wires deps, exposes `window.*` for inline onclick |
 | `state.js`          | Shared state (tabs Map, projectState, sessionFilter, sessionSortBy, …)         |
-| `sidebar.js`        | `loadState`, `renderSidebar`, project/program/session row builders             |
-| `tabs.js`           | Tab Map management, `switchTab`, `closeTab`, `renderTabs`, drop-zone wiring    |
-| `terminal.js`       | xterm.js setup, WebSocket lifecycle, scrollback replay                         |
+| `sidebar.js`        | `loadState`, `renderSidebar`, project/program/session row builders. `loadState` calls `util.fetchWithRetry` so transient `/api/state` failures recover within bounded attempts (#564) |
+| `tabs.js`           | Tab Map management, `switchTab`, `closeTab`, `renderTabs`, drop-zone wiring. Drop handler delegates ordering math to the pure helper `util.computeReorderedTabOrder` (#522) |
+| `terminal.js`       | xterm.js setup, WebSocket lifecycle, scrollback replay. WebSocket URL carries `?cols=<n>&rows=<n>` so the server-side pane can pre-size before capture (#483) |
 | `file-tree.js`      | DOM-diffing file tree renderer                                                 |
 | `files.js`          | File browser: load, refresh, open as tab                                       |
 | `tasks.js`          | Task panel render, filter, detail modal                                        |
 | `issue-picker.js`   | GitHub issue picker overlay                                                    |
 | `oauth-detector.js` | Auth-URL detection in terminal output                                          |
 | `modal.js`          | Reusable modal primitives (loaded as classic UMD)                              |
-| `util.js`           | `escapeHtml`, `timeAgo`, `db_getSetting`, formatters (classic UMD)             |
+| `util.js`           | `escapeHtml`, `timeAgo`, `db_getSetting`, formatters (classic UMD). Adds `fetchWithRetry(url, init, {attempts, backoffMs})` (#564) and `computeReorderedTabOrder(currentOrder, draggedId, targetTabId)` (#522) as pure helpers — tested directly in `tests/mock/util.test.js` (UTL-08..18) |
 
 ### Dependency Graph
 

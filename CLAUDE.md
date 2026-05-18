@@ -1,55 +1,40 @@
 # This Repository
 
-This repository is the source code for the Agentic Workbench application — the system you are running inside. You are using the workbench to develop the workbench. The application is a Node.js server (`server.js`) decomposed into focused modules using factory-based dependency injection. The full architecture, module responsibilities, and configuration reference are in `README.md`.
+This repository is the source code for the Agentic Workbench application — the system you are running inside. You are using the workbench to develop the workbench. The full architecture, module responsibilities, and configuration reference are in `README.md`.
 
 # Current Project + Milestone
 
-- **Project:** r1
-- **Milestone:** `08-sdlc-redesign` — SDLC redesign work (branch `milestone/08-sdlc-redesign`). Previous milestone `07-ui-runbook-refactor` is paused pending this redesign.
+* **Project:** r1
+* **Milestone:** `01-stabilization`
 
-The Project Manager maintains this block. Update on milestone open and milestone close per [SDLC-3 §Branch Strategy](/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md). Plan files are session-private; this block is the team-shared declaration of what cycle is active.
+# Canonical Team Sessions
 
-# Operating Modes
+The roles for this project are bound to the following workbench sessions. Dispatch only to these IDs. Do not spawn new sessions for these roles.
 
-You operate in one of two modes at any given moment. See [PROC-001 — Agent Operating Modes](/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md) for the canonical statement.
-
-- **Conversational mode (default):** answer the user's message, wait for the next. Don't jump ahead. The user does the steering.
-- **Autonomous mode:** drive a multi-step process to completion. Poll continuously, run iterations back-to-back without waiting for user prompts, report only meaningful events. User messages are redirection, not loop triggers.
-
-**Inline foreground polling is the ONLY acceptable way to monitor a long-running job.** Two valid patterns — pick whichever fits the situation:
-- `session_wait {session_id, seconds}` + `session_read_screen` — for workbench-managed CLI sessions.
-- `start=$(date +%s); end=$((start + 60)); until [ $(date +%s) -ge $end ]; do sleep 2; done; <check>` — for anything else (deploys, file growth, external commands).
-
-The `Monitor` tool and `run_in_background` are forbidden for progress checks.
+| Role | Session ID |
+|---|---|
+| Project Manager | `85d37034-f149-4770-8e5f-a0092ce05bf8` |
+| Engineer | `baa4c5da-9389-4f7a-9a5f-512407345f58` |
+| Tester | `d876819c-56db-4ac7-9699-b3e89400b2dc` |
+| Designer | `0cda55ab-9d82-4ab6-aec8-02bdaaff034e` |
+| Tech Writer | `4ea1ced0-5127-47df-89e7-b77f1f929b65` |
+| Reviewer-Claude | `f97d3af7-a5b8-4ca1-bb52-29be0624855a` |
+| Reviewer-Codex | `8d21b99e-6407-46fb-bcf7-7f42376c61d0` |
+| Reviewer-Gemini | `94dbc1f0-02c8-4c7b-9804-c35d0fe6535d` |
 
 # Anchor Documents
 
-These documents define the standards and context this project must be reviewed and developed against. **`README.md` (under §This Repository) must be read on every session.** Other documents must be read fully when relevant to your current task. Do not grep or search within documents — content cannot be understood out of context. A document that is partially read is a document misread.
+These are the project-specific files. **`README.md` must be read on every session.** The runbooks and test plans must be read fully when relevant to your current task. Do not grep or search within documents — content cannot be understood out of context.
 
-## This Repository
+Cross-project standards, requirements, SDLCs, PROCs, and role files are NOT listed here — they are referenced from the role files (`Admin/roles/*.md`) and from the process docs themselves. Load those when your role file or current task directs you to.
 
-- `README.md` — architecture, module structure, dependency graph, configuration reference, and compliance notes. **Read on every session.**
-- `tests/workbench-test-plan-backend.md` — backend test plan. Read before writing backend tests or reviewing backend changes.
-- `tests/workbench-test-plan-ui.md` — UI test plan. Read before writing UI tests or reviewing UI changes.
-- `/data/workspace/repos/Admin/docs/guides/workbench-deployment.md` — deployment specifics for this repo: safety rules, architecture, `/data` volume, dev/prod indicator, add-on installation. Read before deploying or working on container/infrastructure code.
+## Project files
 
-## Engineering Standards
-
-- `/data/workspace/repos/Admin/docs/requirements/REQ-001-base-engineering.md` — engineering requirements all code in this project must satisfy. Read before writing or reviewing any application code.
-- `/data/workspace/repos/Admin/docs/standards/STD-003-test-plan-standard.md` — defines what a test plan must contain and how it must be maintained. Read before reviewing or updating the test plans.
-- `/data/workspace/repos/Admin/docs/standards/STD-004-code-standard.md` — defines what a code deliverable must look like as an artifact. Read before writing or reviewing application code.
-- `/data/workspace/repos/Admin/docs/standards/STD-005-test-code-standard.md` — defines what test code must look like. Read before writing or reviewing test code.
-- `/data/workspace/repos/Admin/docs/standards/STD-007-readme-standard.md` — defines what the README must contain and how it must be maintained. Read before updating `README.md`.
-
-## Process
-
-- `/data/workspace/repos/Admin/docs/process/SDLC-1-version-creation.md` — open a new release `rN`, set up team + artifact paths. Read when starting a new project or just after release close.
-- `/data/workspace/repos/Admin/docs/process/SDLC-2-release-planning.md` — populate the open `rN` Project with milestones + issues + release-specific scope matrix. Read at planning time.
-- `/data/workspace/repos/Admin/docs/process/SDLC-3-milestone-execution.md` — seven-stage label-driven milestone pipeline (implement / mock / deploy / integration / ui / docs / close). Read whenever you're executing a milestone.
-- `/data/workspace/repos/Admin/docs/process/SDLC-4-release-close.md` — full-scope release-close test pass, prod deploy, close `rN` Project, open `rN+1`. Read at release close.
-- `/data/workspace/repos/Admin/docs/process/PROC-001-agent-operating-modes.md` — conversational vs autonomous mode rules. Read at session start.
-- `/data/workspace/repos/Admin/docs/process/PROC-002-test-execution-policy.md` — canonical policy for which tests run and when (includes the UI-headless-browser rule in Principle 8). Read before authoring or running tests.
-- `/data/workspace/repos/Admin/docs/process/PROC-003-test-scope-matrix.md` — global test scope matrix (consumed during SDLC-2 to produce the release-specific matrix).
-- `/data/workspace/repos/Admin/docs/process/PROC-004-runbook-execution-guide.md` — procedure for orchestrating the UI test runbook. Used by SDLC-3 (UI test stage) and SDLC-4 (release-close UI run).
-- `/data/workspace/repos/Admin/docs/process/PROC-005-review.md` — unified review procedure (code and docs) via 3-CLI quorum. Reviewer verdict is a stage-pass label flip on each in-scope issue (backed by cited evidence in the issue's seven-row workflow grid) plus optional supplementary notes. Stage 7 (close) variant uses GitHub PR reviews instead of labels.
-- `/data/workspace/repos/Admin/docs/runbooks/RUN-001-deployment.md` — step-by-step deploy procedure (build → push → pull → up). Read before any deploy.
+* `README.md` — architecture, module structure, dependency graph, configuration reference, and compliance notes. **Read on every session.**
+* `tests/workbench-test-plan-backend.md` — backend test plan (mock + integration scope). Not in the Tester's run-time reading list (the runbooks are); read at plan time.
+* `tests/workbench-test-plan-ui.md` — UI test plan. Not in the Tester's run-time reading list; read at plan time.
+* `tests/workbench-mock-runbook.md` — mock test runbook (framework, invocation, project quirks). Read when running stage-2 mock tests.
+* `tests/workbench-integration-runbook.md` — integration test runbook. Read when running stage-4 integration tests.
+* `tests/workbench-ui-runbook.md` — UI test catalog. Read when running stage-5 UI tests or the stage-7 pre-merge UI pass.
+* `/data/workspace/repos/Admin/docs/guides/workbench-deployment.md` — deployment specifics for this repo: safety rules, architecture, `/data` volume, dev/prod indicator, add-on installation. Read before deploying or working on container/infrastructure code.
+* `/data/workspace/repos/Admin/docs/runbooks/RUN-001-deployment.md` — step-by-step deploy procedure (build → push → pull → up). Read before any deploy.

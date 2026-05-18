@@ -6,10 +6,14 @@ coverage/
 # Legitimate PNGs in public/, docs/, etc. are NOT filtered.
 /*.png
 # Transient test artifacts (#323): per-run results stay local, not in main.
-# Historical archives are preserved under tests/results-archive/.
+# Historical archives live under /mnt/storage/dev_artifacts/workbench/r1/tests-archive/
+# (moved out of the repo per `1fbe827`).
 tests/coverage-results-*.txt
 tests/runbook-results-*.md
 tests/gate-c-*results*.md
+tests/live-results-*.txt
+tests/phase*-results.md
+tests/phase*-prod*-results.md
 # Per-run browser screenshots written by tests/browser/*.spec.js — transient.
 # (Trailing /* not / so git can traverse into the directory and honour the negation below.)
 tests/browser/screenshots/*

@@ -121,6 +121,10 @@ const terminal = createWsTerminal({
   db,
 });
 
+// #651 commit 8: /ws/state subscription channel (R29 separate from /ws/terminal).
+const createWsState = require('./routes/ws-state');
+const wsState = createWsState({ stateEngine, logger, config });
+
 // Smart compaction removed — no kill callback needed
 
 // ── Express setup ───────────────────────────────────────────────────────────
@@ -369,6 +373,14 @@ function handleUpgrade(req, socket, head) {
     if (!match || !sessionTokens.has(match[1])) { socket.destroy(); return; }
   }
   const url = new URL(req.url, `http://${req.headers.host}`);
+
+  // #651 commit 8: /ws/state is the State Engine subscription channel.
+  // Per R29 it is a SEPARATE endpoint from /ws/terminal (which is per-PTY).
+  // Route the upgrade to wsState before the terminal regex below.
+  if (url.pathname === '/ws/state') {
+    wss.handleUpgrade(req, socket, head, (ws) => wsState.handleStateConnection(ws));
+    return;
+  }
 
   const match = url.pathname.match(/^\/ws\/(.+)$/);
   if (!match) {

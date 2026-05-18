@@ -273,6 +273,10 @@ function createStateEngine({
         err: err.message,
       });
       sub.dead = true;
+      // Initial-send failure means the subscriber never became viable;
+      // remove it immediately so stats() and subsequent _publish loops
+      // don't carry the dead reference until the next heartbeat tick.
+      subscribers.delete(id);
     }
 
     if (!_heartbeatTimer && heartbeatIntervalMs > 0) {
@@ -305,6 +309,31 @@ function createStateEngine({
   function _startHeartbeat() {
     _heartbeatTimer = setInterval(() => {
       const now = clock();
+      // R30: send a keepalive ping to every live subscriber on each
+      // heartbeat tick. A successful send refreshes sub.lastSeen so idle
+      // (no-diff) subscribers don't get falsely evicted; a failing send
+      // marks the subscriber dead, which the eviction loop below collects.
+      // Without this ping, the time-based eviction triggers within
+      // (subscriberTimeoutMs + heartbeatIntervalMs) of any quiet period.
+      for (const [id, sub] of subscribers) {
+        if (sub.dead) continue;
+        try {
+          sub.send({
+            type: 'state:heartbeat',
+            version: 1,
+            seq: nextSeq++,
+            at: clock(),
+          });
+          sub.lastSeen = clock();
+        } catch (err) {
+          log.warn('state-engine: heartbeat send failed; marking dead', {
+            module: 'state-engine',
+            subscriberId: id,
+            err: err.message,
+          });
+          sub.dead = true;
+        }
+      }
       for (const [id, sub] of subscribers) {
         if (sub.dead || now - sub.lastSeen > subscriberTimeoutMs) {
           log.info('state-engine: evicting stale subscriber', {

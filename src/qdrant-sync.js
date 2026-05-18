@@ -697,6 +697,15 @@ function createQdrantSync({ db, safe, config, logger }) {
     const relPath = relative(baseDir, filePath);
     const syncState = syncStmts.get.get(filePath);
     const fileStat = await stat(filePath);
+
+    // #651 R7 / §6.4: mirror syncSessionFile's mtime shortcut. Without this,
+    // every Qdrant scan tick re-hashes + re-chunks every code file in the
+    // collection regardless of whether anything changed — pure CPU waste
+    // that competes for the event loop with /api/state on idle workbenches.
+    // syncSessionFile already gates on `last_mtime === fileStat.mtimeMs`;
+    // this brings syncFileToCollection to parity.
+    if (syncState && syncState.last_mtime === fileStat.mtimeMs) return 0;
+
     const { hash, chunks: rawChunks } = await _streamHashAndChunk(filePath);
 
     if (syncState && syncState.last_hash === hash) return 0;
@@ -1316,6 +1325,10 @@ function createQdrantSync({ db, safe, config, logger }) {
     // Streaming helpers re-exported from factory for convenience (also available
     // at module level for the E4 streaming test).
     _streamHashAndChunk, _streamReadAsString,
+    // #651 R7: exported so the mtime-shortcut behaviour (commit 4) can be
+    // exercised in isolation without standing up the full scan pipeline.
+    _syncFileToCollection: syncFileToCollection,
+    _syncSessionFile: syncSessionFile,
   };
 }
 

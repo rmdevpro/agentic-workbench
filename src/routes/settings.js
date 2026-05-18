@@ -22,7 +22,41 @@ function register(app, {
   registerCodexProvider,
   registerCodexAuth,
   qdrantSync,
+  stateEngine,
 }) {
+  // #651 commit 7c: settings changes that affect per-session state must
+  // publish through the State Engine. Today the only such setting is
+  // codex_api_key (toggles `codex_api_key_set` on every Codex session);
+  // #657 commit 18 will refine this into a proper `auth_mode` per session.
+  function _se(method, ...args) {
+    if (!stateEngine) return;
+    try {
+      stateEngine[method](...args);
+    } catch (err) {
+      logger.warn('state-engine call failed', {
+        module: 'routes', op: method, err: err.message,
+      });
+    }
+  }
+
+  function _publishCodexApiKeyChange(keySet) {
+    if (!stateEngine) return;
+    try {
+      const projects = db.getProjects ? db.getProjects() : [];
+      for (const proj of projects) {
+        const sessions = (db.getSessionsForProject && db.getSessionsForProject(proj.id)) || [];
+        for (const s of sessions) {
+          if ((s.cli_type || 'claude') === 'codex') {
+            _se('updateSession', s.id, { codex_api_key_set: !!keySet });
+          }
+        }
+      }
+    } catch (err) {
+      logger.warn('codex_api_key state-engine fan-out failed', {
+        module: 'routes', err: err.message,
+      });
+    }
+  }
   // ── GET /api/settings ──────────────────────────────────────────────────────
 
   app.get('/api/settings', (req, res) => {
@@ -130,6 +164,10 @@ function register(app, {
           logger.warn('registerCodexAuth after codex_api_key save failed', { module: 'routes', err: err.message })
         );
       }
+      // #651 commit 7c: publish the codex_api_key change to every Codex
+      // session so the engine + WS subscribers see the auth surface flip.
+      // #657 commit 18 will replace this stub with full auth_mode semantics.
+      _publishCodexApiKeyChange(!!value);
     }
     if (key === 'huggingface_api_key') {
       // qdrant-sync's HF embedding provider reads process.env.HF_TOKEN

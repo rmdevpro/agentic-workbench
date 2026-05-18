@@ -2069,15 +2069,127 @@ async function restoreOpenTabsFromOrder() {
   }
 }
 
-// Initial load + tab-restore, THEN start the rescheduling loop.
+// Initial load + tab-restore, THEN engage the State Engine WS subscription
+// or fall back to the legacy /api/state poll (R1: legacy_polling_enabled
+// flag for incident-response rollback).
+//
+// #651 commit 12: this is the load-relief commit. The periodic
+// `setTimeout(scheduleLoadState, REFRESH_MS)` (10s baseline poll) and the
+// per-second `setInterval(checkAuth, 60000)` / `setInterval(checkErrors,
+// 60000)` are replaced by:
+//
+//   1. WS state subscription via window.EngineState — snapshot on connect,
+//      diff push per mutation, no polling. loadState() is still callable
+//      explicitly (button presses, post-create refresh).
+//
+//   2. window.Timers scheduler — coalesces checkAuth + checkErrors into a
+//      single bucketed tick. visibilitychange-aware (hidden tab → skip).
+//
+//   3. window.StatusBar — central dispatcher reading the engine snapshot;
+//      replaces the scattered DOM writes that used to live in app.js +
+//      terminal.js + tabs.js + oauth-detector.js.
+//
+// The legacy_polling_enabled flag (localStorage key, defaults to false)
+// reverts all three to the pre-commit polling behaviour for safe rollback.
+
+const _legacyPollingEnabled = (() => {
+  try { return localStorage.getItem('legacy_polling_enabled') === '1'; }
+  catch { return false; }
+})();
+
 (async () => {
   await loadState();
   restoreOpenTabsFromOrder();
-  _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+
+  if (_legacyPollingEnabled) {
+    // Legacy cutover-safety path: original setInterval-based polling.
+    // eslint-disable-next-line no-console
+    console.warn('[#651] legacy_polling_enabled=1 — using pre-commit-12 polling');
+    _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+    setTimeout(checkAuth, 1000);
+    setInterval(checkAuth, 60000);
+    setTimeout(checkErrors, 2000);
+    setInterval(checkErrors, 60000);
+    return;
+  }
+
+  // ── State Engine WS subscription ─────────────────────────────────────────
+  // engine-state.js (UMD) exposes window.EngineState.createEngineStateClient.
+  // We subscribe and treat snapshot/diff events as "state refreshed"; the
+  // existing loadState() pipeline is still the source of session-meta
+  // enrichment (timestamps from session_meta), so on engine pushes we
+  // coalesce a single loadState() call.
+  let _wsRefreshTimer = null;
+  function _coalescedRefresh() {
+    if (_wsRefreshTimer) return;
+    _wsRefreshTimer = setTimeout(() => {
+      _wsRefreshTimer = null;
+      try { loadState(); }
+      catch (err) { console.warn('[#651] WS-triggered loadState failed', err); }
+    }, 250);
+  }
+
+  let _engineClient = null;
+  let _engineWsState = 'connecting';
+  try {
+    if (window.EngineState && window.EngineState.createEngineStateClient) {
+      _engineClient = window.EngineState.createEngineStateClient({
+        onConnect: () => { _engineWsState = 'open'; },
+        onDisconnect: () => { _engineWsState = 'closed'; },
+      });
+      _engineClient.subscribe((event) => {
+        if (event.type === 'snapshot' || event.type === 'diff') {
+          _coalescedRefresh();
+        }
+      });
+      _engineClient.connect();
+      window._engineClient = _engineClient; // expose for debug + tests
+    } else {
+      // engine-state.js not loaded → behave like legacy, but only for the
+      // session-state path. checkAuth/checkErrors still use the scheduler.
+      console.warn('[#651] window.EngineState missing; loadState polling fallback');
+      _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+    }
+  } catch (err) {
+    console.warn('[#651] engine-state client init failed; falling back', err);
+    _loadStateTimer = setTimeout(scheduleLoadState, REFRESH_MS);
+  }
+
+  // ── Unified scheduler for checkAuth + checkErrors ────────────────────────
+  if (window.Timers && window.Timers.createTimers) {
+    const _timers = window.Timers.createTimers({
+      isVisible: () => document.visibilityState !== 'hidden',
+    });
+    _timers.register('checkAuth', 60000, () => { checkAuth(); });
+    _timers.register('checkErrors', 60000, () => { checkErrors(); });
+    // First fire after a short delay (mirror the legacy 1s/2s offset).
+    setTimeout(checkAuth, 1000);
+    setTimeout(checkErrors, 2000);
+    window._timers = _timers; // expose for debug
+  } else {
+    setTimeout(checkAuth, 1000);
+    setInterval(checkAuth, 60000);
+    setTimeout(checkErrors, 2000);
+    setInterval(checkErrors, 60000);
+  }
+
+  // ── Status-bar dispatcher ────────────────────────────────────────────────
+  if (_engineClient && window.StatusBar && window.StatusBar.createStatusBar) {
+    const statusBarEl = document.getElementById('status-bar');
+    if (statusBarEl) {
+      try {
+        window._statusBar = window.StatusBar.createStatusBar({
+          el: statusBarEl,
+          getState: () => _engineClient.getState(),
+          subscribe: _engineClient.subscribe,
+          getActiveTabId: () => activeTabId,
+          getWsState: () => _engineWsState,
+        });
+      } catch (err) {
+        console.warn('[#651] status-bar init failed', err);
+      }
+    }
+  }
 })();
 loadFiles();
-setTimeout(checkAuth, 1000);
-setInterval(checkAuth, 60000);
-setTimeout(checkErrors, 2000);
-setInterval(checkErrors, 60000);
 loadAppearanceSettings();

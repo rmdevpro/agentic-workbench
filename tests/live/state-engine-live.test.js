@@ -8,7 +8,7 @@
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { get, post, put, del, createSession, BASE_URL } = require('../helpers/http-client');
+const { get, post, put, BASE_URL } = require('../helpers/http-client');
 const WebSocket = require('ws');
 
 const TEST_URL = BASE_URL;
